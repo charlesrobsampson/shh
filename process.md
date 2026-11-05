@@ -34,7 +34,8 @@ Read this fully before touching code. Tasks live in `checklist.md`. Design lives
 2. `task check` green.
 3. Tick the task's checkbox in the final commit. Fill in anything the next task needs to know under the task's `Notes:`.
 4. Commit in small, meaningful commits. End each commit message with the attribution lines the harness specifies.
-5. Do not merge. Tell the user the branch is ready, summarize what changed, and list the manual check.
+5. Do not merge or push on your own. Tell the user the branch is ready, summarize what changed, list the manual check, then **ask for approval** to merge into `master` and to push. Do this at the end of every task.
+6. Only if the user approves: merge the branch into `master` (`--no-ff`), run `task check` on `master`, and push only if they also approved the push. Approval covers that task only; ask again next time.
 
 ## 6. Spike tasks
 Spikes answer a question. Write findings and the decision to `docs/spikes/NN-name.md` (what you tried, what worked, what didn't, the chosen approach, and any numbers). Keep throwaway code under `spikes/` or delete it. If the answer contradicts `plan.md`, update `plan.md` and tell the user before continuing.
