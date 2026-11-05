@@ -1,0 +1,419 @@
+# shh Checklist
+
+**Before any task: read `process.md` (how to work) and the sections of `plan.md` the task names. `manifest.md` is the original spec; `plan.md` wins on conflict.**
+
+Tasks are in dependency order. Each task = one branch (`task/NN-slug`). Tick the box only in the task's final commit. Task fields: **Session** (resume command, filled when started) · **Depends** · **Read** · **Build** · **Tests** · **Manual check**.
+
+Conventions used below: Go module path `github.com/charley/shh` (adjust if the user says otherwise); main branch is `master`; packages per `plan.md` §11; fakes live in `internal/testkit`. Spikes and tasks marked "manual check" need the user at the keyboard (macOS settings, visual checks): do everything else, then ask the user to run the check and wait.
+
+---
+
+## Phase 0: Foundations and spikes
+
+### 01 · Repo bootstrap
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/01-bootstrap` · Depends: none
+- Note: the repo is already initialized on `master` but has no commits. A `.gitignore` already exists (private data, databases, exports, secrets, build output). Review it, then make the initial commit of the existing files (never `captures/`; ask the user whether to commit `chat.sh`), then record the session on `master`.
+- Read: `process.md`, `plan.md` §11
+- Build: verify `.gitignore` works (`git status --ignored`); `go mod init`; empty package dirs from `plan.md` §11 with a `doc.go` each; `cmd/shh/main.go` printing a version; `Makefile` (`test`, `build`, `vet`); keep `tools/capture.py`.
+- Tests: none (scaffolding). `go test ./...` must run (zero tests is fine).
+- Manual check: `make build && ./shh --version` prints a version; `git status --ignored` shows `captures/`, `private/`, databases and the built binary ignored.
+
+### 02 · Spike: "shh" Focus mode via Shortcuts
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/02-spike-focus` · Depends: 01
+- Context: AppleScript can't toggle Focus on modern macOS. `plan.md` §2.2 proposes a custom Focus "shh" with no allowed people/apps, and Time Sensitive notifications off, toggled via Shortcuts. Must confirm notifications stay recorded in the notification DB while Focus is on (the whole design relies on this).
+- Read: `plan.md` §2, §3.1; `tools/capture.py`
+- Build: write `docs/spikes/02-focus.md`. Walk the user through creating the Focus and two Shortcuts (`shh-focus-on`, `shh-focus-off`); run `shortcuts run` from Go/shell; measure latency; verify with Focus on that Teams/Outlook notifications are suppressed on screen but still appear in `…/group.com.apple.usernoted/db2/db`; test whether Outlook's in-app reminder window is suppressed; check Time Sensitive behavior.
+- Tests: none (manual spike).
+- Manual check: with the Focus on, a test notification (`osascript -e 'display notification "x"'`) shows no banner and the row appears in the DB.
+
+### 03 · Spike: alert banner approach
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/03-spike-banner` · Depends: 01
+- Context: need custom banners (size, color, position, sound, duration, click to open app) without a second toolchain if possible. `plan.md` §7 lists options: `osascript`, a Go-driven approach, or a small Swift helper.
+- Read: `plan.md` §7, §11.1
+- Build: `docs/spikes/03-banner.md`. Try pure-Go/CGo-free approaches first (e.g. `osascript` with JXA/AppKit, or spawning a tiny prebuilt helper). State clearly which of size/color/position/sound/duration/click each approach can do. Recommend one. Code under `spikes/banner/`.
+- Tests: none.
+- Manual check: user sees a sample banner in each tested style and approves the recommended approach.
+
+### 04 · Spike: menu bar countdown
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/04-spike-menubar` · Depends: 01
+- Context: want text like `shh 28m · 65%` next to a menu bar icon, no floating window. `plan.md` §7.1 proposes `fyne.io/systray` in a separate process polling the worker.
+- Read: `plan.md` §7.1, §11.1
+- Build: `docs/spikes/04-menubar.md`. Prototype a tray app that shows live-updating title text and a small menu (a few items). Confirm CGo/build requirements and whether it works as a separate process on this Mac. Fall back per the plan if not.
+- Tests: none.
+- Manual check: user sees the live title ticking in the menu bar and the menu items clickable.
+
+### 05 · Spike: static embedding model choice
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/05-spike-embeddings` · Depends: 01
+- Context: layer L2 needs small pure-Go embeddings bundled via `go:embed` (Model2Vec-style: token lookup + mean pooling). Binary size and quality matter.
+- Read: `plan.md` §5.1–5.2
+- Build: `docs/spikes/05-embeddings.md`. Evaluate 2–3 candidate small static embedding models (license, size, vocab/tokenizer needs, dims). Prototype loading and embedding in Go; sanity-check similarity on ~20 hand-written notification examples (urgent vs newsletter). Recommend one with size and a plan for the tokenizer. Do not commit large model files without the user's OK.
+- Tests: none.
+- Manual check: user reviews the recommendation, size, and similarity sanity results.
+
+### 06 · Clock package and fake
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/06-clock` · Depends: 01
+- Read: `process.md` §4
+- Build: `internal/clock` (interface with `Now()` and timer/ticker creation) + real implementation; `internal/testkit` fake clock whose time advances only via `Advance(d)` and fires timers deterministically.
+- Tests: table cases: timer fires only after enough `Advance`; multiple timers fire in order; stopped timer never fires; ticker fires N times for N intervals.
+- Manual check: none (library).
+
+---
+
+## Phase 1: Storage and config
+
+### 07 · Store: open, migrations, schema v1
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/07-store-schema` · Depends: 01
+- Read: `plan.md` §10, `manifest.md` §6
+- Build: `internal/store` using `modernc.org/sqlite`, WAL mode, `0600` file, `schema_version` table, ordered migrations. Schema v1 = manifest tables plus the plan §10 additions (`bundle_id`, `source_rec_id` unique, `threshold_at_decision` (integer 0–99), `user_label` (integer 0–100), `reason`, `is_read`, `session_id`, `summary`, `calendar_events`, `unparsed_calendar`, `training_log`, `model_weights` with `feature_version` and history) and `focus_sessions` additions from plan §3.1 (`kind`, `parent_id`, `then_level`, `paused_at`, `remaining_secs`). Open helper supports `:memory:` and a file path.
+- Tests: open in-memory → latest version; reopening a file DB is idempotent; an old-version DB upgrades; file permissions are `0600`; schema accepts the documented columns (round trip insert/select of each table).
+- Manual check: `sqlite3 ~/.config/shh/shh.db .tables` lists all tables after a build that opens the store (a temporary `main` call is fine, not committed).
+
+### 08 · Store: notifications repository
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/08-store-notifications` · Depends: 07
+- Read: `plan.md` §8 (flag table), §10; `manifest.md` §5.1
+- Build: insert (dedupe on `source_rec_id`), list with filters (source, since, status, min score on the 0–100 display scale (stored 0–1), tab views: inbox = not dismissed, train = not trained), update flags (`is_read`, `is_dismissed_inbox`, `is_trained` + `user_feedback` / `user_label`), set summary; every inserted row records `threshold_at_decision`. Define the public types here.
+- Tests (table, via public API): duplicate insert ignored; tab views show the correct rows after each flag change (training removes from Train view only; dismiss removes from Inbox only); filters combine; ordering newest first.
+- Manual check: none.
+
+### 09 · Store: focus levels repository
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/09-store-levels` · Depends: 07
+- Read: `plan.md` §3.1
+- Build: persist layers (baseline, escalations): create, pop, pause/resume with remaining time, set `then_level`, list active stack, close with end time, counters (blocked/allowed).
+- Tests: stack order; pause stores remaining; closing sets end time; reopen DB restores stack.
+- Manual check: none.
+
+### 10 · Config loader
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/10-config` · Depends: 01
+- Read: `plan.md` §7, §7.1, §6
+- Build: `internal/config` loads `~/.config/shh/config.toml` (path overridable) with defaults: alert style (position, size, color, duration, sound, per-kind and per-source overrides), `[menubar] label = "shh"`, summarizer backend (`none`), paths. Unknown keys are errors with a clear message.
+- Tests: defaults when file missing; partial file merges over defaults; per-source override resolves; invalid value or unknown key errors name the key.
+- Manual check: `shh config show` (temporary or real command if present) prints effective config.
+
+---
+
+## Phase 2: Levels and decisions (pure logic)
+
+### 11 · Threshold and tier parsing
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/11-thresholds` · Depends: 01
+- Read: `manifest.md` §3.3, `plan.md` §4.3
+- Build: parse percentages (`75%`) and tier names into an integer level 0–99: `off`=0, `light`=35, `medium`=65, `deep`=90, `lockdown`=99; `100%` is an alias for 99; plain decimals like `0.75` are rejected. Also parse exact training labels 0–100 (tier names allowed) separately, since labels may be 100. Durations (`25m`, `1h30m`, `0`). Read `plan.md` §4.3 for the scale.
+- Tests: table of valid/invalid inputs, boundaries (`0%`, `99%`, `100%` as threshold → 99, `101%`, `-5%`, `abc`, `1h30m`, `0`; label `100` valid, label `101` invalid).
+- Manual check: none.
+
+### 12 · Level stack engine
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/12-level-stack` · Depends: 06, 09, 11
+- Read: `plan.md` §3.1
+- Build: engine over the store with the injected clock: `SetBaseline`, `Escalate(level, duration, then)` (levels are integers 0–99 from task 11), `Stop`, `StopAll`, `Pause/Resume`, `Adjust(±5m)`, `SetLevel`, `Effective(now)`, expiry handling that pops layers and reverts to the layer beneath (or `then`).
+- Tests (fake clock, table): baseline 30% → escalate 90% 50m → at +50m effective is 30%; `then off` clears baseline; escalation lower than baseline wins while active; pause freezes remaining time; adjust extends/shortens; stop pops top only; stop all clears; indefinite escalation never expires; state survives engine restart from the store.
+- Manual check: none.
+
+### 13 · Rules file loader
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/13-rules-loader` · Depends: 01
+- Read: `plan.md` §4.2, §5.1 (L0), §5.4
+- Build: `internal/rules` loads `rules.toml` (embedded defaults, user override): urgency keywords with boosts, VIP senders/apps, per-app priorities, calendar categories, date patterns list.
+- Tests: defaults load; user file overrides/extends; invalid regex is an error naming the rule.
+- Manual check: none.
+
+### 14 · Time-sensitivity boost
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/14-boost` · Depends: 06, 08, 13
+- Read: `manifest.md` §3.2, `plan.md` §5.4
+- Build: boost function (keywords, same-sender burst within a window using recent history) capped at 0.4.
+- Tests (table): each keyword; case-insensitivity; cap; burst detection with fake clock; no match → 0.
+- Manual check: none.
+
+### 15 · Decision function
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/15-decide` · Depends: 11
+- Read: `plan.md` §4.3
+- Build: `Decide(threshold, baseScore, boost, calendarPreempt)` returns allow/block and the effective score, per `plan.md` §4.3: `S_eff = min(0.99, base + boost)`, interrupt iff calendar pre-empt or `S_eff > threshold/100`. No special case for `lockdown` (it is threshold 99).
+- Tests (table): equality at threshold is blocked; one point above passes; boost can raise a score over the threshold but never over 0.99 (so boost alone never pierces lockdown); a base score above 0.99 (label-100 style) passes lockdown; score 0 is blocked at any threshold ≥ 0; calendar pre-empt always passes.
+- Manual check: none.
+
+---
+
+## Phase 3: Ingest
+
+### 16 · macOS notification reader + fake source
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/16-ingest-reader` · Depends: 01
+- Read: `plan.md` §2.3, §4.1, §11.1; `captures/meetings.jsonl` (local, private: build a scrubbed fixture, don't commit it)
+- Build: `NotificationSource` interface (`Since(recID)` returning decoded notifications). macOS implementation reads the DB read-only (path probing: `…/group.com.apple.usernoted/db2/db`, then older path), opens a fresh connection per read, decodes the plist (`req.titl/subt/body/cate/iden`, `app`, `date`), converts `delivered_date` from the 2001 epoch. `testkit` fake source supports add/remove records.
+- Tests: tests create a SQLite file with the real schema in a temp dir plus plist blobs built from synthetic notifications; cases: new rows since id, rows removed after reading, corrupt plist is skipped and reported, missing DB gives a clear error, epoch conversion, row with no body.
+- Manual check: `go run ./cmd/shh ingest-dump` (temporary) prints your latest real notifications; nothing is written anywhere.
+
+### 17 · Tailer: high-water mark, dedupe, backfill
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/17-tailer` · Depends: 06, 08, 16
+- Read: `plan.md` §4.1
+- Build: poll loop on the injected clock using a `NotificationSource`; persist high-water mark; dedupe same app+title+body within 10s; ignore shh's own bundle id; backfill since a given time; map bundle id → friendly source (`com.microsoft.teams2` → Teams, `com.microsoft.outlook` → Outlook, etc., extensible via rules).
+- Tests (fake source + fake clock + in-memory store): rows appear once; restart resumes without duplicates; burst duplicates collapse; own-bundle ignored; backfill picks up rows before start time; source mapping table.
+- Manual check: none.
+
+---
+
+## Phase 4: Classifier
+
+### 18 · Features L0 + L1
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/18-features` · Depends: 13
+- Read: `plan.md` §5.1, §5.3
+- Build: `Features` interface returning a versioned vector. L0: VIP/app priority/mention/1:1 vs channel/urgency-word flags. L1: hashed n-gram text features plus sender/app/category hashes. Feature version string.
+- Tests: same input → same vector; different sender/app change the right features; hash collisions don't panic; version string changes when feature config changes.
+- Manual check: none.
+
+### 19 · Logistic model, SGD, persistence, undo
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/19-model` · Depends: 07, 18
+- Read: `plan.md` §5.3
+- Build: logistic regression with bias; `Predict`; `Train(example, label)` single-step soft-target SGD with learning rate, L2, clipping, where `label` is either exact (0–100) or a constraint (`y`/`n` plus `threshold_at_decision`) per `plan.md` §5.3 (constraints update only when violated, with margin 0.1); persist weights keyed by feature version with history; log each update in `training_log` with its delta; `Undo(n)`, `Rollback`, `Reset`.
+- Tests (table, in-memory store): exact label 80 moves a similar item's score toward 0.8 and label 10 toward 0.1; `y` at threshold 65 on a score of 40 raises it above 0.65, but does nothing when already above; `n` on an alerted item at 65 lowers it to ≤ 0.65, but does nothing when already below; undo restores exact weights; rollback returns to a prior version; weights persist across restart; feature-version mismatch starts fresh instead of loading garbage; clipping bounds weights.
+- Manual check: none.
+
+### 20 · Static embeddings L2
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/20-embeddings` · Depends: 05, 18
+- Read: `docs/spikes/05-embeddings.md`, `plan.md` §5.1
+- Build: embed the model chosen in spike 05, tokenizer, mean pooling, `Features` adapter appended to L0+L1; feature version includes the model id.
+- Tests: urgent vs newsletter examples score closer to their own class in a tiny trained-model check; deterministic output; empty text handled.
+- Manual check: `shh classify "server is down"` (temporary command ok) prints a score; binary size noted in the task `Notes:`.
+
+### 21 · Seed weights and day-one quality
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/21-seed` · Depends: 19, 20
+- Read: `plan.md` §5.3 (cold start)
+- Build: seed training set (synthetic examples of urgent/non-urgent notifications across Teams/Outlook/Slack/Mail/system) shipped in-repo; first run trains the initial weights from it; replay harness: `shh replay <jsonl> --threshold 65%` prints decisions.
+- Tests: with the seeded model: outage/"urgent"/direct-question examples score above 65 (interrupt at `medium`); newsletter/FYI/auto-update examples score at or below 35 (muted at `light`); replay output stable for a synthetic fixture file. The seed set is synthetic and committed; real labeled data never is.
+- Manual check: run `shh replay` on a few lines you write; results look sensible.
+
+### 22 · Decision reasons
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/22-reasons` · Depends: 19, 14
+- Read: `plan.md` §4.3, §8
+- Build: short human-readable `reason` (top contributing features and any boost) returned with each prediction; stored with the notification.
+- Tests: reason mentions the dominant factor (VIP sender, keyword, learned phrase); stable ordering; length bounded.
+- Manual check: none.
+
+---
+
+## Phase 5: Calendar
+
+### 23 · Calendar reminder parser
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/23-calendar-parser` · Depends: 13, 08
+- Read: `plan.md` §4.2 (fail-safe strategy and first sample)
+- Build: detect reminders by category from rules; parse the start time leniently with the ordered formats; extract title/subtitle; on parse failure return an "alert immediately" result and record to `unparsed_calendar`.
+- Tests (table incl. the real sample, scrubbed): `November 5, 2026 at 13:30`; `Today at 9:00 AM`; `in 5 minutes`; all-day wording; DST edge; unknown format → immediate alert + stored unparsed; non-reminder Outlook mail is ignored; Teams meeting notification.
+- Manual check: none.
+
+### 24 · Calendar scheduler
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/24-calendar-scheduler` · Depends: 06, 23
+- Read: `plan.md` §4.2, §11.1
+- Build: define the `Alerter` and `FocusController` interfaces (in `internal/alert` and `internal/focus`) with in-memory fakes in `testkit` (the alerter fake records shown banners; the focus fake holds on/off state); then schedule an alert at start − 60s; fire immediately if past; dedupe by title+start; persist in `calendar_events`; re-arm on restart; no double fire.
+- Tests (fake clock, fake alerter): fires at T−60s exactly; late reminder fires now; same meeting twice → one alert; restart re-arms pending only; fired events don't refire.
+- Manual check: none.
+
+---
+
+## Phase 6: Worker, IPC, CLI
+
+### 25 · Worker pipeline (end to end, in memory)
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/25-worker-pipeline` · Depends: 12, 15, 17, 19, 22, 24
+- Read: `plan.md` §3, §4
+- Build: `internal/session` worker wiring tailer → classify → boost → decide → deliver (alerter interface) or store; updates counters; calendar pre-empt path; uses the `Alerter` and `FocusController` interfaces and fakes from task 24.
+- Tests (fakes for source, clock, alerter, focus): at 65% an "outage now" Teams message is alerted and stored `alerted`, a newsletter is blocked and stored `blocked` with reason; escalation expiry changes the next decision; calendar reminder pre-empts at T−60s even in lockdown; focus is turned on when level > 0 and off at 0%.
+- Manual check: none.
+
+### 26 · IPC server and client
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/26-ipc` · Depends: 25
+- Read: `plan.md` §3
+- Build: unix-socket JSON-lines protocol: `status`, `focus`, `baseline`, `stop`, `pause`, `resume`, `adjust`, `subscribe` (live events). Client library. Socket path configurable (temp dir in tests).
+- Tests: each command changes worker state and returns the new status; two clients; subscriber receives blocked/alerted events; worker absent gives a clear "not running" error; stale socket file is cleaned.
+- Manual check: none.
+
+### 27 · CLI commands
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/27-cli` · Depends: 26
+- Read: `manifest.md` §4, `plan.md` §3.1, §9
+- Build: kong CLI: bare `shh` opens the TUI (see 31; prints `status` instead when stdout is not a terminal), `focus|f`, `stop [--all]`, `baseline`, `status [--json|--short]`, `pause`, `resume`, flags (`-t -f -m --then/--clear`), positional note. Commands talk to the worker through IPC and print results. Starting a session with no worker spawns one (spawn mechanics come in 28; use an injectable spawner here).
+- Tests (in-process worker + temp socket, drive the CLI entrypoint with args): the manifest syntax examples parse and apply; `status --short` format; stop semantics; invalid input exits non-zero with a clear message.
+- Manual check: (after 28) `shh f -t 1m -f 65%` then `shh status`.
+
+### 28 · Worker lifecycle: spawn, PID file, graceful stop, re-arm
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/28-lifecycle` · Depends: 27, 02
+- Read: `plan.md` §3, `docs/spikes/02-focus.md`
+- Build: detached `shh daemon` re-exec, PID file, single-instance lock, graceful stop (restores Focus), exit when effective level is 0, re-arm a persisted baseline on any command; real macOS `FocusController` from spike 02 (`shortcuts run`) with its fake.
+- Tests: second start doesn't spawn a second worker; stale PID file recovered; stop restores focus-off via the fake; worker exits at level 0; persisted baseline re-armed. Real spawn is covered by the manual check.
+- Manual check: `shh baseline 30%` starts a background process (`ps`), Focus turns on, `shh baseline off` ends it and turns Focus off.
+
+### 29 · Alerter implementation and config
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/29-alerter` · Depends: 03, 10, 25
+- Read: `docs/spikes/03-banner.md`, `plan.md` §7
+- Build: real alerter following the spike's recommendation with config (size, color, position, duration, sound, per-kind/per-source overrides); `osascript` fallback; click opens the source app; `shh alert test`.
+- Tests: style resolution (defaults → kind → source override) produces the expected request to a fake backend; fallback chosen when helper missing.
+- Manual check: `shh alert test` shows styled banners; changing `config.toml` changes them.
+
+### 30 · Menu bar process
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/30-menubar` · Depends: 04, 26
+- Read: `docs/spikes/04-menubar.md`, `plan.md` §7.1
+- Build: `shh menubar` launched by the worker and exiting with it; shows `label` + time left + effective level; paused indicator; menu items for the stack, pause/resume, ±5m, stop, open TUI.
+- Tests: title/menu formatting from a status payload (table: baseline only, escalation with time left, paused, indefinite, off). Tray rendering itself is manual.
+- Manual check: start a 2m session and watch the countdown; click pause.
+
+---
+
+## Phase 7: TUI
+
+### 31 · TUI skeleton and tabs
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/31-tui-skeleton` · Depends: 08, 26
+- Read: `manifest.md` §5, `plan.md` §8
+- Build: Bubble Tea app opened by bare `shh` (and `shh ui`) with three tabs: **Focus**, **Notifications**, **Train** (switch with `Tab`/`Shift-Tab` and `F1`–`F3`, so digit keys stay free for training labels). List rows show time, source, sender, score (0–100) and alerted/blocked; detail pane beside it. Status bar with session info from IPC (works without a worker too), `j/k/h/l`, `?` help. Focus tab is a placeholder here (built in 34).
+- Tests (drive the model with key messages, assert state/view text): tab switching; navigation bounds; Notifications shows only non-dismissed, Train only untrained; status bar shows time left.
+- Manual check: run `shh` against some stored rows; keys behave.
+
+### 32 · TUI: preview/expand, read state, open in app
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/32-tui-read` · Depends: 31
+- Read: `plan.md` §6, §8
+- Build: truncated preview filling the pane; `e` expands/collapses without changing read state; `Enter`/`o` opens the original app and marks read; dismiss `d`/`x`.
+- Tests: expanding never sets `is_read`; opening does; dismiss hides from Notifications but not Train; long text truncates to pane size.
+- Manual check: run `shh`, expand a long message, confirm it stays unread; open one, confirm it flips.
+
+### 33 · TUI: training with `y`/`n` and undo
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/33-tui-train` · Depends: 19, 22, 32
+- Read: `manifest.md` §5.1–5.2, `plan.md` §5.3, §8
+- Build: Train tab keys per `plan.md` §8: `y` and `n` (quick constraint labels using the row's `threshold_at_decision`), `l` opens a prompt for an exact 0–100 label or tier name. Each sets `is_trained`, `user_feedback`/`user_label`, trains the model, removes the row from the Train list (also archives it from Notifications when trained from there, per manifest); `u` undo; every Train row shows the score the model gave (0–100) and its status (alerted/blocked) in the list, and the detail pane shows score, boost, `threshold_at_decision` and reason; Train list ordered by most informative first.
+- Tests: exact label then a similar new item scores closer to that label; `y`/`n` follow the constraint rules; undo restores flags and weights; invalid label input shows an error and changes nothing; ordering puts scores near common thresholds first; the rendered list and detail contain the stored score and threshold for each row.
+- Manual check: label ten real items with a mix of `y`, `n` and `l`, then see scores change in `shh replay`.
+
+### 34 · TUI: Focus tab
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/34-tui-focus` · Depends: 31, 26
+- Read: `manifest.md` §5.2, `plan.md` §3.1, §8
+- Build: the Focus tab manages everything the CLI does: shows the level stack and time left; start a focus (level, duration, note, `then`), set/clear baseline, stop / stop all, pause/resume (`p`/`Space`), adjust (`+`/`-`), change level (`f`). Inputs via small prompts accepting percent or tier names. Filter `/` on the other tabs.
+- Tests: each action sends the right IPC command and the view updates; invalid input shows an error and sends nothing; with no worker running, starting a focus spawns one (injectable spawner).
+- Manual check: from `shh`, start a 2m focus, pause, set a baseline, stop, and see the menu bar follow.
+
+---
+
+## Phase 8: Extras
+
+### 35 · Summarizer backends
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/35-summarizer` · Depends: 10, 32
+- Read: `plan.md` §6
+- Build: `Summarizer` interface with `none` (default), `ollama`, `claude` (key from env/Keychain) backends; `s` in TUI; cache in `summary`; status bar shows when a remote backend is active.
+- Tests: `httptest` fake Ollama/Claude servers; `none` shows a hint; results are cached; backend errors don't break the TUI.
+- Manual check: with Ollama running, `s` summarizes a notification.
+
+### 36 · CLI: ls, train, init, rules review, doctor, capture
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/36-cli-extras` · Depends: 17, 21, 23, 27
+- Read: `plan.md` §9, §5.3
+- Build: `ls` (read-only, `--source --since --status --min-score`); `train` (batch, `--reset|--rollback|--export|--import`; exports contain private text, so default to `private/` and warn on any other path); `init` (history bootstrap import, Focus Shortcuts check, FDA/DB check); `rules review` (unparsed calendar rows); `doctor` (DB path, notification permissions for apps seen, Focus mode, Time Sensitive reminder, alerter, menubar); `capture` (log raw notifications for rule-building to a gitignored file).
+- Tests: `ls` doesn't change flags; `doctor` reports each failing check against fakes; `init` imports history from the fake source; export/import round trip.
+- Manual check: `shh doctor` on your Mac gives a clear checklist.
+
+### 37 · TTL cleanup and purge
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/37-ttl` · Depends: 08, 06
+- Read: `plan.md` §10 (TTL fix)
+- Build: cleanup on launch per the plan's rule; `shh purge` with confirmation.
+- Tests (fake clock): rows purged/kept per the rule; untrained recent rows survive; purge requires confirmation.
+- Manual check: none.
+
+### 38 · Packaging and README
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/38-packaging` · Depends: 36
+- Read: `plan.md` §12
+- Build: release build target (goreleaser or Makefile), README (install, permissions setup, Focus Shortcuts, config examples), man-style `--help` text review.
+- Tests: none.
+- Manual check: a clean install from the built artifact follows the README successfully.
+
+---
+
+## Phase 9: Later (do after the above are merged and used for a while)
+
+### 39 · Evaluate Laya/Jev judge offline
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/39-judge-eval` · Depends: 33
+- Read: `plan.md` §5.2 (decision rule)
+- Build: `docs/spikes/39-judge.md` comparing the core classifier against a Python Laya/Jev scoring run on your labeled set; recommend adopt or drop.
+- Tests: none. Manual check: user reads the results.
+
+### 40 · launchd install (survive reboot)
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/40-launchd` · Depends: 28
+- Read: `plan.md` §3
+- Build: `shh install|uninstall` writes/removes a LaunchAgent that runs the same daemon; baseline resumes at login.
+- Tests: generated plist content; install/uninstall against a temp `LaunchAgents` dir.
+- Manual check: log out/in, baseline resumes.
+
+### 41 · Linux port
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/41-linux` · Depends: 38
+- Read: `plan.md` §11.1
+- Build: D-Bus `NotificationSource`, Focus control, alerter, tray implementations behind the existing interfaces.
+- Tests: via fakes and a fake D-Bus service. Manual check: on a Linux desktop.

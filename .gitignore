@@ -1,0 +1,46 @@
+# Private data: real notifications, labels, exports, local databases.
+# Anything derived from the user's real notifications must live in one of these.
+captures/
+private/
+testdata/private/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.shh-export.json
+*-export.json
+training-data/
+labeled*.jsonl
+replay-*.jsonl
+
+# Local config and secrets
+.env
+.env.*
+*.pem
+*.key
+config.local.toml
+rules.local.toml
+
+# Go build and test output
+/shh
+/dist/
+/bin/
+*.test
+*.out
+coverage.*
+go.work
+go.work.sum
+
+# Python (tools/, judge eval)
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+.claude/settings.local.json
