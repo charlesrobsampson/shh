@@ -4,7 +4,7 @@
 
 Tasks are in dependency order. Each task = one branch (`task/NN-slug`). Tick the box only in the task's final commit. Task fields: **Session** (resume command, filled when started) · **Depends** · **Read** · **Build** · **Tests** · **Manual check**.
 
-Conventions used below: Go module path `github.com/charley/shh` (adjust if the user says otherwise); main branch is `master`; packages per `plan.md` §11; fakes live in `internal/testkit`. Spikes and tasks marked "manual check" need the user at the keyboard (macOS settings, visual checks): do everything else, then ask the user to run the check and wait.
+Conventions used below: Go module path `github.com/charlesrobsampson/shh`; main branch is `master`; packages per `plan.md` §11; fakes live in `internal/testkit`. Spikes and tasks marked "manual check" need the user at the keyboard (macOS settings, visual checks): do everything else, then ask the user to run the check and wait.
 
 ---
 
@@ -12,7 +12,7 @@ Conventions used below: Go module path `github.com/charley/shh` (adjust if the u
 
 ### 01 · Repo bootstrap
 - [ ] Done
-- Session: _(fill on start)_
+- Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/01-bootstrap` · Depends: none
 - Note: the repo is already initialized on `master` but has no commits. A `.gitignore` already exists (private data, databases, exports, secrets, build output). Review it, then make the initial commit of the existing files (never `captures/`; ask the user whether to commit `chat.sh`), then record the session on `master`.
 - Read: `process.md`, `plan.md` §11
