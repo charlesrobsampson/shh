@@ -4,21 +4,21 @@
 
 Tasks are in dependency order. Each task = one branch (`task/NN-slug`). Tick the box only in the task's final commit. Task fields: **Session** (resume command, filled when started) · **Depends** · **Read** · **Build** · **Tests** · **Manual check**.
 
-Conventions used below: Go module path `github.com/charlesrobsampson/shh`; main branch is `master`; packages per `plan.md` §11; fakes live in `internal/testkit`. Spikes and tasks marked "manual check" need the user at the keyboard (macOS settings, visual checks): do everything else, then ask the user to run the check and wait.
+Conventions used below: every repeatable command (build, test, run helpers, spike runners, release) is a task in `Taskfile.yml`, never a loose script or Makefile target; Go module path `github.com/charlesrobsampson/shh`; main branch is `master`; packages per `plan.md` §11; fakes live in `internal/testkit`. Spikes and tasks marked "manual check" need the user at the keyboard (macOS settings, visual checks): do everything else, then ask the user to run the check and wait.
 
 ---
 
 ## Phase 0: Foundations and spikes
 
 ### 01 · Repo bootstrap
-- [ ] Done
+- [x] Done
 - Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/01-bootstrap` · Depends: none
 - Note: the repo is already initialized on `master` but has no commits. A `.gitignore` already exists (private data, databases, exports, secrets, build output). Review it, then make the initial commit of the existing files (never `captures/`; ask the user whether to commit `chat.sh`), then record the session on `master`.
 - Read: `process.md`, `plan.md` §11
-- Build: verify `.gitignore` works (`git status --ignored`); `go mod init`; empty package dirs from `plan.md` §11 with a `doc.go` each; `cmd/shh/main.go` printing a version; `Makefile` (`test`, `build`, `vet`); keep `tools/capture.py`.
+- Build: verify `.gitignore` works (`git status --ignored`); `go mod init`; empty package dirs from `plan.md` §11 with a `doc.go` each; `cmd/shh/main.go` printing a version; `Taskfile.yml` (`test`, `build`, `vet`, `fmt`, `check`); keep `tools/capture.py`.
 - Tests: none (scaffolding). `go test ./...` must run (zero tests is fine).
-- Manual check: `make build && ./shh --version` prints a version; `git status --ignored` shows `captures/`, `private/`, databases and the built binary ignored.
+- Manual check: `task build && ./shh --version` prints a version; `git status --ignored` shows `captures/`, `private/`, databases and the built binary ignored.
 
 ### 02 · Spike: "shh" Focus mode via Shortcuts
 - [ ] Done
@@ -385,7 +385,7 @@ Conventions used below: Go module path `github.com/charlesrobsampson/shh`; main 
 - Session: _(fill on start)_
 - Branch: `task/38-packaging` · Depends: 36
 - Read: `plan.md` §12
-- Build: release build target (goreleaser or Makefile), README (install, permissions setup, Focus Shortcuts, config examples), man-style `--help` text review.
+- Build: release build target (a `Taskfile.yml` task, optionally using goreleaser), README (install, permissions setup, Focus Shortcuts, config examples), man-style `--help` text review.
 - Tests: none.
 - Manual check: a clean install from the built artifact follows the README successfully.
 

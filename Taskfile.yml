@@ -1,0 +1,49 @@
+version: '3'
+
+vars:
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+
+tasks:
+  default:
+    desc: List tasks
+    cmds:
+      - task --list
+    silent: true
+
+  test:
+    desc: Run all tests
+    cmds:
+      - go test ./...
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  fmt:
+    desc: Format Go code
+    cmds:
+      - gofmt -w .
+
+  build:
+    desc: Build ./shh
+    cmds:
+      - go build -ldflags "-X main.version={{.VERSION}}" -o shh ./cmd/shh
+
+  check:
+    desc: Format check, vet and test (run before every commit)
+    cmds:
+      - test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - task: vet
+      - task: test
+
+  capture:
+    desc: Log meeting-style notifications to captures/meetings.jsonl (gitignored; Ctrl-C to stop)
+    cmds:
+      - python3 tools/capture.py {{.CLI_ARGS}}
+
+  capture:once:
+    desc: Capture new meeting-style notifications once and exit
+    cmds:
+      - python3 tools/capture.py --once

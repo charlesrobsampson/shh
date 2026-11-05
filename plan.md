@@ -327,7 +327,7 @@ Classifier, store, session worker, TUI, CLI are platform-independent. Linux is u
 - Three tabs (Focus, Notifications, Train), preview/expand, hybrid labels (`y`/`n`/`l`) with SGD, undo, score and reason display, `shh train`.
 
 **M4, polish**
-- Summarizer backends, banner config/presets, `doctor`, TTL job, migrations, packaging (`brew` tap or `goreleaser`).
+- Summarizer backends, banner config/presets, `doctor`, TTL job, migrations, packaging (`brew` tap or `goreleaser`, driven from `Taskfile.yml`).
 
 **M5, optional**
 - Offline eval of Laya/Jev judge (L3) vs. core, adopt only if it helps; `shh install` launchd mode; threshold suggestions from feedback; Linux port.
