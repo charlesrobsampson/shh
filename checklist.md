@@ -11,7 +11,7 @@ Conventions used below: Go module path `github.com/charlesrobsampson/shh`; main 
 ## Phase 0: Foundations and spikes
 
 ### 01 · Repo bootstrap
-- [ ] Done
+- [x] Done
 - Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/01-bootstrap` · Depends: none
 - Note: the repo is already initialized on `master` but has no commits. A `.gitignore` already exists (private data, databases, exports, secrets, build output). Review it, then make the initial commit of the existing files (never `captures/`; ask the user whether to commit `chat.sh`), then record the session on `master`.
