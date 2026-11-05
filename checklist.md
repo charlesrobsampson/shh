@@ -22,7 +22,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 ### 02 · Spike: "shh" Focus mode via Shortcuts
 - [ ] Done
-- Session: _(fill on start)_
+- Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/02-spike-focus` · Depends: 01
 - Context: AppleScript can't toggle Focus on modern macOS. `plan.md` §2.2 proposes a custom Focus "shh" with no allowed people/apps, and Time Sensitive notifications off, toggled via Shortcuts. Must confirm notifications stay recorded in the notification DB while Focus is on (the whole design relies on this).
 - Read: `plan.md` §2, §3.1; `tools/capture.py`
