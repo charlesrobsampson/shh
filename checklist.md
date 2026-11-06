@@ -66,7 +66,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 ### 06 · Clock package and fake
 - [ ] Done
-- Session: _(fill on start)_
+- Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/06-clock` · Depends: 01
 - Read: `process.md` §4
 - Build: `internal/clock` (interface with `Now()` and timer/ticker creation) + real implementation; `internal/testkit` fake clock whose time advances only via `Advance(d)` and fires timers deterministically.
