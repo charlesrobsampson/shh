@@ -53,7 +53,7 @@ func NewParser(r rules.Rules, loc *time.Location, s *store.Store) *Parser {
 // Parse reports ok=false for notifications that are not calendar reminders. A reminder whose time cannot be read comes back as
 // Unparsed (and is recorded for `shh rules review`); err is only ever a failure to record it.
 func (p *Parser) Parse(in Input) (reminder Reminder, ok bool, err error) {
-	if !p.isReminder(in.Category) {
+	if !p.IsReminder(in.Category) {
 		return Reminder{}, false, nil
 	}
 	reminder = Reminder{Title: in.Title, Subtitle: in.Subtitle, Delivered: in.Delivered}
@@ -74,7 +74,8 @@ func (p *Parser) Parse(in Input) (reminder Reminder, ok bool, err error) {
 	return reminder, true, p.record(in)
 }
 
-func (p *Parser) isReminder(category string) bool {
+// IsReminder reports whether the category marks a calendar reminder.
+func (p *Parser) IsReminder(category string) bool {
 	for _, pattern := range p.categories {
 		if pattern.Regexp.MatchString(category) {
 			return true
