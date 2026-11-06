@@ -152,7 +152,7 @@ Where it *does* fit: as **L3 feature provider**, a Python sidecar answering fixe
 - `p = σ(w·x + b)` is the score `S_base`. Training is soft-target logistic SGD: `w ← w + α (t − p) x` (the manifest formula plus the sigmoid and a bias), where `t` is the target score in [0,1].
 - **[DECIDED] Hybrid labels.** Both feed the same update:
   - **Exact label** (`l` then 0–100, or a tier name): `t = N/100`. Always updates.
-  - **Quick `y`**: "this should have reached me at the threshold it was at." Constraint `S > T_dec/100`. If violated, `t = min(0.99, T_dec/100 + margin)`; otherwise no update.
+  - **Quick `y`**: "this should have reached me at the threshold it was at." Constraint `S > T_dec/100`. If violated, `t = min(1, T_dec/100 + margin)` (capped at 1 rather than 0.99 so that `y` at lockdown, which needs `S > 0.99`, is satisfiable); otherwise no update.
   - **Quick `n`**: "this should have been muted at that threshold." Constraint `S ≤ T_dec/100`. If violated (e.g. an item that was alerted), `t = max(0, T_dec/100 − margin)`; otherwise no update.
   - `T_dec` is the row's `threshold_at_decision`, so feedback given hours later is still interpreted correctly. `margin` defaults to 0.1 **[ASSUMED]**.
 - **Training order:** the Train list shows the most informative items first (scores near the user's usual thresholds, or where recent labels disagree with the model).
@@ -163,7 +163,7 @@ Where it *does* fit: as **L3 feature provider**, a Python sidecar answering fixe
 - **Cold start:** initialize `w` from L0 priors (e.g. known-urgent keywords get positive weights, newsletters/"unsubscribe" negative). Ship a small seed set so day-1 `medium` isn't random.
 - **Feedback rebalancing:** quick `n` rarely violates a constraint, so most updates come from `y` and exact labels. If the model still drifts toward "block everything", weight `y` updates ×2–3.
 - **Safety rail:** if the recent rate of `y` feedback in a session exceeds a limit, surface a hint ("lower threshold?"). Don't silently adapt.
-- Weights persisted in SQLite (`model_weights`), plus a version history table so a bad training run can be rolled back (`shh train --reset`, `--rollback`).
+- Weights persisted in SQLite (`model_weights`, one snapshot per change, the newest 20 kept per feature version, a new feature version starting fresh). Every training call also writes a `training_log` row holding the values it overwrote, so undo is exact; checkpoint rows in that log mark where `--rollback` returns to, and `--reset` takes a checkpoint first so a reset can be rolled back too (`shh train --reset`, `--rollback`).
 
 ### 5.4 Time-sensitivity boost
 Pure function, easily tested. Keyword list (`now`, `ASAP`, `urgent`, `prod`, `down`, `outage`, …) → +0.1…+0.3; recency/quick-follow-ups from the same sender (3 messages in 2 minutes) → +0.1; capped at +0.4. Keywords come from `rules.toml`.

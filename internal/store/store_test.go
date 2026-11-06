@@ -298,3 +298,22 @@ func TestPurgingANotificationKeepsItsDependents(t *testing.T) {
 		}
 	}
 }
+
+func TestWeightSnapshotsAreKeptBoundedPerVersion(t *testing.T) {
+	s := mustOpen(t, ":memory:")
+	for i := 0; i < 3*maxWeightSnapshots; i++ {
+		if err := s.UpdateModel("v1", []byte{byte(i)}, nil, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.UpdateModel("v2", []byte{1}, nil, nil)
+	var v1, v2 int
+	s.db.QueryRow(`SELECT COUNT(*) FROM model_weights WHERE feature_version = 'v1'`).Scan(&v1)
+	s.db.QueryRow(`SELECT COUNT(*) FROM model_weights WHERE feature_version = 'v2'`).Scan(&v2)
+	if v1 != maxWeightSnapshots || v2 != 1 {
+		t.Fatalf("snapshots: v1=%d v2=%d, want %d and 1 (pruning is per version)", v1, v2, maxWeightSnapshots)
+	}
+	if got, _, _ := s.LoadWeights("v1"); len(got) != 1 || got[0] != byte(3*maxWeightSnapshots-1) {
+		t.Fatalf("latest weights = %v, want the newest snapshot to survive pruning", got)
+	}
+}
