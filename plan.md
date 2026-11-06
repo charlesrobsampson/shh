@@ -65,9 +65,9 @@ State is a **stack of levels**, not one session:
 
 - `effective_threshold(now)` = the **top active layer's** threshold. An escalation may also be *lower* than the baseline (e.g. a temporary 10% to let more through). **[ASSUMED]**
 - Timer expiry pops the layer, and the effective level reverts to what's underneath, **not** 0%. Baseline 30% → `focus 90% 50m` → back to 30%.
-- `--then <pct|tier|off>` (alias `--clear`) overrides the fallback for one escalation. `--then off` also clears the baseline when the timer ends. **[ASSUMED]**
+- `--then <pct|tier|off>` (alias `--clear`) overrides the fallback for one escalation. `--then off` also clears the baseline when the timer ends. **[DECIDED, task 12]** `--then X` applies only when the timer runs out: everything beneath that layer is closed and, for X above 0, a new indefinite baseline at X is started (so `--then 65%` leaves you at 65% from then on). A manual `shh stop` ignores `then` and simply falls back to the layer beneath.
 - `shh stop` pops the top escalation only. `shh stop --all` clears everything including the baseline.
-- Pause/resume applies to the top timed layer. `+`/`-` adjust its duration. `f` changes the top layer's percentage.
+- Pause/resume applies to the top timed layer, and freezes only its countdown: the focus level stays in force while paused. `+`/`-` adjust its duration. `f` changes the top layer's percentage.
 - Multiple stacked escalations are allowed but rare. The UI shows the stack in `shh status`.
 - The banner suppressor runs while effective level > 0, and stops at 0%/`off`.
 - Every notification row records `session_id` (or layer id) and the threshold used, so history remains interpretable.

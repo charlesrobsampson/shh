@@ -364,3 +364,54 @@ func TestUnknownLevelReportsNotFound(t *testing.T) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
 }
+
+func TestSetExpiresAtMovesARunningDeadline(t *testing.T) {
+	s := open(t)
+	id := push(t, s, timed(90, 50, t0))
+	moved := t0.Add(80 * time.Minute)
+	if err := s.SetExpiresAt(id, moved); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.GetLevel(id); got.ExpiresAt == nil || !got.ExpiresAt.Equal(moved) {
+		t.Fatalf("ExpiresAt = %v, want %v", got.ExpiresAt, moved)
+	}
+	s.CloseLevel(id, t0)
+	if err := s.SetExpiresAt(id, moved); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("closed level: err = %v, want ErrNotFound", err)
+	}
+	if err := s.SetExpiresAt(999, moved); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("unknown level: err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestSetRemainingSecsChangesAPausedLevel(t *testing.T) {
+	s := open(t)
+	id := push(t, s, timed(90, 50, t0))
+	s.PauseLevel(id, t0)
+	if err := s.SetRemainingSecs(id, 123); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.GetLevel(id); got.RemainingSecs == nil || *got.RemainingSecs != 123 {
+		t.Fatalf("RemainingSecs = %v, want 123", got.RemainingSecs)
+	}
+	if err := s.SetRemainingSecs(id, -1); err == nil {
+		t.Error("negative remaining time accepted")
+	}
+}
+
+func TestSetPercentChangesTheLevel(t *testing.T) {
+	s := open(t)
+	id := push(t, s, baseline(30))
+	if err := s.SetPercent(id, 75); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.GetLevel(id); got.Percent != 75 {
+		t.Fatalf("Percent = %d, want 75", got.Percent)
+	}
+	if err := s.SetPercent(id, 100); err == nil {
+		t.Error("percent 100 accepted")
+	}
+	if err := s.SetPercent(999, 10); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("unknown level: err = %v, want ErrNotFound", err)
+	}
+}
