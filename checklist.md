@@ -134,7 +134,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 ### 12 · Level stack engine
 - [ ] Done
-- Session: _(fill on start)_
+- Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/12-level-stack` · Depends: 06, 09, 11
 - Read: `plan.md` §3.1
 - Build: engine over the store with the injected clock: `SetBaseline`, `Escalate(level, duration, then)` (levels are integers 0–99 from task 11), `Stop`, `StopAll`, `Pause/Resume`, `Adjust(±5m)`, `SetLevel`, `Effective(now)`, expiry handling that pops layers and reverts to the layer beneath (or `then`).
