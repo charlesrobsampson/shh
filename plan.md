@@ -79,11 +79,11 @@ State is a **stack of levels**, not one session:
 
 ### 4.1 Ingest
 - Poll the DB read-only (open with `mode=ro`, copy-on-read of WAL if needed) every ~1s, or watch the file with fsnotify and re-query on change.
-- High-water mark = last seen `rec_id`, persisted per session.
+- **Progress is a delivery-time cursor, not a `rec_id` high-water mark [DECIDED, tasks 16/17, from spike 02]:** macOS reuses record ids and writes rows about 5 s after delivery, sometimes out of order. Each poll re-reads the table and handles rows delivered within 30 s of the cursor whose `(rec_id, delivered)` pair has not been handled; the cursor and the handled pairs persist in the store, and a handled pair is forgotten only once macOS has deleted its row.
 - Decode the plist payload into `{app_bundle_id, title, subtitle, body, delivered_at, thread_id}`.
 - Map `bundle_id` to a friendly `source` (Teams, Outlook, Slack, Mail, …). Keep the raw bundle id too.
 - **Dedupe:** same app and title and body within 10s counts as one event. (Teams re-posts.)
-- Ignore notifications that `shh` itself posted (own bundle id).
+- Ignore notifications that `shh` itself posted: its own bundle id, and banners titled `[shh]` (the Notification Center fallback, which macOS attributes to Script Editor).
 
 ### 4.2 Calendar pre-empt **[ASSUMED: parse Outlook/Teams notifications]**
 No calendar API. Instead, recognize meeting-reminder notifications:

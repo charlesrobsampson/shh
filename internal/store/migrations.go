@@ -96,4 +96,19 @@ ALTER TABLE focus_sessions ADD COLUMN expires_at DATETIME;
 CREATE UNIQUE INDEX focus_sessions_one_active_baseline ON focus_sessions (kind) WHERE kind = 'baseline' AND end_time IS NULL;
 CREATE INDEX focus_sessions_active ON focus_sessions (end_time);
 `,
+
+	// The tailer's progress: a time cursor (macOS record ids are reused and written late, so they cannot be the cursor) and the
+	// (record id, delivery time) pairs already handled inside the lookback window.
+	`
+CREATE TABLE ingest_state (
+	id INTEGER PRIMARY KEY CHECK (id = 1),
+	cursor DATETIME NOT NULL
+);
+CREATE TABLE ingest_seen (
+	rec_id INTEGER NOT NULL,
+	delivered DATETIME NOT NULL,
+	PRIMARY KEY (rec_id, delivered)
+);
+CREATE INDEX ingest_seen_delivered ON ingest_seen (delivered);
+`,
 }

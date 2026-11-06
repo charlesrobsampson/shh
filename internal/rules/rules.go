@@ -31,9 +31,11 @@ type Urgency struct {
 type Rules struct {
 	Urgency []Urgency
 	// VIPSenders and VIPApps are lower-cased and deduplicated.
-	VIPSenders         []string
-	VIPApps            []string
-	AppPriority        map[string]float64
+	VIPSenders  []string
+	VIPApps     []string
+	AppPriority map[string]float64
+	// Sources maps a macOS bundle id to the friendly app name used everywhere else.
+	Sources            map[string]string
 	CalendarCategories []Pattern
 	DatePatterns       []Pattern
 }
@@ -58,6 +60,7 @@ type file struct {
 		Apps    []string `toml:"apps"`
 	} `toml:"vip"`
 	AppPriority map[string]float64 `toml:"app_priority"`
+	Sources     map[string]string  `toml:"sources"`
 	Calendar    struct {
 		Category []patternRule `toml:"category"`
 		Date     []patternRule `toml:"date"`
@@ -115,6 +118,12 @@ func merge(base, user file) (file, error) {
 	for _, priorities := range []map[string]float64{base.AppPriority, user.AppPriority} {
 		for app, priority := range priorities {
 			out.AppPriority[app] = priority
+		}
+	}
+	out.Sources = map[string]string{}
+	for _, sources := range []map[string]string{base.Sources, user.Sources} {
+		for bundle, name := range sources {
+			out.Sources[bundle] = name
 		}
 	}
 	return out, nil
@@ -190,6 +199,13 @@ func compile(f file) (Rules, error) {
 			return Rules{}, fmt.Errorf("app priority for %q is %v, want 0 to 1", app, priority)
 		}
 		r.AppPriority[app] = priority
+	}
+	r.Sources = map[string]string{}
+	for bundle, name := range f.Sources {
+		if strings.TrimSpace(name) == "" {
+			return Rules{}, fmt.Errorf("source name for %q must not be empty", bundle)
+		}
+		r.Sources[bundle] = name
 	}
 	return r, nil
 }

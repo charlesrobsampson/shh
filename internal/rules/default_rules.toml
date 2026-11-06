@@ -48,6 +48,17 @@ Messages = 0.7
 Outlook = 0.5
 Mail = 0.4
 
+# Friendly names for macOS bundle ids, used as the notification source everywhere else.
+[sources]
+"com.microsoft.teams2" = "Teams"
+"com.microsoft.teams" = "Teams"
+"com.microsoft.outlook" = "Outlook"
+"com.tinyspeck.slackmacgap" = "Slack"
+"com.apple.mail" = "Mail"
+"com.apple.mobilesms" = "Messages"
+"com.apple.ical" = "Calendar"
+"com.apple.reminders" = "Reminders"
+
 # Notification categories that mean "calendar reminder". Outlook names its reminder categories OLAlertsNotificationReminders...
 [[calendar.category]]
 name = "outlook-reminder"
