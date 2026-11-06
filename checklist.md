@@ -470,6 +470,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Build: decode the archive in `internal/ingest` (pure Go, keys and a few well-known values only, never stored raw) into extra fields on `ingest.Notification` (for example `Thread` kind), pass them through the tailer and worker into `classify.Input`, and replace the text heuristics with the real signal where present. Keep the heuristics as the fallback for apps without it.
 - Tests: archive fixtures built from synthetic data; chat versus channel features differ; the heuristics still apply when the metadata is absent.
 - Manual check: send yourself a channel message and a chat message; the Train tab detail shows the right feature for each.
+- Finding (2026-11-06): a Teams meeting-invite alert has the same category (`actions:`), the same nine metadata keys and `source` = `chats` as a plain chat message, so its metadata cannot tell it apart. Only the text differs (a long body), so invite detection would need text cues, not metadata.
 
 ### 44 · Alert buttons: dismiss, go to, preview
 - [ ] Done
