@@ -177,13 +177,14 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 ## Phase 3: Ingest
 
 ### 16 · macOS notification reader + fake source
-- [ ] Done
+- [x] Done
 - Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/16-ingest-reader` · Depends: 01
 - Read: `plan.md` §2.3, §4.1, §11.1; `captures/meetings.jsonl` (local, private: build a scrubbed fixture, don't commit it)
 - Build: `NotificationSource` interface (`Since(recID)` returning decoded notifications). macOS implementation reads the DB read-only (path probing: `…/group.com.apple.usernoted/db2/db`, then older path), opens a fresh connection per read, decodes the plist (`req.titl/subt/body/cate/iden`, `app`, `date`), converts `delivered_date` from the 2001 epoch. `testkit` fake source supports add/remove records.
 - Tests: tests create a SQLite file with the real schema in a temp dir plus plist blobs built from synthetic notifications; cases: new rows since id, rows removed after reading, corrupt plist is skipped and reported, missing DB gives a clear error, epoch conversion, row with no body.
 - Manual check: `go run ./cmd/shh ingest-dump` (temporary) prints your latest real notifications; nothing is written anywhere.
+- Notes: `internal/ingest`: `Source` interface (`Since(recID) (Batch, error)`), `Notification{RecID, BundleID, Title, Subtitle, Body, Category, Identifier, Delivered}`, `Batch{Notifications, Skipped}` (a record that cannot be decoded goes to `Skipped{RecID, Err}` and never fails the read), `ErrNoDatabase` (lists the probed paths). `ingest.NewMacOS(paths...)` reads the first existing path read-only over a fresh connection per call; `ingest.DefaultPaths(home)` gives the current location then the older `group.com.apple.usernotificationsd/db` one from the plan (the older path is not verified on a real older Mac). Plist decoding uses `howett.net/plist`; `delivered_date` is seconds since 2001 and comes back as UTC. `testkit.FakeSource` (`Add`, `Remove`, `FailWith`, `Since`) hands out `max(id)+1` like SQLite, so removing the newest row makes the next `Add` reuse its id: use it to test the tailer against id reuse. For task 17: macOS reuses record ids and writes rows about 5 s after delivery, and a real run showed three Outlook reminders with identical delivery time (rows 57 to 59), so the tailer should call `Since` with a lookback, dedupe on `(source_rec_id, timestamp)` (the store already does) and on the 10-second same app/title/body rule. Checked against the real database with a throwaway program printing only lengths: 52 notifications, 0 skipped, the database file unchanged.
 
 ### 17 · Tailer: high-water mark, dedupe, backfill
 - [ ] Done
