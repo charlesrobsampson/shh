@@ -222,7 +222,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 ### 20 · Static embeddings L2
 - [ ] Done
-- Session: _(fill on start)_
+- Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/20-embeddings` · Depends: 05, 18
 - Read: `docs/spikes/05-embeddings.md`, `plan.md` §5.1
 - Build: model loading from spike 05 with three sources in order: embedded (`-tags embedmodel`), then `~/.config/shh/models/`, else L2 off with a clear status; sha256 checked against a constant; tokenizer, mean pooling, `Features` adapter appended to L0+L1; feature version includes the model id.
