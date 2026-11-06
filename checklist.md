@@ -188,7 +188,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 ### 17 · Tailer: high-water mark, dedupe, backfill
 - [ ] Done
-- Session: _(fill on start)_
+- Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/17-tailer` · Depends: 06, 08, 16
 - Read: `plan.md` §4.1
 - Build: poll loop on the injected clock using a `NotificationSource`; persist high-water mark; dedupe same app+title+body within 10s; ignore shh's own bundle id; backfill since a given time; map bundle id → friendly source (`com.microsoft.teams2` → Teams, `com.microsoft.outlook` → Outlook, etc., extensible via rules).
