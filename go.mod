@@ -3,6 +3,7 @@ module github.com/charlesrobsampson/shh
 go 1.27.3
 
 require (
+	github.com/alecthomas/kong v1.17.0
 	github.com/pelletier/go-toml/v2 v2.4.3
 	golang.org/x/text v0.43.0
 	howett.net/plist v1.0.1

@@ -283,7 +283,8 @@ internal/judge/        optional zero-shot sidecar client (later)
 internal/decide/       thresholds, tiers, effective-score logic
 internal/alert/        overlay client, fallbacks, config
 internal/summarize/    none/ollama/claude backends
-internal/session/      worker, timer, IPC server/client
+internal/session/      worker, timer, IPC server/client, focus level stack
+internal/replay/       replay harness: classifier over a JSONL file
 internal/store/        sqlite, migrations, queries
 internal/tui/          bubbletea models
 internal/suppress/     banner suppressor (Accessibility watcher)

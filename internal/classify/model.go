@@ -64,6 +64,9 @@ type Model struct {
 	version string
 	dim     int
 
+	// fresh is true until the model has saved weights, so a new install can be seeded once.
+	fresh bool
+
 	bias   float64
 	w      []float64
 	rate   float64
@@ -75,7 +78,7 @@ type Model struct {
 // NewModel loads the weights saved for the extractor's feature version. A version with no saved weights starts fresh (and the
 // undo history, which belongs to an earlier version, is dropped); saved weights that cannot be read are an error.
 func NewModel(s *store.Store, f Features, opts ...ModelOption) (*Model, error) {
-	m := &Model{store: s, version: f.Version(), dim: f.Dim(), w: make([]float64, f.Dim()),
+	m := &Model{store: s, version: f.Version(), dim: f.Dim(), w: make([]float64, f.Dim()), fresh: true,
 		rate: defaultLearningRate, l2: defaultL2, clip: defaultClip, margin: defaultMargin}
 	for _, opt := range opts {
 		opt(m)
@@ -90,7 +93,15 @@ func NewModel(s *store.Store, f Features, opts ...ModelOption) (*Model, error) {
 	if m.bias, err = decodeWeights(blob, m.w); err != nil {
 		return nil, fmt.Errorf("saved weights for %s: %w", m.version, err)
 	}
+	m.fresh = false
 	return m, nil
+}
+
+// Fresh reports whether no weights have ever been saved for this feature version.
+func (m *Model) Fresh() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.fresh
 }
 
 func (m *Model) Predict(v Vector) float64 {
@@ -166,6 +177,7 @@ func (m *Model) Train(notificationID int64, v Vector, l Label) (TrainResult, err
 		m.restore(before)
 		return TrainResult{}, err
 	}
+	m.fresh = false
 	return result, nil
 }
 
