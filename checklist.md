@@ -164,7 +164,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 ### 15 · Decision function
 - [ ] Done
-- Session: _(fill on start)_
+- Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/15-decide` · Depends: 11
 - Read: `plan.md` §4.3
 - Build: `Decide(threshold, baseScore, boost, calendarPreempt)` returns allow/block and the effective score, per `plan.md` §4.3: `S_eff = min(0.99, base + boost)`, interrupt iff calendar pre-empt or `S_eff > threshold/100`. No special case for `lockdown` (it is threshold 99).
