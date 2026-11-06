@@ -60,6 +60,9 @@ type Worker struct {
 
 	mu          sync.Mutex
 	suppressing bool
+
+	subMu       sync.Mutex
+	subscribers map[chan Decision]struct{}
 }
 
 func NewWorker(cfg Config) (*Worker, error) {
@@ -252,10 +255,47 @@ func (w *Worker) handle(e ingest.Event) error {
 	if err != nil {
 		return err
 	}
+	d := Decision{Notification: n, Alerted: alerted}
 	if w.cfg.OnDecision != nil {
-		w.cfg.OnDecision(Decision{Notification: n, Alerted: alerted})
+		w.cfg.OnDecision(d)
 	}
+	w.publish(d)
 	return nil
+}
+
+// subscriberBuffer is how many decisions a subscriber may fall behind before it starts missing them.
+const subscriberBuffer = 64
+
+// Subscribe returns a stream of decisions and a function that ends it. A subscriber that does not keep up misses decisions
+// rather than stalling the pipeline.
+func (w *Worker) Subscribe() (<-chan Decision, func()) {
+	ch := make(chan Decision, subscriberBuffer)
+	w.subMu.Lock()
+	if w.subscribers == nil {
+		w.subscribers = map[chan Decision]struct{}{}
+	}
+	w.subscribers[ch] = struct{}{}
+	w.subMu.Unlock()
+	var once sync.Once
+	return ch, func() {
+		once.Do(func() {
+			w.subMu.Lock()
+			delete(w.subscribers, ch)
+			w.subMu.Unlock()
+			close(ch)
+		})
+	}
+}
+
+func (w *Worker) publish(d Decision) {
+	w.subMu.Lock()
+	defer w.subMu.Unlock()
+	for ch := range w.subscribers {
+		select {
+		case ch <- d:
+		default:
+		}
+	}
 }
 
 func (w *Worker) scheduleReminder(e ingest.Event, notificationID int64) error {
