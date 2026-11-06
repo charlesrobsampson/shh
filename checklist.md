@@ -20,8 +20,8 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Tests: none (scaffolding). `go test ./...` must run (zero tests is fine).
 - Manual check: `task build && ./shh --version` prints a version; `git status --ignored` shows `captures/`, `private/`, databases and the built binary ignored.
 
-### 02 · Spike: "shh" Focus mode via Shortcuts
-- [ ] Done
+### 02 · Spike: suppressing banners (Focus vs Accessibility)
+- [x] Done
 - Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/02-spike-focus` · Depends: 01
 - Context: AppleScript can't toggle Focus on modern macOS. `plan.md` §2.2 proposes a custom Focus "shh" with no allowed people/apps, and Time Sensitive notifications off, toggled via Shortcuts. Must confirm notifications stay recorded in the notification DB while Focus is on (the whole design relies on this).
@@ -29,6 +29,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Build: write `docs/spikes/02-focus.md`. Walk the user through creating the Focus and two Shortcuts (`shh-focus-on`, `shh-focus-off`); run `shortcuts run` from Go/shell; measure latency; verify with Focus on that Teams/Outlook notifications are suppressed on screen but still appear in `…/group.com.apple.usernoted/db2/db`; test whether Outlook's in-app reminder window is suppressed; check Time Sensitive behavior.
 - Tests: none (manual spike).
 - Manual check: with the Focus on, a test notification (`osascript -e 'display notification "x"'`) shows no banner and the row appears in the DB.
+- Notes: **outcome in `docs/spikes/02-focus.md`.** Focus is dropped. The design now uses a banner suppressor (Accessibility watcher, `internal/suppress`, interface `Suppressor`): it moves each Notification Center banner window off-screen; the DB row is still written about 5 s after delivery; banners titled `[shh]` are left visible. Probe scripts are in `spikes/focus-ax/`. Tasks 24, 25, 28, 29, 36 and 38 were updated to match.
 
 ### 03 · Spike: alert banner approach
 - [ ] Done
@@ -247,7 +248,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Session: _(fill on start)_
 - Branch: `task/24-calendar-scheduler` · Depends: 06, 23
 - Read: `plan.md` §4.2, §11.1
-- Build: define the `Alerter` and `FocusController` interfaces (in `internal/alert` and `internal/focus`) with in-memory fakes in `testkit` (the alerter fake records shown banners; the focus fake holds on/off state); then schedule an alert at start − 60s; fire immediately if past; dedupe by title+start; persist in `calendar_events`; re-arm on restart; no double fire.
+- Build: define the `Alerter` and `Suppressor` interfaces (in `internal/alert` and `internal/suppress`) with in-memory fakes in `testkit` (the alerter fake records shown banners; the suppressor fake holds running/stopped state); then schedule an alert at start − 60s; fire immediately if past; dedupe by title+start; persist in `calendar_events`; re-arm on restart; no double fire.
 - Tests (fake clock, fake alerter): fires at T−60s exactly; late reminder fires now; same meeting twice → one alert; restart re-arms pending only; fired events don't refire.
 - Manual check: none.
 
@@ -260,8 +261,8 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Session: _(fill on start)_
 - Branch: `task/25-worker-pipeline` · Depends: 12, 15, 17, 19, 22, 24
 - Read: `plan.md` §3, §4
-- Build: `internal/session` worker wiring tailer → classify → boost → decide → deliver (alerter interface) or store; updates counters; calendar pre-empt path; uses the `Alerter` and `FocusController` interfaces and fakes from task 24.
-- Tests (fakes for source, clock, alerter, focus): at 65% an "outage now" Teams message is alerted and stored `alerted`, a newsletter is blocked and stored `blocked` with reason; escalation expiry changes the next decision; calendar reminder pre-empts at T−60s even in lockdown; focus is turned on when level > 0 and off at 0%.
+- Build: `internal/session` worker wiring tailer → classify → boost → decide → deliver (alerter interface) or store; updates counters; calendar pre-empt path; uses the `Alerter` and `Suppressor` interfaces and fakes from task 24.
+- Tests (fakes for source, clock, alerter, suppressor): at 65% an "outage now" Teams message is alerted and stored `alerted`, a newsletter is blocked and stored `blocked` with reason; escalation expiry changes the next decision; calendar reminder pre-empts at T−60s even in lockdown; the suppressor is started when level > 0 and stopped at 0%.
 - Manual check: none.
 
 ### 26 · IPC server and client
@@ -287,16 +288,16 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Session: _(fill on start)_
 - Branch: `task/28-lifecycle` · Depends: 27, 02
 - Read: `plan.md` §3, `docs/spikes/02-focus.md`
-- Build: detached `shh daemon` re-exec, PID file, single-instance lock, graceful stop (restores Focus), exit when effective level is 0, re-arm a persisted baseline on any command; real macOS `FocusController` from spike 02 (`shortcuts run`) with its fake.
-- Tests: second start doesn't spawn a second worker; stale PID file recovered; stop restores focus-off via the fake; worker exits at level 0; persisted baseline re-armed. Real spawn is covered by the manual check.
-- Manual check: `shh baseline 30%` starts a background process (`ps`), Focus turns on, `shh baseline off` ends it and turns Focus off.
+- Build: detached `shh daemon` re-exec, PID file, single-instance lock, graceful stop (stops the suppressor and restores any parked banner window to 0,0), exit when effective level is 0, re-arm a persisted baseline on any command; real macOS `Suppressor` from spike 02 (a persistent `osascript -l JavaScript` watcher polling about every 50 ms, based on `spikes/focus-ax/ax_filter.js`, leaving `[shh]` banners alone; restart the watcher when the NotificationCenter PID changes and on wake from sleep) with its fake.
+- Tests: second start doesn't spawn a second worker; stale PID file recovered; stop stops the suppressor via the fake; worker exits at level 0; persisted baseline re-armed. Real spawn is covered by the manual check.
+- Manual check: `shh baseline 30%` starts a background process (`ps`), banners from other apps are hidden (a flash under half a second is OK) while the DB still records them, `shh baseline off` ends it and banners show normally again.
 
 ### 29 · Alerter implementation and config
 - [ ] Done
 - Session: _(fill on start)_
 - Branch: `task/29-alerter` · Depends: 03, 10, 25
 - Read: `docs/spikes/03-banner.md`, `plan.md` §7
-- Build: real alerter following the spike's recommendation with config (size, color, position, duration, sound, per-kind/per-source overrides); `osascript` fallback; click opens the source app; `shh alert test`.
+- Build: real alerter following the spike's recommendation with config (size, color, position, duration, sound, per-kind/per-source overrides); `osascript` fallback whose title starts with `[shh]` so the suppressor leaves it visible; click opens the source app; `shh alert test`.
 - Tests: style resolution (defaults → kind → source override) produces the expected request to a fake backend; fallback chosen when helper missing.
 - Manual check: `shh alert test` shows styled banners; changing `config.toml` changes them.
 
@@ -367,7 +368,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Session: _(fill on start)_
 - Branch: `task/36-cli-extras` · Depends: 17, 21, 23, 27
 - Read: `plan.md` §9, §5.3
-- Build: `ls` (read-only, `--source --since --status --min-score`); `train` (batch, `--reset|--rollback|--export|--import`; exports contain private text, so default to `private/` and warn on any other path); `init` (history bootstrap import, Focus Shortcuts check, FDA/DB check); `rules review` (unparsed calendar rows); `doctor` (DB path, notification permissions for apps seen, Focus mode, Time Sensitive reminder, alerter, menubar); `capture` (log raw notifications for rule-building to a gitignored file).
+- Build: `ls` (read-only, `--source --since --status --min-score`); `train` (batch, `--reset|--rollback|--export|--import`; exports contain private text, so default to `private/` and warn on any other path); `init` (history bootstrap import, Accessibility permission check, DB check); `rules review` (unparsed calendar rows); `doctor` (DB path, notification permissions for apps seen, Accessibility permission, suppressor self-test, Outlook new-mail alert setting, alerter, menubar); `capture` (log raw notifications for rule-building to a gitignored file).
 - Tests: `ls` doesn't change flags; `doctor` reports each failing check against fakes; `init` imports history from the fake source; export/import round trip.
 - Manual check: `shh doctor` on your Mac gives a clear checklist.
 
@@ -385,7 +386,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Session: _(fill on start)_
 - Branch: `task/38-packaging` · Depends: 36
 - Read: `plan.md` §12
-- Build: release build target (a `Taskfile.yml` task, optionally using goreleaser), README (install, permissions setup, Focus Shortcuts, config examples), man-style `--help` text review.
+- Build: release build target (a `Taskfile.yml` task, optionally using goreleaser), README (install, permissions setup including Accessibility and Outlook's "Display new message alert on desktop", config examples), man-style `--help` text review.
 - Tests: none.
 - Manual check: a clean install from the built artifact follows the README successfully.
 

@@ -47,3 +47,8 @@ tasks:
     desc: Capture new meeting-style notifications once and exit
     cmds:
       - python3 tools/capture.py --once
+
+  spike:suppress:
+    desc: "Spike 02: run the banner suppressor for 45 s (hides banners except titles starting with [shh])"
+    cmds:
+      - osascript -l JavaScript spikes/focus-ax/ax_filter.js
