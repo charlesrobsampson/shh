@@ -202,7 +202,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 ### 18 · Features L0 + L1
 - [ ] Done
-- Session: _(fill on start)_
+- Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/18-features` · Depends: 13
 - Read: `plan.md` §5.1, §5.3
 - Build: `Features` interface returning a versioned vector. L0: VIP/app priority/mention/1:1 vs channel/urgency-word flags. L1: hashed n-gram text features plus sender/app/category hashes. Feature version string.
