@@ -99,13 +99,14 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Notes: API in `internal/store/notifications.go`: `Notification` (optional ints are pointers: `ThresholdAtDecision`, `UserLabel`; `SourceRecID` and `SessionID` use 0 for none), `InsertNotification` (returns `id, inserted, err`; requires a threshold), `GetNotification`, `ListNotifications(Filter{View, Source, Since, Status, MinScore, Limit})`, `SetRead`, `SetDismissed`, `SetSummary`, `Train(id, Training{Feedback|Label})`, `Untrain`, `ErrNotFound`. Views: `ViewInbox` (not dismissed), `ViewTrain` (not trained). `Train` does not dismiss: the TUI calls `SetDismissed` too when training from the inbox. `MinScore` compares the rounded base score (so 0.57 counts as 57). **Migration 2 changed the dedupe key to `(source_rec_id, timestamp)`** because macOS reuses record ids (spike 02); a repeat with the same pair is ignored, a reused id with a new delivery time is stored. Timestamps are written UTC in a fixed-width text format so SQL ordering is correct.
 
 ### 09 · Store: focus levels repository
-- [ ] Done
+- [x] Done
 - Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/09-store-levels` · Depends: 07
 - Read: `plan.md` §3.1
 - Build: persist layers (baseline, escalations): create, pop, pause/resume with remaining time, set `then_level`, list active stack, close with end time, counters (blocked/allowed).
 - Tests: stack order; pause stores remaining; closing sets end time; reopen DB restores stack.
 - Manual check: none.
+- Notes: API in `internal/store/levels.go`: `Level` (`Kind` baseline/escalation, `Percent` 0-99, `ThenLevel` nil=layer beneath/0=off, `StartTime`, `EndTime` nil while active, `TargetMinutes` for display, `ExpiresAt` for a running timed level, `PausedAt`+`RemainingSecs` for a paused one, `Blocked`/`Allowed`), `PushLevel` (sets `ParentID` to the current top), `ActiveLevels` (bottom first, baseline always at the bottom, last element is the top), `GetLevel`, `CloseLevel(id, end)` (any level, e.g. an expired one below the top), `PopLevel(end)` (top escalation only, `ErrNotFound` if none), `PauseLevel(id, now)` (stores remaining seconds rounded up, clears `ExpiresAt`), `ResumeLevel(id, now)`, `SetThenLevel`, `AddCounts`. **Migration 3** added `expires_at` and a unique index allowing one active baseline, so the engine must close the old baseline before pushing a new one. Not here yet, add in task 12 if needed: change a level's percent (`SetLevel`) and adjust the expiry (`Adjust`).
 
 ### 10 · Config loader
 - [ ] Done
