@@ -110,7 +110,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 ### 10 · Config loader
 - [ ] Done
-- Session: _(fill on start)_
+- Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/10-config` · Depends: 01
 - Read: `plan.md` §7, §7.1, §6
 - Build: `internal/config` loads `~/.config/shh/config.toml` (path overridable) with defaults: alert style (position, size, color, duration, sound, per-kind and per-source overrides), `[menubar] label = "shh"`, summarizer backend (`none`), paths. Unknown keys are errors with a clear message.
