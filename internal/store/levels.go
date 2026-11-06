@@ -202,6 +202,27 @@ func (s *Store) SetThenLevel(id int64, then *int) error {
 	return s.update(id, `UPDATE focus_sessions SET then_level = ? WHERE id = ?`, then, id)
 }
 
+// SetExpiresAt moves the deadline of an active running timed level.
+func (s *Store) SetExpiresAt(id int64, expires time.Time) error {
+	return s.updateActive(id, `UPDATE focus_sessions SET expires_at = ? WHERE id = ? AND end_time IS NULL`, formatTime(expires), id)
+}
+
+// SetRemainingSecs changes the time left on an active paused level.
+func (s *Store) SetRemainingSecs(id int64, secs int) error {
+	if secs < 0 {
+		return fmt.Errorf("store: remaining time %d is negative", secs)
+	}
+	return s.updateActive(id, `UPDATE focus_sessions SET remaining_secs = ? WHERE id = ? AND end_time IS NULL`, secs, id)
+}
+
+// SetPercent changes the threshold of an active level.
+func (s *Store) SetPercent(id int64, percent int) error {
+	if percent < 0 || percent > 99 {
+		return fmt.Errorf("store: level %d is outside 0-99", percent)
+	}
+	return s.updateActive(id, `UPDATE focus_sessions SET focus_percentage = ? WHERE id = ? AND end_time IS NULL`, percent, id)
+}
+
 // AddCounts adds to the blocked and allowed counters of a level.
 func (s *Store) AddCounts(id int64, blocked, allowed int) error {
 	return s.update(id, `UPDATE focus_sessions SET total_blocked = total_blocked + ?, total_allowed = total_allowed + ? WHERE id = ?`, blocked, allowed, id)

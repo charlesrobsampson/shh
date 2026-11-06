@@ -133,13 +133,14 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Notes: package `internal/decide` (`parse.go`): `ParseThreshold("75%"|tier)` returns 0-99 (`MaxLevel` = 99); `ParseLabel("80"|"80%"|tier)` returns 0-100; `ParseDuration("25m")` returns a `time.Duration` (0 = indefinite). Decisions: a threshold must be `N%` or a tier name, a bare number such as `75` is rejected with a hint (ambiguous with decimals and durations), while labels accept bare numbers because the training prompt takes them; tier names are case-insensitive; durations need a unit (`25` is rejected, `0` is allowed), reject negatives and anything non-zero under a second, and accept decimals like `1.5h`. Errors quote the input and say what to write.
 
 ### 12 · Level stack engine
-- [ ] Done
+- [x] Done
 - Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/12-level-stack` · Depends: 06, 09, 11
 - Read: `plan.md` §3.1
 - Build: engine over the store with the injected clock: `SetBaseline`, `Escalate(level, duration, then)` (levels are integers 0–99 from task 11), `Stop`, `StopAll`, `Pause/Resume`, `Adjust(±5m)`, `SetLevel`, `Effective(now)`, expiry handling that pops layers and reverts to the layer beneath (or `then`).
 - Tests (fake clock, table): baseline 30% → escalate 90% 50m → at +50m effective is 30%; `then off` clears baseline; escalation lower than baseline wins while active; pause freezes remaining time; adjust extends/shortens; stop pops top only; stop all clears; indefinite escalation never expires; state survives engine restart from the store.
 - Manual check: none.
+- Notes: lives in `internal/session` (`stack.go`; plan §11 has no separate package). `session.NewStack(store, clock)`; methods `SetBaseline(level)` (0 turns it off), `Escalate(Escalation{Level, Duration, Then, Note})`, `Stop` (top escalation only, `ErrNothingToStop` otherwise), `StopAll`, `Pause`/`Resume` (top timed layer; `ErrNoTimer`, `ErrNotPaused`), `Adjust(delta)`, `SetLevel(level)` (top layer, `ErrNoSession` if empty), `Status()` returning `Status{Level, Layers}` where each `Layer` embeds `store.Level` plus `Timed`, `Paused`, `Remaining`, and `NextExpiry()` for scheduling the worker's wake-up. The stack holds no state, so restarts just reload from the store; expired timers are settled lazily on every call, each closed at its own deadline. Semantics decided here (also in `plan.md` §3.1): `Then` only applies on timer expiry (closes everything beneath, then starts a baseline at X if X is above 0); manual `Stop` ignores it; pause freezes the countdown, not the level; cutting a timer past its end expires it immediately. Added store methods `SetExpiresAt`, `SetRemainingSecs`, `SetPercent`.
 
 ### 13 · Rules file loader
 - [ ] Done
