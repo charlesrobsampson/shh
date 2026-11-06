@@ -100,7 +100,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 ### 09 · Store: focus levels repository
 - [ ] Done
-- Session: _(fill on start)_
+- Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/09-store-levels` · Depends: 07
 - Read: `plan.md` §3.1
 - Build: persist layers (baseline, escalations): create, pop, pause/resume with remaining time, set `then_level`, list active stack, close with end time, counters (blocked/allowed).
