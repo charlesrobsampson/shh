@@ -232,7 +232,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 ### 21 · Seed weights and day-one quality
 - [ ] Done
-- Session: _(fill on start)_
+- Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/21-seed` · Depends: 19, 20
 - Read: `plan.md` §5.3 (cold start)
 - Build: seed training set (synthetic examples of urgent/non-urgent notifications across Teams/Outlook/Slack/Mail/system) shipped in-repo; first run trains the initial weights from it; replay harness: `shh replay <jsonl> --threshold 65%` prints decisions.
