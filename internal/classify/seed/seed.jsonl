@@ -1,0 +1,124 @@
+{"source": "Teams", "sender": "Ana", "title": "Ana", "body": "prod is down, customers cannot check out, need you on the incident call now", "label": 95}
+{"source": "Teams", "sender": "Ben", "title": "Ben", "body": "urgent: can you approve the payment before 3pm today?", "label": 90}
+{"source": "Teams", "sender": "Cara", "title": "Cara", "body": "the deploy failed in production, rolling back, can you join?", "label": 92}
+{"source": "Teams", "sender": "Eli", "title": "Eli", "body": "@you the build is broken on main and blocking the release", "label": 85}
+{"source": "Teams", "sender": "Fay", "title": "Fay", "body": "customer escalation: Acme says they cannot log in and want a call now", "label": 93}
+{"source": "Teams", "sender": "Gus", "title": "Gus", "body": "can you jump on a quick call? it's urgent", "label": 90}
+{"source": "Teams", "sender": "Hana", "title": "Hana", "body": "security incident: suspicious login detected on the admin account", "label": 95}
+{"source": "Teams", "sender": "Ivan", "title": "Ivan", "body": "outage in the payments service, we need all hands in the war room", "label": 98}
+{"source": "Teams", "sender": "Jo", "title": "Jo", "body": "ASAP please: legal needs your signature on the contract today", "label": 88}
+{"source": "Teams", "sender": "Kim", "title": "Kim", "body": "are you there? the site is returning 500 errors", "label": 92}
+{"source": "Teams", "sender": "Leo", "title": "Leo", "body": "the database is unreachable and the app is down, call me", "label": 96}
+{"source": "Teams", "sender": "Mara", "title": "Mara", "body": "we are losing orders right now, checkout is broken", "label": 95}
+{"source": "Teams", "sender": "Nils", "title": "Nils", "body": "need your decision now, the vendor is waiting on the line", "label": 85}
+{"source": "Teams", "sender": "Ola", "title": "Ola", "body": "emergency: the office network is down and the client demo starts in ten minutes", "label": 90}
+{"source": "Teams", "sender": "Pia", "title": "Pia", "body": "can you hop on a call right now? production alerts are firing", "label": 93}
+{"source": "Teams", "sender": "Raj", "title": "Raj", "body": "the migration failed halfway, data is inconsistent, please help immediately", "label": 94}
+{"source": "Teams", "sender": "Sol", "title": "Sol", "body": "@here sev 1 incident, join the bridge", "label": 97}
+{"source": "Outlook", "sender": "Dana Boss", "title": "Urgent: board deck needed by noon", "body": "Urgent: board deck needed by noon", "label": 90, "subtitle": "Please send the final deck as soon as possible"}
+{"source": "Outlook", "sender": "Ops Lead", "title": "Re: production incident", "body": "Sev 1 declared, please join the bridge immediately", "label": 97}
+{"source": "Outlook", "sender": "Account Mgr", "title": "Customer escalation - Acme", "body": "They are threatening to cancel. Need your response today", "label": 88}
+{"source": "Outlook", "sender": "Legal", "title": "Contract signature needed", "body": "Please sign by end of day or the deal falls through", "label": 82}
+{"source": "Outlook", "sender": "CTO", "title": "Outage", "body": "Production is down. Call me as soon as you see this", "label": 98}
+{"source": "Outlook", "sender": "Finance", "title": "Approval needed urgently", "body": "The payment run fails at 4pm unless you approve it now", "label": 86}
+{"source": "Outlook", "sender": "Security Team", "title": "Security incident", "body": "We detected a breach attempt on your account, reset your password now", "label": 94}
+{"source": "Outlook", "sender": "Support Lead", "title": "Escalation: account locked", "body": "Top customer cannot access their account, please respond immediately", "label": 90}
+{"source": "Outlook", "sender": "Calendar", "title": "Weekly Sync", "body": "Weekly Sync starts in 5 minutes", "label": 88, "category": "OLAlertsNotificationRemindersWithJoinAndChatCategoryIdentifier"}
+{"source": "Slack", "sender": "oncall", "title": "oncall", "body": "PagerDuty: checkout-service high error rate triggered", "label": 92}
+{"source": "Slack", "sender": "mia", "title": "mia", "body": "hey, quick question, did you push the fix for the checkout bug?", "label": 75}
+{"source": "Slack", "sender": "nate", "title": "nate", "body": "@channel we are down, all hands", "label": 95}
+{"source": "Slack", "sender": "olive", "title": "olive", "body": "can you review my PR? it's blocking the release", "label": 78}
+{"source": "Slack", "sender": "pete", "title": "pete", "body": "urgent: need access to the prod database right now", "label": 90}
+{"source": "Slack", "sender": "quinn", "title": "quinn", "body": "the api is timing out for every customer, can you look now?", "label": 93}
+{"source": "Slack", "sender": "ruth", "title": "ruth", "body": "incident channel is open, we need an engineer on the payments issue now", "label": 94}
+{"source": "Slack", "sender": "sven", "title": "sven", "body": "@you production deploy is stuck, can you unblock it asap?", "label": 88}
+{"source": "Mail", "sender": "Bank", "title": "Fraud alert", "body": "Fraud alert: suspicious transaction on your card, confirm now", "label": 90}
+{"source": "Mail", "sender": "Airline", "title": "Flight cancelled", "body": "Your flight has been cancelled, rebook immediately", "label": 92}
+{"source": "Mail", "sender": "Landlord", "title": "Urgent: leak", "body": "Water leak in your unit, please call me urgently", "label": 90}
+{"source": "Mail", "sender": "Pharmacy", "title": "Pickup today", "body": "Your prescription is ready but expires today, pick it up before 6pm", "label": 70}
+{"source": "Mail", "sender": "Security", "title": "New sign-in", "body": "Someone signed in to your account from a new device, verify immediately", "label": 88}
+{"source": "Messages", "sender": "Mom", "title": "Mom", "body": "call me when you can, it's important", "label": 85}
+{"source": "Messages", "sender": "Partner", "title": "Partner", "body": "can you pick up the kids? I'm stuck in a meeting", "label": 80}
+{"source": "Messages", "sender": "Doctor's office", "title": "Doctor's office", "body": "Your appointment is today at 3pm, please confirm", "label": 70}
+{"source": "Messages", "sender": "Dad", "title": "Dad", "body": "emergency, please call me right away", "label": 95}
+{"source": "System", "sender": "Calendar", "title": "Interview starting", "body": "Interview with the candidate starts in 10 minutes", "label": 88}
+{"source": "System", "sender": "Security", "title": "Password changed", "body": "Your password was changed. If this was not you, act now", "label": 90}
+{"source": "System", "sender": "Reminders", "title": "Reminder", "body": "Call the plumber about the leak today", "label": 70}
+{"source": "System", "sender": "Calendar", "title": "Appointment", "body": "Dentist appointment in 15 minutes", "label": 80}
+{"source": "Teams", "sender": "Tom", "title": "Tom", "body": "did you see my message about the roadmap?", "label": 60}
+{"source": "Teams", "sender": "Uma", "title": "Uma", "body": "are you free to review my PR today?", "label": 68}
+{"source": "Teams", "sender": "Vic", "title": "Vic", "body": "can you take a look at the design when you get a chance?", "label": 55}
+{"source": "Teams", "sender": "Wes", "title": "Wes", "body": "what time works for our 1:1 tomorrow?", "label": 62}
+{"source": "Teams", "sender": "Xia", "title": "Xia", "body": "do you have the numbers for the Q3 report?", "label": 65}
+{"source": "Teams", "sender": "Yan", "title": "Yan", "body": "quick question about the invoice format", "label": 60}
+{"source": "Teams", "sender": "Zed", "title": "Zed", "body": "can you send me the deployment steps?", "label": 58}
+{"source": "Slack", "sender": "abe", "title": "abe", "body": "anyone around to help with a dev environment issue?", "label": 55}
+{"source": "Slack", "sender": "bea", "title": "bea", "body": "can you share the link to the staging dashboard?", "label": 52}
+{"source": "Outlook", "sender": "Chris", "title": "Re: project plan", "body": "Can you send me your comments on the plan by Friday?", "label": 60}
+{"source": "Outlook", "sender": "Dee", "title": "Hiring plan", "body": "Do you have time to talk about the hiring plan this week?", "label": 55}
+{"source": "Outlook", "sender": "Ed", "title": "Venue booking", "body": "Please confirm the venue booking by tomorrow", "label": 62}
+{"source": "Mail", "sender": "Landlord", "title": "Repair visit", "body": "Could you confirm the repair visit for Tuesday?", "label": 55}
+{"source": "Messages", "sender": "Friend", "title": "Friend", "body": "are we still on for dinner tonight?", "label": 55}
+{"source": "Messages", "sender": "Sibling", "title": "Sibling", "body": "did you get the tickets? they sell out tomorrow", "label": 60}
+{"source": "Teams", "sender": "Fred", "title": "Fred", "body": "reminder: timesheets are due Friday", "label": 45}
+{"source": "Teams", "sender": "Gia", "title": "Gia", "body": "team lunch moved to 1pm", "label": 40}
+{"source": "Teams", "sender": "Hal", "title": "Hal", "body": "PR approved, ready to merge when you are", "label": 45}
+{"source": "Slack", "sender": "ian", "title": "ian", "body": "standup notes are posted in the thread", "label": 35}
+{"source": "Outlook", "sender": "HR", "title": "Expense reports", "body": "Reminder: submit your expense reports by the end of the month", "label": 40}
+{"source": "Outlook", "sender": "Docs", "title": "Comment on Roadmap", "body": "New comment on your document", "label": 40}
+{"source": "Outlook", "sender": "Facilities", "title": "Floor closure", "body": "The fourth floor will be closed for cleaning on Thursday morning", "label": 35}
+{"source": "Mail", "sender": "Courier", "title": "Delivery tomorrow", "body": "Your parcel will arrive tomorrow between 9 and 12", "label": 35}
+{"source": "System", "sender": "Battery", "title": "Low battery", "body": "Battery is at 10 percent, plug in soon", "label": 35}
+{"source": "System", "sender": "Storage", "title": "Storage almost full", "body": "Your disk is almost full", "label": 30}
+{"source": "Mail", "sender": "Weekly Newsletter", "title": "Weekly digest", "body": "10 tips to boost your productivity, unsubscribe any time", "label": 5}
+{"source": "Mail", "sender": "Shop", "title": "Weekend sale", "body": "20% off sale this weekend only, shop now", "label": 3}
+{"source": "Mail", "sender": "Cloud Weekly", "title": "Webinar replay", "body": "Webinar replay: the future of cloud cost management", "label": 5}
+{"source": "Mail", "sender": "Bank", "title": "Statement ready", "body": "Your monthly statement is ready to view", "label": 20}
+{"source": "Mail", "sender": "Store", "title": "New arrivals", "body": "New arrivals you may like, free shipping over 50", "label": 3}
+{"source": "Mail", "sender": "Tech News", "title": "This week in tech", "body": "Newsletter: this week in technology", "label": 5}
+{"source": "Mail", "sender": "Travel Deals", "title": "Travel deals", "body": "Cheap flights to the coast, book now and save", "label": 4}
+{"source": "Mail", "sender": "Marketing", "title": "Trial ending", "body": "Free trial ending in 7 days, upgrade today", "label": 8}
+{"source": "Mail", "sender": "Survey Team", "title": "Feedback", "body": "Survey: how was your experience with us?", "label": 5}
+{"source": "Mail", "sender": "Streaming", "title": "New this week", "body": "New shows added this week, watch now", "label": 3}
+{"source": "Mail", "sender": "Social", "title": "New followers", "body": "You have 3 new followers", "label": 3}
+{"source": "Mail", "sender": "Subscription", "title": "Renewal notice", "body": "Your subscription renews next month", "label": 12}
+{"source": "Mail", "sender": "Loyalty", "title": "Points earned", "body": "You earned 50 points, redeem them in the app", "label": 4}
+{"source": "Mail", "sender": "Courier", "title": "Delivered", "body": "No-reply: your package was delivered to the front desk", "label": 25}
+{"source": "Outlook", "sender": "Newsletter", "title": "Welcome Sam", "body": "Meet our new hire, welcome Sam to the marketing team", "label": 15}
+{"source": "Outlook", "sender": "Comms", "title": "Lunch photos", "body": "FYI: team lunch photos are uploaded to the shared folder", "label": 15}
+{"source": "Outlook", "sender": "Digest", "title": "Activity digest", "body": "14 new comments in channels you follow", "label": 10}
+{"source": "Outlook", "sender": "Intranet", "title": "New like", "body": "Someone liked your post on the company intranet", "label": 8}
+{"source": "Outlook", "sender": "Training", "title": "Compliance training", "body": "Reminder to complete your annual compliance training this quarter", "label": 25}
+{"source": "Outlook", "sender": "Auto-reply", "title": "Automatic reply", "body": "Out of office until Monday, will respond when back", "label": 10}
+{"source": "Outlook", "sender": "Build Bot", "title": "Build succeeded", "body": "Build succeeded for feature-branch", "label": 15}
+{"source": "Outlook", "sender": "IT", "title": "Maintenance window", "body": "Scheduled maintenance this Sunday at 2am, no action needed", "label": 20}
+{"source": "Outlook", "sender": "Events", "title": "All-hands", "body": "Join us for the quarterly all-hands next Thursday", "label": 25}
+{"source": "Outlook", "sender": "Learning", "title": "New course", "body": "New course available: presentation skills", "label": 8}
+{"source": "Outlook", "sender": "Sustainability", "title": "Green office", "body": "Tips for a greener office this month", "label": 5}
+{"source": "Teams", "sender": "Hugo", "title": "Hugo", "body": "thanks!", "label": 5}
+{"source": "Teams", "sender": "Iris", "title": "Iris", "body": "lol", "label": 3}
+{"source": "Teams", "sender": "Jan", "title": "Jan", "body": "good morning team", "label": 5}
+{"source": "Teams", "sender": "Kai", "title": "Kai", "body": "congrats on the launch!", "label": 12}
+{"source": "Teams", "sender": "Lou", "title": "Lou", "body": "sharing the meeting notes from yesterday", "label": 20}
+{"source": "Teams", "sender": "Max", "title": "Max", "body": "FYI the wiki page was updated", "label": 15}
+{"source": "Teams", "sender": "Nia", "title": "Nia", "body": "happy friday everyone", "label": 2}
+{"source": "Teams", "sender": "Oz", "title": "Oz", "body": "no rush on this, whenever you get to it", "label": 20}
+{"source": "Slack", "sender": "pat", "title": "#random", "body": "look at this cat", "label": 2}
+{"source": "Slack", "sender": "quin", "title": "#general", "body": "office is closed on Monday", "label": 15}
+{"source": "Slack", "sender": "rae", "title": "#random", "body": "lunch anyone?", "label": 10}
+{"source": "Slack", "sender": "sid", "title": "#general", "body": "reminder: all-hands next Thursday", "label": 25}
+{"source": "Slack", "sender": "tess", "title": "#announcements", "body": "new release notes are published", "label": 12}
+{"source": "Slack", "sender": "uri", "title": "#reports", "body": "weekly metrics digest is ready", "label": 8}
+{"source": "Slack", "sender": "vera", "title": "#general", "body": "welcome to the channel!", "label": 3}
+{"source": "Messages", "sender": "Group chat", "title": "Group chat", "body": "haha that meme is great", "label": 3}
+{"source": "Messages", "sender": "Friend", "title": "Friend", "body": "sounds good, see you saturday", "label": 15}
+{"source": "Messages", "sender": "Carrier", "title": "Carrier", "body": "Your monthly data usage summary is ready", "label": 8}
+{"source": "System", "sender": "Time Machine", "title": "Time Machine", "body": "Backup completed", "label": 3}
+{"source": "System", "sender": "Wi-Fi", "title": "Wi-Fi", "body": "A new network is available", "label": 3}
+{"source": "System", "sender": "Software Update", "title": "Software Update", "body": "macOS 26.1 is ready to install", "label": 8}
+{"source": "System", "sender": "App Store", "title": "App Store", "body": "Updates are available for 4 apps", "label": 8}
+{"source": "System", "sender": "Photos", "title": "Memories", "body": "A new memory is ready for you", "label": 3}
+{"source": "System", "sender": "News", "title": "News", "body": "Today's top stories", "label": 4}
+{"source": "System", "sender": "Screen Time", "title": "Screen Time", "body": "Your weekly screen time report is ready", "label": 5}
+{"source": "System", "sender": "Weather", "title": "Weather", "body": "Light rain expected this afternoon", "label": 8}
+{"source": "System", "sender": "Music", "title": "Music", "body": "New releases from artists you follow", "label": 3}

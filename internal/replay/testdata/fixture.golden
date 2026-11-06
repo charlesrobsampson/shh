@@ -1,0 +1,7 @@
+ALERT  92 +40 =  99  Teams    Lena: the website is down again, can you check ASAP?  [label 90]
+muted   6 +0  =   6  Mail     Daily Deals: 30% off everything today only, unsubscribe at any time  [label 3]
+ALERT  75 +40 =  99  Slack    ops: urgent: payments are failing for all customers
+muted  34 +0  =  34  Teams    Sam: FYI the slides from the town hall are posted  [label 15]
+muted  52 +0  =  52  Outlook  Priya: Can you send me your comments by Friday?
+muted   6 +0  =   6  System   Software Update: A new update is available, install tonight
+6 notifications: 2 alerted, 4 muted at threshold 65%
