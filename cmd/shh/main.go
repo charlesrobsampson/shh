@@ -1,12 +1,27 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
+	"os/exec"
+	"os/signal"
+	"path/filepath"
+	"syscall"
+	"time"
 
+	"github.com/charlesrobsampson/shh/internal/alert"
+	"github.com/charlesrobsampson/shh/internal/classify"
 	"github.com/charlesrobsampson/shh/internal/cli"
+	"github.com/charlesrobsampson/shh/internal/clock"
 	"github.com/charlesrobsampson/shh/internal/config"
+	"github.com/charlesrobsampson/shh/internal/ingest"
+	"github.com/charlesrobsampson/shh/internal/rules"
+	"github.com/charlesrobsampson/shh/internal/session"
+	"github.com/charlesrobsampson/shh/internal/store"
+	"github.com/charlesrobsampson/shh/internal/suppress"
 )
 
 var version = "dev"
@@ -17,23 +32,113 @@ func main() {
 
 func realEnv() cli.Env {
 	env := cli.Env{Stdout: os.Stdout, Stderr: os.Stderr, Version: version, Label: "shh", IsTerminal: isTerminal(os.Stdout)}
-	path, err := config.DefaultPath()
-	if err == nil {
-		var cfg config.Config
-		if cfg, err = config.Load(path); err == nil {
-			env.SocketPath, env.ConfigDir, env.Label = cfg.Paths.Socket, cfg.Paths.Dir, cfg.Menubar.Label
-		}
-	}
+	cfg, err := loadConfig()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "shh: cannot read the configuration:", err)
 		os.Exit(1)
 	}
-	// Starting the worker in the background arrives with `shh daemon` (task 28).
-	env.Spawn = func() error { return errors.New("shh cannot start its worker yet") }
+	env.SocketPath, env.ConfigDir, env.Label = cfg.Paths.Socket, cfg.Paths.Dir, cfg.Menubar.Label
+	env.Spawn = func() error { return spawnDaemon(cfg) }
+	env.PersistedFocus = func() bool { return persistedFocus(cfg.Paths.DB) }
+	env.Daemon = func(context.Context) error { return runDaemon(cfg) }
 	return env
+}
+
+func loadConfig() (config.Config, error) {
+	path, err := config.DefaultPath()
+	if err != nil {
+		return config.Config{}, err
+	}
+	return config.Load(path)
 }
 
 func isTerminal(f *os.File) bool {
 	info, err := f.Stat()
 	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
+// spawnDaemon starts `shh daemon` as a detached background process whose output goes to the log file.
+func spawnDaemon(cfg config.Config) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(cfg.Paths.Dir, 0o700); err != nil {
+		return err
+	}
+	logFile, err := os.OpenFile(filepath.Join(cfg.Paths.Dir, "shh.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer logFile.Close()
+	cmd := exec.Command(exe, "daemon")
+	cmd.Stdout, cmd.Stderr = logFile, logFile
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	return cmd.Process.Release()
+}
+
+// persistedFocus reports whether the database holds an active focus level, without creating a database that is not there.
+func persistedFocus(dbPath string) bool {
+	if _, err := os.Stat(dbPath); err != nil {
+		return false
+	}
+	s, err := store.Open(dbPath)
+	if err != nil {
+		return false
+	}
+	defer s.Close()
+	levels, err := s.ActiveLevels()
+	return err == nil && len(levels) > 0
+}
+
+// runDaemon is the background worker: real notification source, real banner suppressor, and a log line standing in for the
+// alerter until the banner alerter exists.
+func runDaemon(cfg config.Config) error {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+	logger := log.New(os.Stderr, "", log.LstdFlags)
+	onError := func(err error) { logger.Println("error:", err) }
+
+	if err := os.MkdirAll(cfg.Paths.Dir, 0o700); err != nil {
+		return err
+	}
+	db, err := store.Open(cfg.Paths.DB)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	r, err := rules.Load(filepath.Join(cfg.Paths.Dir, "rules.toml"))
+	if err != nil {
+		return err
+	}
+	embedder, _, err := classify.ResolveEmbedder(filepath.Join(cfg.Paths.Dir, "models"), classify.DefaultModelSHA256)
+	if errors.Is(err, classify.ErrNoEmbeddingModel) {
+		logger.Println("note:", err, "- running without the embedding layer")
+		embedder = nil
+	} else if err != nil {
+		return err
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	worker, err := session.NewWorker(session.Config{
+		Store: db, Source: ingest.NewMacOS(ingest.DefaultPaths(home)...), Clock: clock.Real{}, Rules: r, Embedder: embedder,
+		Alerter:    alert.NewLog(os.Stderr),
+		Suppressor: suppress.NewAccessibility(suppress.AccessibilityConfig{OwnPrefix: ingest.OwnTitlePrefix, OnError: onError}),
+		Location:   time.Local, OnError: onError,
+	})
+	if err != nil {
+		return err
+	}
+	logger.Println("shh worker started")
+	defer logger.Println("shh worker stopped")
+	return session.RunDaemon(ctx, session.DaemonConfig{
+		Worker: worker, Clock: clock.Real{}, SocketPath: cfg.Paths.Socket,
+		LockPath: filepath.Join(cfg.Paths.Dir, "shh.lock"), PIDPath: cfg.Paths.PID, OnError: onError,
+	})
 }

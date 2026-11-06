@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -153,6 +154,15 @@ func (c *uiCmd) Run(env *Env) error {
 		return env.TUI()
 	}
 	return (&statusCmd{}).Run(env)
+}
+
+type daemonCmd struct{}
+
+func (c *daemonCmd) Run(env *Env) error {
+	if env.Daemon == nil {
+		return errors.New("this build cannot run the worker")
+	}
+	return env.Daemon(context.Background())
 }
 
 type replayCmd struct {

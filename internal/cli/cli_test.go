@@ -533,3 +533,90 @@ func TestReplayStillWorks(t *testing.T) {
 		t.Errorf("replay with a bad threshold exited %d, want 2", code)
 	}
 }
+
+func TestAnyCommandRearmsAPersistedBaseline(t *testing.T) {
+	r := newRig(t, false)
+	r.worker.SetBaseline(30) // what a worker left behind in the store before the machine restarted
+	r.env.PersistedFocus = func() bool { return true }
+	r.env.Spawn = func() error { r.spawns++; r.serve(); return nil }
+
+	out := r.mustRun("status")
+	if r.spawns != 1 || !strings.Contains(out, "30%") {
+		t.Fatalf("spawns=%d output=%q; want a worker started for the persisted baseline and reporting it", r.spawns, out)
+	}
+	r.mustRun("status")
+	if r.spawns != 1 {
+		t.Errorf("a running worker was spawned again (%d spawns)", r.spawns)
+	}
+}
+
+func TestStopEndsAPersistedBaselineThatHadNoWorker(t *testing.T) {
+	r := newRig(t, false)
+	r.worker.SetBaseline(30)
+	r.env.PersistedFocus = func() bool { return true }
+	r.env.Spawn = func() error { r.serve(); return nil }
+	r.mustRun("stop", "--all")
+	if st := r.status(); st.Level != 0 {
+		t.Fatalf("level = %d after stop --all, want 0", st.Level)
+	}
+}
+
+func TestNothingIsRearmedWithoutPersistedFocus(t *testing.T) {
+	r := newRig(t, false)
+	r.env.PersistedFocus = func() bool { return false }
+	r.env.Spawn = func() error { r.spawns++; r.serve(); return nil }
+	if code := r.run("status"); code != 0 || r.spawns != 0 {
+		t.Fatalf("exit %d, %d spawns; want none when nothing was persisted", code, r.spawns)
+	}
+}
+
+func TestAFailedRearmDoesNotBlockTheCommand(t *testing.T) {
+	r := newRig(t, false)
+	r.env.PersistedFocus = func() bool { return true }
+	r.env.Spawn = func() error { return errors.New("cannot start") }
+	if code := r.run("status"); code != 0 || !strings.Contains(r.out.String(), "off") {
+		t.Fatalf("exit %d, stdout %q; status should still answer", code, r.out.String())
+	}
+	if !strings.Contains(r.err.String(), "cannot start") {
+		t.Errorf("stderr %q should say why the saved session was not resumed", r.err.String())
+	}
+}
+
+func TestTheDaemonAndReplayCommandsDoNotRearm(t *testing.T) {
+	r := newRig(t, false)
+	r.env.PersistedFocus = func() bool { return true }
+	r.env.Spawn = func() error { r.spawns++; return nil }
+	r.env.Daemon = func(context.Context) error { return nil }
+	input := filepath.Join(t.TempDir(), "in.jsonl")
+	os.WriteFile(input, []byte(`{"source":"Teams","title":"Ana","body":"hi"}`+"\n"), 0o600)
+	r.run("daemon")
+	r.run("replay", input)
+	if r.spawns != 0 {
+		t.Fatalf("%d spawns, want none: a daemon must not spawn itself and replay needs no worker", r.spawns)
+	}
+}
+
+func TestTheDaemonCommandRunsTheWorkerInTheForeground(t *testing.T) {
+	r := newRig(t, false)
+	ran := 0
+	r.env.Daemon = func(context.Context) error { ran++; return nil }
+	if code := r.run("daemon"); code != 0 || ran != 1 {
+		t.Fatalf("exit %d, ran %d times", code, ran)
+	}
+	r.env.Daemon = func(context.Context) error { return errors.New("already running") }
+	if code := r.run("daemon"); code != 1 || !strings.Contains(r.err.String(), "already running") {
+		t.Fatalf("exit %d, stderr %q; want the failure reported", code, r.err.String())
+	}
+	r.env.Daemon = nil
+	if code := r.run("daemon"); code != 1 {
+		t.Errorf("a daemon command with nothing to run exited %d, want 1", code)
+	}
+}
+
+func TestTheDaemonCommandIsHiddenFromHelp(t *testing.T) {
+	r := newRig(t, false)
+	r.run("--help")
+	if strings.Contains(r.out.String()+r.err.String(), "daemon") {
+		t.Error("the internal daemon command shows up in --help")
+	}
+}
