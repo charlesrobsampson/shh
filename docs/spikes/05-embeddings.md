@@ -2,7 +2,7 @@
 
 Question: which small static embedding model do we bundle with `go:embed` for classifier layer L2, and how do we tokenize in pure Go? (`plan.md` §5.1)
 
-Candidates are the Model2Vec "potion" family from `minishlab` on Hugging Face (all MIT). Files are downloaded by `task spike:embeddings:fetch` into the gitignored `private/models/`; nothing large is committed. Prototype: `spikes/embeddings/` (own Go module; `task spike:embeddings`).
+Candidates are the Model2Vec "potion" family from `minishlab` on Hugging Face (all MIT). Files are downloaded by `task model:fetch` into the gitignored `private/models/`; nothing large is committed. Prototype: `spikes/embeddings/` (own Go module; `task spike:embeddings`).
 
 ## Candidates
 

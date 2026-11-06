@@ -44,3 +44,4 @@ venv/
 .vscode/
 *.swp
 .claude/settings.local.json
+internal/classify/assets/*.bin

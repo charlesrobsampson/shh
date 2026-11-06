@@ -68,6 +68,11 @@ type Features interface {
 
 type Option func(*L0L1)
 
+// WithEmbedder appends the text's embedding after the hashed features (layer 2). The embedder's ID becomes part of the version.
+func WithEmbedder(e Embedder) Option {
+	return func(f *L0L1) { f.embedder = e }
+}
+
 // WithDim sets the vector size; it must leave room for hashed features after the L0 block.
 func WithDim(dim int) Option {
 	return func(f *L0L1) { f.dim = dim }
@@ -75,7 +80,8 @@ func WithDim(dim int) Option {
 
 // L0L1 combines layer 0 (rules and priors) with layer 1 (hashed words, phrases, sender, app and category).
 type L0L1 struct {
-	dim         int
+	dim         int // the hashed part; the embedding, if any, comes after it
+	embedder    Embedder
 	rules       rules.Rules
 	vipSenders  []string
 	vipApps     []string
@@ -105,7 +111,14 @@ func NewL0L1(r rules.Rules, opts ...Option) (*L0L1, error) {
 	return f, nil
 }
 
-func (f *L0L1) Dim() int        { return f.dim }
+// Dim is the full vector size: the hashed features plus the embedding.
+func (f *L0L1) Dim() int {
+	if f.embedder == nil {
+		return f.dim
+	}
+	return f.dim + f.embedder.Dim()
+}
+
 func (f *L0L1) Version() string { return f.versionText }
 
 func (f *L0L1) Extract(in Input) Vector {
@@ -162,6 +175,13 @@ func (f *L0L1) Extract(in Input) Vector {
 	if category := strings.ToLower(strings.TrimSpace(in.Category)); category != "" {
 		acc.add(f.hashed("c:", category), 1, "category: "+category)
 	}
+	if f.embedder != nil {
+		for i, v := range f.embedder.Embed(text) {
+			if v != 0 {
+				acc.add(f.dim+i, float64(v), "meaning")
+			}
+		}
+	}
 	return acc.vector()
 }
 
@@ -191,8 +211,15 @@ func (f *L0L1) fingerprint() string {
 	for _, key := range keys {
 		fmt.Fprintf(&b, "priority %s=%v\n", key, f.priorities[key].value)
 	}
+	if f.embedder != nil {
+		fmt.Fprintf(&b, "embedder=%s dim=%d\n", f.embedder.ID(), f.embedder.Dim())
+	}
 	sum := sha256.Sum256([]byte(b.String()))
-	return "l0l1-" + hex.EncodeToString(sum[:])[:12]
+	version := "l0l1-" + hex.EncodeToString(sum[:])[:12]
+	if f.embedder != nil {
+		version += "+" + f.embedder.ID()
+	}
+	return version
 }
 
 func tokenize(text string) []string {
