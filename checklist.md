@@ -65,13 +65,14 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Notes: **outcome in `docs/spikes/05-embeddings.md`.** Recommend `minishlab/potion-base-8M` (MIT, 256 dims, 29,528-token BERT WordPiece vocab), quantized to int8 (7.7 MB, lossless in practice). Go tokenizer prototype matches the Python reference exactly (cosine 1.0000); needs `golang.org/x/text/unicode/norm`. **Asset distribution is decided (see `plan.md` §5.1): not committed; embedded under `-tags embedmodel`, otherwise downloaded by `shh init` from a pinned `models-v1` GitHub release asset with a sha256 check.** Run with `task spike:embeddings:fetch` then `task spike:embeddings`.
 
 ### 06 · Clock package and fake
-- [ ] Done
+- [x] Done
 - Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/06-clock` · Depends: 01
 - Read: `process.md` §4
 - Build: `internal/clock` (interface with `Now()` and timer/ticker creation) + real implementation; `internal/testkit` fake clock whose time advances only via `Advance(d)` and fires timers deterministically.
 - Tests: table cases: timer fires only after enough `Advance`; multiple timers fire in order; stopped timer never fires; ticker fires N times for N intervals.
 - Manual check: none (library).
+- Notes: `clock.Clock` has `Now`, `NewTimer`, `AfterFunc` (used for "run at T−60s") and `NewTicker`; `clock.Real{}` is the wall clock. `testkit.NewFakeClock(start)` returns a `*FakeClock` whose time only moves with `Advance(d)`; callbacks run synchronously inside `Advance` in deadline order (ties in creation order) and may schedule more timers that fire in the same call. Fake ticker channels are buffered so one `Advance` over many intervals delivers every tick. Stop and Reset discard unread ticks (Go 1.23 semantics).
 
 ---
 
