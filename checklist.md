@@ -242,7 +242,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 ### 22 · Decision reasons
 - [ ] Done
-- Session: _(fill on start)_
+- Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/22-reasons` · Depends: 19, 14
 - Read: `plan.md` §4.3, §8
 - Build: short human-readable `reason` (top contributing features and any boost) returned with each prediction; stored with the notification.
