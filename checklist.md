@@ -90,7 +90,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 ### 08 · Store: notifications repository
 - [ ] Done
-- Session: _(fill on start)_
+- Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/08-store-notifications` · Depends: 07
 - Read: `plan.md` §8 (flag table), §10; `manifest.md` §5.1
 - Build: insert (dedupe on `source_rec_id`), list with filters (source, since, status, min score on the 0–100 display scale (stored 0–1), tab views: inbox = not dismissed, train = not trained), update flags (`is_read`, `is_dismissed_inbox`, `is_trained` + `user_feedback` / `user_label`), set summary; every inserted row records `threshold_at_decision`. Define the public types here.
