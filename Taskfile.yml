@@ -52,3 +52,8 @@ tasks:
     desc: "Spike 02: run the banner suppressor for 45 s (hides banners except titles starting with [shh])"
     cmds:
       - osascript -l JavaScript spikes/focus-ax/ax_filter.js
+
+  spike:banner:
+    desc: 'Spike 03: show a sample overlay banner (OVERLAY_JSON env overrides style, e.g. OVERLAY_JSON=''{"color":"#0a84ff"}'')'
+    cmds:
+      - osascript -l JavaScript spikes/banner/overlay.js

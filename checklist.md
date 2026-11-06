@@ -32,7 +32,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Notes: **outcome in `docs/spikes/02-focus.md`.** Focus is dropped. The design now uses a banner suppressor (Accessibility watcher, `internal/suppress`, interface `Suppressor`): it moves each Notification Center banner window off-screen; the DB row is still written about 5 s after delivery; banners titled `[shh]` are left visible. Probe scripts are in `spikes/focus-ax/`. Tasks 24, 25, 28, 29, 36 and 38 were updated to match.
 
 ### 03 · Spike: alert banner approach
-- [ ] Done
+- [x] Done
 - Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/03-spike-banner` · Depends: 01
 - Context: need custom banners (size, color, position, sound, duration, click to open app) without a second toolchain if possible. `plan.md` §7 lists options: `osascript`, a Go-driven approach, or a small Swift helper.
@@ -40,6 +40,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Build: `docs/spikes/03-banner.md`. Try pure-Go/CGo-free approaches first (e.g. `osascript` with JXA/AppKit, or spawning a tiny prebuilt helper). State clearly which of size/color/position/sound/duration/click each approach can do. Recommend one. Code under `spikes/banner/`.
 - Tests: none.
 - Manual check: user sees a sample banner in each tested style and approves the recommended approach.
+- Notes: **outcome in `docs/spikes/03-banner.md`.** Use the JXA/AppKit overlay (`spikes/banner/overlay.js`, `task spike:banner`), not Swift. Task 29 builds the real alerter: a persistent JXA process fed JSON lines, with the `[shh]`-titled `osascript` fallback. JXA gotchas (zero-arg methods are properties, `NSBox` for the background, subclass `mouseDown:` for clicks) are in the doc.
 
 ### 04 · Spike: menu bar countdown
 - [ ] Done

@@ -179,7 +179,7 @@ Pure function, easily tested. Keyword list (`now`, `ASAP`, `urgent`, `prod`, `do
 ---
 
 ## 7. Alert banners (customizable)
-- A small native helper (Swift, built into the release as `shh-overlay`) draws the banner. Go talks to it over a unix socket or stdin JSON.
+- **[DECIDED, spike 03, `docs/spikes/03-banner.md`]** A persistent `osascript -l JavaScript` helper (AppKit through JXA, embedded in the Go binary, no Swift, no compile step) draws the banner in its own window, so the banner suppressor (§2.2) never hides it. Go talks to it over stdin JSON lines. Size, color, position, sound, duration and click-to-open are all supported. Verified over full-screen apps (Ghostty, Teams call). Untested so far: other Spaces, stacking, multiple displays.
 - Config (`~/.config/shh/config.toml`):
   ```toml
   [alert]
@@ -203,7 +203,7 @@ Pure function, easily tested. Keyword list (`now`, `ASAP`, `urgent`, `prod`, `do
 - Goal: always-visible countdown with no floating window. Example title: `shh 28m · 65%`, or `shh 30%` for an indefinite baseline, and `shh ⏸` while paused. The label is configurable (`[menubar] label = "shh"`, any text or emoji).
 - Implementation **[ASSUMED, verify in spike]**: a separate `shh menubar` process (launched by the worker, quits with it) using a pure-Go tray library such as `fyne.io/systray`. It supports text next to the icon on macOS and the StatusNotifier tray on Linux. It polls the worker's socket once per second.
 - Menu items: current stack (baseline + escalations), pause/resume, ±5m, change %, stop, open TUI, view blocked count.
-- Fallbacks if the tray lib doesn't fit: (1) a Swift helper shared with the banner overlay (a second toolchain), or (2) text-only `shh status --short` for prompts, tmux, SwiftBar/xbar.
+- Fallbacks if the tray lib doesn't fit: (1) a JXA/AppKit helper like the banner overlay (or Swift, a second toolchain), or (2) text-only `shh status --short` for prompts, tmux, SwiftBar/xbar.
 - No floating window, per requirements.
 
 ---
@@ -360,13 +360,13 @@ Decided:
 2. Out-of-box quality with no external service: priors + bundled static embeddings + history bootstrap.
 3. Python judge (Laya/Jev) only if the offline eval shows it helps.
 4. Pure-Go SQLite (`modernc.org/sqlite`).
-5. Swift only if the overlay/menu bar can't be done well in Go. Spike decides. Linux support designed in via interfaces, shipped later.
+5. Swift only if the menu bar can't be done well in Go (the overlay needs no Swift: spike 03). Linux support designed in via interfaces, shipped later.
 6. No Focus mode: an Accessibility banner suppressor (spike 02). shh alerts use their own overlay, never Notification Center.
 
 Still open:
 - Can an escalation be *lower* than the baseline? **[ASSUMED yes]**
 - Should `--then off` clear the baseline too, or only the escalation? **[ASSUMED clears baseline]**
-- Can the banner overlay be good enough in pure Go/`osascript`, or is Swift needed? (M0 spike)
+- ~~Can the banner overlay be good enough in pure Go/`osascript`, or is Swift needed?~~ **Decided (spike 03): `osascript` with JXA/AppKit is enough, no Swift.**
 - Tray library choice and whether it shows live text (M0 spike).
 - Static-embedding model choice (M0/M2).
 - Real Outlook/Teams meeting notification samples for calendar rules (M0).
