@@ -146,7 +146,7 @@ Where it *does* fit: as **L3 feature provider**, a Python sidecar answering fixe
 
 **Decision rule for L3 (python is acceptable if it earns its keep):** don't guess, measure. After M3 we'll have a labeled set of real notifications (see §5.3 bootstrapping). Run an offline Python script that scores that set with Laya (calibrated on a held-out part) and compare against L0+L1+L2 using the replay harness (§13). Adopt L3 only if it measurably improves precision/recall of "should have alerted", especially in the first week of use. Core must remain fully functional without it.
 
-**Out-of-box quality without any external system** comes from: (a) L0 priors/seed weights, (b) bundled static embeddings, (c) bootstrapping from history below. Caveat: I haven't verified candidate static-embedding model sizes/quality. That's an M0/M2 check.
+**Out-of-box quality without any external system** comes from: (a) L0 priors/seed weights, (b) bundled static embeddings, (c) bootstrapping from history below. **[DECIDED, spike 05, `docs/spikes/05-embeddings.md`]** `minishlab/potion-base-8M` quantized to int8 (7.7 MB), BERT WordPiece tokenizer implemented in Go; verified against the reference library.
 
 ### 5.3 Model and learning
 - `p = σ(w·x + b)` is the score `S_base`. Training is soft-target logistic SGD: `w ← w + α (t − p) x` (the manifest formula plus the sigmoid and a bias), where `t` is the target score in [0,1].

@@ -54,7 +54,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Notes: **outcome in `docs/spikes/04-menubar.md`.** Use the JXA `NSStatusItem` helper (`spikes/menubar/statusitem.js`), not `fyne.io/systray` (CGo, jittery width). Task 30 therefore drives a persistent JXA helper over JSON lines; no CGo. Run the prototypes with `task spike:menubar` (systray) and `task spike:menubar:jxa`.
 
 ### 05 · Spike: static embedding model choice
-- [ ] Done
+- [x] Done
 - Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/05-spike-embeddings` · Depends: 01
 - Context: layer L2 needs small pure-Go embeddings bundled via `go:embed` (Model2Vec-style: token lookup + mean pooling). Binary size and quality matter.
@@ -62,6 +62,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Build: `docs/spikes/05-embeddings.md`. Evaluate 2–3 candidate small static embedding models (license, size, vocab/tokenizer needs, dims). Prototype loading and embedding in Go; sanity-check similarity on ~20 hand-written notification examples (urgent vs newsletter). Recommend one with size and a plan for the tokenizer. Do not commit large model files without the user's OK.
 - Tests: none.
 - Manual check: user reviews the recommendation, size, and similarity sanity results.
+- Notes: **outcome in `docs/spikes/05-embeddings.md`.** Recommend `minishlab/potion-base-8M` (MIT, 256 dims, 29,528-token BERT WordPiece vocab), quantized to int8 (7.7 MB, lossless in practice). Go tokenizer prototype matches the Python reference exactly (cosine 1.0000); needs `golang.org/x/text/unicode/norm`. Task 20 must ask the user how to ship the asset (commit ~8 MB vs a Taskfile task that downloads and quantizes it); do not commit it without their OK. Run with `task spike:embeddings:fetch` then `task spike:embeddings`.
 
 ### 06 · Clock package and fake
 - [ ] Done

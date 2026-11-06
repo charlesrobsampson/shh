@@ -70,3 +70,19 @@ tasks:
       CGO_ENABLED: "1"
     cmds:
       - go run .
+
+  spike:embeddings:
+    desc: "Spike 05: compare the candidate models (run spike:embeddings:fetch first)"
+    dir: spikes/embeddings
+    cmds:
+      - go run . ../../private/models
+
+  spike:embeddings:fetch:
+    desc: "Spike 05: download candidate Model2Vec models into private/models (gitignored)"
+    cmds:
+      - for: [potion-base-2M, potion-base-4M, potion-base-8M]
+        cmd: |
+          mkdir -p private/models/{{.ITEM}}
+          for f in config.json tokenizer.json model.safetensors README.md; do
+            curl -sSL --fail -o private/models/{{.ITEM}}/$f https://huggingface.co/minishlab/{{.ITEM}}/resolve/main/$f
+          done
