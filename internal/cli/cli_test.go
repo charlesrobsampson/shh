@@ -631,14 +631,17 @@ func TestAlertTestShowsASampleInEachStyle(t *testing.T) {
 
 	out := r.mustRun("alert", "test")
 	shown := fake.Shown()
-	if len(shown) != 4 {
-		t.Fatalf("%d alerts shown, want a message, a calendar alert and one per configured source: %+v", len(shown), shown)
+	if len(shown) != 5 {
+		t.Fatalf("%d alerts shown, want a message, a calendar alert, a long message and one per configured source: %+v", len(shown), shown)
 	}
 	if shown[0].Kind != config.KindMessage || shown[1].Kind != config.KindCalendar {
 		t.Errorf("kinds = %v, %v; want message then calendar", shown[0].Kind, shown[1].Kind)
 	}
-	if shown[2].Source != "Outlook" || shown[3].Source != "Slack" || shown[2].Kind != config.KindMessage {
-		t.Errorf("per-source samples = %+v, %+v", shown[2], shown[3])
+	if len([]rune(shown[2].Body)) < 200 {
+		t.Errorf("the third sample should be long enough to need Preview: %q", shown[2].Body)
+	}
+	if shown[3].Source != "Outlook" || shown[4].Source != "Slack" || shown[3].Kind != config.KindMessage {
+		t.Errorf("per-source samples = %+v, %+v", shown[3], shown[4])
 	}
 	for _, a := range shown {
 		if a.Title == "" || a.Body == "" {

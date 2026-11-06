@@ -50,13 +50,13 @@ func TestStyleIsResolvedBeforeItReachesTheBackend(t *testing.T) {
 		wantH     int
 	}{
 		{"a plain message uses the base style", alert.Alert{Kind: config.KindMessage, Source: "Teams", Title: "Ana", Body: "hi"},
-			config.Style{Position: "top-right", Size: "small", Color: "#111111", DurationSecs: 8, Sound: "Glass"}, 280, 64},
-		{"a calendar alert uses the kind override", alert.Alert{Kind: config.KindCalendar, Source: "Calendar", Title: "Sync"},
-			config.Style{Position: "top-right", Size: "small", Color: "#0a84ff", DurationSecs: 8, Sound: "Hero"}, 280, 64},
-		{"a source override applies to its messages", alert.Alert{Kind: config.KindMessage, Source: "Slack", Title: "ops"},
-			config.Style{Position: "bottom-left", Size: "large", Color: "#111111", DurationSecs: 8, Sound: "none"}, 460, 64},
-		{"a longer body makes the banner taller", alert.Alert{Kind: config.KindMessage, Source: "Teams", Title: "Ana", Body: strings.Repeat("word ", 20)},
 			config.Style{Position: "top-right", Size: "small", Color: "#111111", DurationSecs: 8, Sound: "Glass"}, 280, 96},
+		{"a calendar alert uses the kind override", alert.Alert{Kind: config.KindCalendar, Source: "Calendar", Title: "Sync"},
+			config.Style{Position: "top-right", Size: "small", Color: "#0a84ff", DurationSecs: 8, Sound: "Hero"}, 280, 96},
+		{"a source override applies to its messages", alert.Alert{Kind: config.KindMessage, Source: "Slack", Title: "ops"},
+			config.Style{Position: "bottom-left", Size: "large", Color: "#111111", DurationSecs: 8, Sound: "none"}, 460, 96},
+		{"a longer body makes the banner taller", alert.Alert{Kind: config.KindMessage, Source: "Teams", Title: "Ana", Body: strings.Repeat("word ", 20)},
+			config.Style{Position: "top-right", Size: "small", Color: "#111111", DurationSecs: 8, Sound: "Glass"}, 280, 128},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -172,5 +172,98 @@ func TestWithNoBackendsAtAllShowReportsIt(t *testing.T) {
 	cfg := loadConfig(t, "")
 	if err := alert.NewDisplay(cfg.Alert, nil, nil, nil).Show(alert.Alert{Title: "x"}); err == nil || !strings.Contains(err.Error(), "no way") {
 		t.Fatalf("err = %v, want a clear 'no way to show alerts' error", err)
+	}
+}
+
+func shown(t *testing.T, cfgText string, in alert.Alert) alert.Request {
+	t.Helper()
+	cfg := loadConfig(t, cfgText)
+	primary := &recordingBackend{}
+	if err := alert.NewDisplay(cfg.Alert, primary, nil, nil).Show(in); err != nil {
+		t.Fatal(err)
+	}
+	return primary.requests[0]
+}
+
+func buttonTypes(r alert.Request) string {
+	var out []string
+	for _, b := range r.Buttons {
+		out = append(out, b.Type)
+	}
+	return strings.Join(out, ",")
+}
+
+const longBody = "This message is long enough that the collapsed banner has to cut it off: a b c d e f g h i j k l m n o p q r s t u v w x y z a b c d e f g h i j k l m n o p q r s t u v w x y z"
+
+func TestButtonsThatDoNotApplyAreHidden(t *testing.T) {
+	tests := []struct {
+		name string
+		in   alert.Alert
+		want string
+	}{
+		{"short text with an app: no preview", alert.Alert{Kind: config.KindMessage, BundleID: "com.x", Title: "t", Body: "hi"}, "goto,dismiss"},
+		{"cut-off text with an app: everything", alert.Alert{Kind: config.KindMessage, BundleID: "com.x", Title: "t", Body: longBody}, "preview,goto,dismiss"},
+		{"no app to open: no go to", alert.Alert{Kind: config.KindMessage, Title: "t", Body: longBody}, "preview,dismiss"},
+		{"nothing to preview and no app", alert.Alert{Kind: config.KindCalendar, Title: "t", Body: "Starts at 10"}, "dismiss"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := buttonTypes(shown(t, "", tt.in)); got != tt.want {
+				t.Errorf("buttons = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTheTrainButtonStaysOutUntilAlertsCanBeTrained(t *testing.T) {
+	r := shown(t, `{"alert": {"buttons": [{"type": "train"}]}}`, alert.Alert{Kind: config.KindMessage, BundleID: "com.x", Title: "t", Body: "hi"})
+	if strings.Contains(buttonTypes(r), "train") {
+		t.Errorf("buttons = %q; an alert without a stored notification cannot be trained", buttonTypes(r))
+	}
+}
+
+func TestButtonOrderAndLabelsFollowTheConfig(t *testing.T) {
+	r := shown(t, `{"alert": {"buttons": [{"type": "dismiss", "label": "Close"}, {"type": "goto", "label": "Open"}]}}`,
+		alert.Alert{Kind: config.KindMessage, BundleID: "com.x", Title: "t", Body: longBody})
+	if buttonTypes(r) != "dismiss,goto" || r.Buttons[0].Label != "Close" || r.Buttons[1].Label != "Open" {
+		t.Errorf("buttons = %+v, want dismiss(Close) then goto(Open), no preview (not listed)", r.Buttons)
+	}
+}
+
+func TestABannerWithButtonsIsTallerByOneRowAndOneWithoutIsNot(t *testing.T) {
+	in := alert.Alert{Kind: config.KindMessage, BundleID: "com.x", Title: "t", Body: "hi"}
+	with := shown(t, "", in)
+	without := shown(t, `{"alert": {"buttons": [{"type": "goto", "enabled": false}, {"type": "dismiss", "enabled": false}]}}`, in)
+	if with.Height != without.Height+alert.ButtonRowHeight || without.Height != alert.BannerHeight(with.Width, "hi") {
+		t.Errorf("heights with %d, without %d; want the row (%d) on top of %d", with.Height, without.Height, alert.ButtonRowHeight, alert.BannerHeight(with.Width, "hi"))
+	}
+}
+
+func TestWithoutADismissButtonAClickAnywhereDismisses(t *testing.T) {
+	in := alert.Alert{Kind: config.KindMessage, BundleID: "com.x", Title: "t", Body: "hi"}
+	if shown(t, "", in).DismissOnClick {
+		t.Error("with a Dismiss button the background should not dismiss")
+	}
+	if r := shown(t, `{"alert": {"buttons": [{"type": "goto"}]}}`, in); !r.DismissOnClick {
+		t.Error("with Dismiss off, a click on the background should dismiss")
+	}
+	// An app-less alert with Dismiss on still shows the button, so the background does nothing.
+	if shown(t, "", alert.Alert{Kind: config.KindCalendar, Title: "t", Body: "hi"}).DismissOnClick {
+		t.Error("Dismiss is enabled, so no background dismissal")
+	}
+}
+
+func TestPreviewGrowsTheBannerToTheTextButNotWithoutLimit(t *testing.T) {
+	r := shown(t, "", alert.Alert{Kind: config.KindMessage, BundleID: "com.x", Title: "t", Body: longBody})
+	if r.PreviewHeight <= r.Height {
+		t.Errorf("preview height %d should exceed the collapsed %d", r.PreviewHeight, r.Height)
+	}
+	huge := shown(t, "", alert.Alert{Kind: config.KindMessage, Title: "t", Body: strings.Repeat("a very long message ", 500)})
+	if want := alert.PreviewHeight(huge.Width, "x") + (alert.MaxPreviewLines-1)*16 + alert.ButtonRowHeight; huge.PreviewHeight != want {
+		t.Errorf("huge preview height %d, want the %d-line cap %d", huge.PreviewHeight, alert.MaxPreviewLines, want)
+	}
+	none := shown(t, "", alert.Alert{Kind: config.KindMessage, BundleID: "com.x", Title: "t", Body: "hi"})
+	if none.PreviewHeight != 0 {
+		t.Errorf("no preview button, but PreviewHeight = %d", none.PreviewHeight)
 	}
 }

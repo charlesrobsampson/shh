@@ -201,7 +201,7 @@ func TestEverythingIsFreeAgainOnceAllBannersAreGone(t *testing.T) {
 	r.show(request("first", "top-right"))
 	r.show(request("second", "top-right"))
 	r.process(0).finish <- "expired"
-	r.process(1).finish <- "clicked"
+	r.process(1).finish <- "opened"
 	time.Sleep(50 * time.Millisecond)
 	r.show(request("next", "top-right"))
 	if got := decode(t, r.process(2)).Offset; got != 0 {
@@ -226,7 +226,7 @@ func TestTheSourceAppTravelsWithTheBannerSoTheScriptCanOpenItOnAClick(t *testing
 func TestTheScriptOpensTheAppItselfAfterAClick(t *testing.T) {
 	cmd := alert.OverlayCommand(request("Ana", "top-right"))
 	script := strings.Join(cmd.Args, " ")
-	if !strings.Contains(script, "clicked") || !strings.Contains(script, "/usr/bin/open") || !strings.Contains(script, "cfg.bundle") {
+	if !strings.Contains(script, "opened") || !strings.Contains(script, "/usr/bin/open") || !strings.Contains(script, "cfg.bundle") {
 		t.Error("the banner script must open cfg.bundle itself on a click: the process that showed it may already be gone")
 	}
 }
@@ -260,7 +260,7 @@ func TestAnEndedBannerIsNotAFailure(t *testing.T) {
 	r := newOverlayRig(t)
 	r.show(request("Ana", "top-right"))
 	r.show(request("Bo", "top-right"))
-	r.process(0).finish <- "clicked"
+	r.process(0).finish <- "opened"
 	r.process(1).finish <- "expired"
 	time.Sleep(50 * time.Millisecond)
 	if len(r.failures) != 0 {
@@ -304,5 +304,44 @@ func TestTheDefaultHelperIsOsascriptRunningTheEmbeddedScript(t *testing.T) {
 	}
 	if !found {
 		t.Error("the banner description is not in the environment")
+	}
+}
+
+func TestTheButtonsTravelWithTheBannerInOrder(t *testing.T) {
+	r := newOverlayRig(t)
+	req := request("Ana", "top-right")
+	req.Buttons = []config.Button{{Type: "dismiss", Label: "Close", Enabled: true}, {Type: "goto", Label: "Open", Enabled: true}}
+	req.DismissOnClick = true
+	req.PreviewHeight = 200
+	r.show(req)
+	var spec struct {
+		Buttons        []struct{ Type, Label string } `json:"buttons"`
+		DismissOnClick bool                           `json:"dismissOnClick"`
+		PreviewHeight  int                            `json:"previewHeight"`
+	}
+	for _, kv := range r.process(0).env {
+		if v, ok := strings.CutPrefix(kv, "SHH_BANNER="); ok {
+			if err := json.Unmarshal([]byte(v), &spec); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if len(spec.Buttons) != 2 || spec.Buttons[0].Type != "dismiss" || spec.Buttons[0].Label != "Close" || spec.Buttons[1].Type != "goto" {
+		t.Errorf("buttons = %+v", spec.Buttons)
+	}
+	if !spec.DismissOnClick || spec.PreviewHeight != 200 {
+		t.Errorf("dismissOnClick = %v, previewHeight = %d", spec.DismissOnClick, spec.PreviewHeight)
+	}
+}
+
+func TestTheScriptHandlesEveryButtonTypeAndTheBackgroundRule(t *testing.T) {
+	script := strings.Join(alert.OverlayCommand(request("Ana", "top-right")).Args, " ")
+	for _, want := range []string{"'preview'", "'goto'", "'dismiss'", "'opened'", "'dismissed'", "cfg.dismissOnClick", "cfg.previewHeight", "invalidate"} {
+		if !strings.Contains(script, want) {
+			t.Errorf("the banner script does not mention %s", want)
+		}
+	}
+	if !strings.Contains(script, "ShhBannerButton") || strings.Count(script, "acceptsFirstMouse") < 2 {
+		t.Error("buttons must accept the first mouse click too: the banner never becomes the active window, so a button that needs a second click looks broken")
 	}
 }
