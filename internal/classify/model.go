@@ -120,6 +120,41 @@ func (m *Model) predict(v Vector) float64 {
 	return sigmoid(z)
 }
 
+// Contribution is how far one feature moved the score: its weight times its value, in logit units. The score is the sigmoid of
+// the bias plus all contributions.
+type Contribution struct {
+	Label string
+	Value float64
+}
+
+// Contributions lists what each feature of v adds to the score, in vector order. The dense embedding entries, all labelled
+// "meaning", are summed into one contribution. Features with no learned weight are left out.
+func (m *Model) Contributions(v Vector) []Contribution {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []Contribution
+	meaning := -1
+	for i, idx := range v.Indices {
+		if idx < 0 || idx >= m.dim {
+			continue
+		}
+		value := m.w[idx] * v.Values[i]
+		if value == 0 {
+			continue
+		}
+		if v.Labels[i] == meaningLabel {
+			if meaning < 0 {
+				meaning = len(out)
+				out = append(out, Contribution{Label: meaningLabel})
+			}
+			out[meaning].Value += value
+			continue
+		}
+		out = append(out, Contribution{Label: v.Labels[i], Value: value})
+	}
+	return out
+}
+
 // Weights returns the bias and every non-zero weight, for export and inspection.
 func (m *Model) Weights() (bias float64, weights map[int]float64) {
 	m.mu.Lock()
