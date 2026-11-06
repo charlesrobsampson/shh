@@ -201,9 +201,9 @@ Pure function, easily tested. Keyword list (`now`, `ASAP`, `urgent`, `prod`, `do
 
 ## 7.1 Menu bar status **[NEW]**
 - Goal: always-visible countdown with no floating window. Example title: `shh 28m · 65%`, or `shh 30%` for an indefinite baseline, and `shh ⏸` while paused. The label is configurable (`[menubar] label = "shh"`, any text or emoji).
-- Implementation **[ASSUMED, verify in spike]**: a separate `shh menubar` process (launched by the worker, quits with it) using a pure-Go tray library such as `fyne.io/systray`. It supports text next to the icon on macOS and the StatusNotifier tray on Linux. It polls the worker's socket once per second.
+- Implementation **[DECIDED, spike 04, `docs/spikes/04-menubar.md`]**: a separate `shh menubar` process started by the worker (quits with it) that runs a persistent `osascript -l JavaScript` helper drawing an `NSStatusItem` (SF Symbol icon plus text title, monospaced-digit font with figure-space padding so the width does not jitter). Go sends JSON lines (title, menu entries) on stdin and reads click events on stdout; the helper is embedded in the Go binary. No CGo. `fyne.io/systray` needs CGo on macOS and its title width jitters, so it is kept only for the Linux port (task 41). Poll the worker socket once per second.
 - Menu items: current stack (baseline + escalations), pause/resume, ±5m, change %, stop, open TUI, view blocked count.
-- Fallbacks if the tray lib doesn't fit: (1) a JXA/AppKit helper like the banner overlay (or Swift, a second toolchain), or (2) text-only `shh status --short` for prompts, tmux, SwiftBar/xbar.
+- Fallbacks if the tray lib doesn't fit: (1) `fyne.io/systray` (CGo on macOS), or (2) text-only `shh status --short` for prompts, tmux, SwiftBar/xbar.
 - No floating window, per requirements.
 
 ---

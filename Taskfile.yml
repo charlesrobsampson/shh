@@ -57,3 +57,16 @@ tasks:
     desc: 'Spike 03: show a sample overlay banner (OVERLAY_JSON env overrides style, e.g. OVERLAY_JSON=''{"color":"#0a84ff"}'')'
     cmds:
       - osascript -l JavaScript spikes/banner/overlay.js
+
+  spike:menubar:jxa:
+    desc: "Spike 04: run the JXA status item prototype (SPIKE_SECONDS sets the countdown, default 120)"
+    cmds:
+      - osascript -l JavaScript spikes/menubar/statusitem.js
+
+  spike:menubar:
+    desc: "Spike 04: run the menu bar tray prototype (needs CGo; click 'Quit spike' in its menu to stop)"
+    dir: spikes/menubar
+    env:
+      CGO_ENABLED: "1"
+    cmds:
+      - go run .
