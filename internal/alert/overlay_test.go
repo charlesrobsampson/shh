@@ -244,6 +244,9 @@ func TestTheScriptWrapsLongText(t *testing.T) {
 	if !strings.Contains(script, "wrappingLabelWithString") {
 		t.Error("the banner text must use wrapping labels, or long bodies are clipped to one line")
 	}
+	if !strings.Contains(script, "setTruncatesLastVisibleLine") || !strings.Contains(script, "NSLineBreakByWordWrapping") {
+		t.Error("multi-line text must use word wrapping with truncatesLastVisibleLine: a truncating line-break mode makes AppKit lay the text out on one line")
+	}
 }
 
 func TestAnEndedBannerIsNotAFailure(t *testing.T) {
