@@ -79,13 +79,14 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 ## Phase 1: Storage and config
 
 ### 07 · Store: open, migrations, schema v1
-- [ ] Done
+- [x] Done
 - Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/07-store-schema` · Depends: 01
 - Read: `plan.md` §10, `manifest.md` §6
 - Build: `internal/store` using `modernc.org/sqlite`, WAL mode, `0600` file, `schema_version` table, ordered migrations. Schema v1 = manifest tables plus the plan §10 additions (`bundle_id`, `source_rec_id` unique, `threshold_at_decision` (integer 0–99), `user_label` (integer 0–100), `reason`, `is_read`, `session_id`, `summary`, `calendar_events`, `unparsed_calendar`, `training_log`, `model_weights` with `feature_version` and history) and `focus_sessions` additions from plan §3.1 (`kind`, `parent_id`, `then_level`, `paused_at`, `remaining_secs`). Open helper supports `:memory:` and a file path.
 - Tests: open in-memory → latest version; reopening a file DB is idempotent; an old-version DB upgrades; file permissions are `0600`; schema accepts the documented columns (round trip insert/select of each table).
 - Manual check: `sqlite3 ~/.config/shh/shh.db .tables` lists all tables after a build that opens the store (a temporary `main` call is fine, not committed).
+- Notes: `store.Open(path)` (`":memory:"` supported), `Close`, `SchemaVersion`. Repositories (tasks 08, 09, 19, ...) live in package `store` and use the unexported `s.db`. Migrations are appended to `migrations` in `internal/store/migrations.go`, never edited once shipped; the high-water mark for the tailer (task 17) needs its own migration. Store times as UTC. Schema choices: `then_level` NULL means "fall back to the layer beneath", 0 means off; `calendar_events` is unique on `(title, start_time)`; `source_rec_id` is unique; `threshold_at_decision` is nullable (history imports have none); `unparsed_calendar` has `notification_id, category, title, subtitle, raw_text`; foreign keys from `calendar_events`, `unparsed_calendar` and `training_log` to `notifications` are `ON DELETE SET NULL` so the TTL purge keeps history; `model_weights` has one row per saved version (history). Checked on a scratch path: all 7 tables created, files `0600`.
 
 ### 08 · Store: notifications repository
 - [ ] Done
