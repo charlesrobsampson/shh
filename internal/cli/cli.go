@@ -10,6 +10,8 @@ import (
 
 	"github.com/alecthomas/kong"
 
+	"github.com/charlesrobsampson/shh/internal/alert"
+
 	"github.com/charlesrobsampson/shh/internal/session"
 )
 
@@ -34,6 +36,10 @@ type Env struct {
 	SpawnWait time.Duration
 	// PersistedFocus reports whether a focus level was left saved by an earlier worker, for example across a reboot. Nil means no.
 	PersistedFocus func() bool
+	// NewAlerter builds the alerter that `shh alert test` previews styles with. Nil when none is available.
+	NewAlerter func() (alert.Alerter, error)
+	// AlertSources names the apps that have a style override in the configuration, so the preview can show each.
+	AlertSources []string
 	// Daemon runs the worker in the foreground until ctx ends; it is what `shh daemon` (the spawned process) does.
 	Daemon func(ctx context.Context) error
 }
@@ -48,6 +54,7 @@ type cli struct {
 	Status   statusCmd   `cmd:"" help:"Show the focus levels in force and the time left."`
 	Pause    pauseCmd    `cmd:"" help:"Pause the countdown of the current timed session."`
 	Resume   resumeCmd   `cmd:"" help:"Resume a paused countdown."`
+	Alert    alertCmd    `cmd:"" help:"Alert tools."`
 	Replay   replayCmd   `cmd:"" help:"Run the classifier over a file of notifications and print each decision."`
 	Daemon   daemonCmd   `cmd:"" hidden:"" help:"Run the background worker (started by shh itself)."`
 }
@@ -93,7 +100,7 @@ func Run(args []string, env Env) (code int) {
 		fmt.Fprintln(env.Stderr, "shh: error:", err)
 		return 2
 	}
-	if name := ctx.Command(); name != "daemon" && name != "replay <file>" {
+	if name := ctx.Command(); name != "daemon" && name != "replay <file>" && name != "alert test" {
 		env.rearmPersistedFocus()
 	}
 	if err := ctx.Run(); err != nil {

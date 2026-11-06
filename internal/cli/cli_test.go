@@ -11,7 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charlesrobsampson/shh/internal/alert"
 	"github.com/charlesrobsampson/shh/internal/cli"
+	"github.com/charlesrobsampson/shh/internal/config"
 	"github.com/charlesrobsampson/shh/internal/rules"
 	"github.com/charlesrobsampson/shh/internal/session"
 	"github.com/charlesrobsampson/shh/internal/store"
@@ -618,5 +620,62 @@ func TestTheDaemonCommandIsHiddenFromHelp(t *testing.T) {
 	r.run("--help")
 	if strings.Contains(r.out.String()+r.err.String(), "daemon") {
 		t.Error("the internal daemon command shows up in --help")
+	}
+}
+
+func TestAlertTestShowsASampleInEachStyle(t *testing.T) {
+	r := newRig(t, false)
+	fake := testkit.NewFakeAlerter()
+	r.env.NewAlerter = func() (alert.Alerter, error) { return fake, nil }
+	r.env.AlertSources = []string{"Outlook", "Slack"}
+
+	out := r.mustRun("alert", "test")
+	shown := fake.Shown()
+	if len(shown) != 4 {
+		t.Fatalf("%d alerts shown, want a message, a calendar alert and one per configured source: %+v", len(shown), shown)
+	}
+	if shown[0].Kind != config.KindMessage || shown[1].Kind != config.KindCalendar {
+		t.Errorf("kinds = %v, %v; want message then calendar", shown[0].Kind, shown[1].Kind)
+	}
+	if shown[2].Source != "Outlook" || shown[3].Source != "Slack" || shown[2].Kind != config.KindMessage {
+		t.Errorf("per-source samples = %+v, %+v", shown[2], shown[3])
+	}
+	for _, a := range shown {
+		if a.Title == "" || a.Body == "" {
+			t.Errorf("a sample has no text: %+v", a)
+		}
+	}
+	for _, want := range []string{"Outlook", "Slack", "calendar"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output %q should name what was shown (%s)", out, want)
+		}
+	}
+}
+
+func TestAlertTestWithoutAnAlerterOrWithABrokenOne(t *testing.T) {
+	r := newRig(t, false)
+	if code := r.run("alert", "test"); code != 1 || r.err.String() == "" {
+		t.Errorf("no alerter: exit %d, stderr %q", code, r.err.String())
+	}
+	r.env.NewAlerter = func() (alert.Alerter, error) { return nil, errors.New("overlay script missing") }
+	if code := r.run("alert", "test"); code != 1 || !strings.Contains(r.err.String(), "overlay script missing") {
+		t.Errorf("broken alerter: exit %d, stderr %q", code, r.err.String())
+	}
+	fake := testkit.NewFakeAlerter()
+	fake.FailWith(errors.New("display unavailable"))
+	r.env.NewAlerter = func() (alert.Alerter, error) { return fake, nil }
+	if code := r.run("alert", "test"); code != 1 || !strings.Contains(r.err.String(), "display unavailable") {
+		t.Errorf("failing Show: exit %d, stderr %q", code, r.err.String())
+	}
+}
+
+func TestAlertTestDoesNotNeedAWorkerAndNeverRearms(t *testing.T) {
+	r := newRig(t, false)
+	r.env.PersistedFocus = func() bool { return true }
+	r.env.Spawn = func() error { r.spawns++; return nil }
+	r.env.NewAlerter = func() (alert.Alerter, error) { return testkit.NewFakeAlerter(), nil }
+	r.mustRun("alert", "test")
+	if r.spawns != 0 {
+		t.Errorf("%d spawns; a style preview should not start a worker", r.spawns)
 	}
 }
