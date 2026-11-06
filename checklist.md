@@ -256,7 +256,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 ### 23 · Calendar reminder parser
 - [ ] Done
-- Session: _(fill on start)_
+- Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/23-calendar-parser` · Depends: 13, 08
 - Read: `plan.md` §4.2 (fail-safe strategy and first sample)
 - Build: detect reminders by category from rules; parse the start time leniently with the ordered formats; extract title/subtitle; on parse failure return an "alert immediately" result and record to `unparsed_calendar`.
