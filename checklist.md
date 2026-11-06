@@ -300,7 +300,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 ### 27 · CLI commands
 - [ ] Done
-- Session: _(fill on start)_
+- Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/27-cli` · Depends: 26
 - Read: `manifest.md` §4, `plan.md` §3.1, §9
 - Build: kong CLI: bare `shh` opens the TUI (see 31; prints `status` instead when stdout is not a terminal), `focus|f`, `stop [--all]`, `baseline`, `status [--json|--short]`, `pause`, `resume`, flags (`-t -f -m --then/--clear`), positional note. Commands talk to the worker through IPC and print results. Starting a session with no worker spawns one (spawn mechanics come in 28; use an injectable spawner here).
