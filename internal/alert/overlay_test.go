@@ -239,6 +239,13 @@ func TestTheScriptOpensTheAppBeforeItLogsTheOutcome(t *testing.T) {
 	}
 }
 
+func TestTheBannerTextDoesNotSwallowClicks(t *testing.T) {
+	script := strings.Join(alert.OverlayCommand(request("Ana", "top-right")).Args, " ")
+	if !strings.Contains(script, "setSelectable(false)") {
+		t.Error("the text labels must not be selectable: a selectable text field keeps the click for itself and the banner never sees it")
+	}
+}
+
 func TestTheScriptWrapsLongText(t *testing.T) {
 	script := strings.Join(alert.OverlayCommand(request("Ana", "top-right")).Args, " ")
 	if !strings.Contains(script, "wrappingLabelWithString") {

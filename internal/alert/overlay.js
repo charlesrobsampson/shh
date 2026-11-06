@@ -70,6 +70,9 @@ function label(text, size, bold, frame, lines) {
   const field = $.NSTextField.wrappingLabelWithString($(text));
   field.setFont(bold ? $.NSFont.boldSystemFontOfSize(size) : $.NSFont.systemFontOfSize(size));
   field.setTextColor($.NSColor.whiteColor);
+  // Wrapping labels are selectable by default, and a selectable field keeps the mouse for text selection, so a click on the text
+  // would never reach the banner. Static text lets the click through.
+  field.setSelectable(false);
   if (lines > 1) {
     // A truncating line-break mode would turn the field into a single-line one (measured: wraps = false). To wrap and still end
     // in an ellipsis when the text runs past the last allowed line, use word wrapping plus truncatesLastVisibleLine.
