@@ -34,6 +34,16 @@ Config oddity: the `shh` Focus is stored with `applicationConfigurationType` 2 a
    - Dismissed or expired notifications are deleted, and `rec_id` values are reused (rec 22 to 24 were replaced later). A high-water mark on `rec_id` alone can skip new rows. Track `delivered_date` as well.
    - `record.presented` is 0 even for notifications that were shown, so it cannot tell shown from suppressed.
 
+## Spike 02b: hide banners with the Accessibility API instead of Focus
+
+Idea: leave Focus off so every notification is recorded, and close each banner through System Events (Accessibility permission, which Ghostty already has). Scripts in `spikes/focus-ax/` (JXA, run with `osascript -l JavaScript`, no CGo).
+
+- Notification Center shows each banner as an `AXNotificationCenterBanner` group inside the `NotificationCenter` process. Its actions are `AXPress` (opens the app, do not use), `Show Details`, `Show` and `Close`. Action names are long strings (`Name:Close\nTarget:0x0...`), so match on the `Name:Close` prefix.
+- Polling finds the banner about 350 ms after posting and closing takes about 80 ms more, so a closed banner is visible for well under a second.
+- **Closing early drops the DB row.** The row is only written when the temporary banner would expire, about 5.1 s after posting (measured with a 100 ms DB poll). A notification closed at 0.7 s never appears in `record`. Reading from the DB and then closing is therefore impossible.
+- The banner exposes only `title`, `subtitle`, `body` (static texts with those identifiers) and a UUID. **No app name or bundle id.** Source attribution would need a heuristic.
+- So this path replaces DB ingest with screen scraping for suppressed notifications, loses the source app, and depends on Accessibility permission and Notification Center's current layout.
+
 ## Decision
 
 Open. Needs the user. Options and the impact on `plan.md` are in the task report.
