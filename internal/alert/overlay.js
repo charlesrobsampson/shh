@@ -40,14 +40,14 @@ const color = $.NSColor.colorWithSRGBRedGreenBlueAlpha(channel(0), channel(2), c
 
 const area = $.NSScreen.mainScreen.visibleFrame;
 const margin = 16;
-const gap = 10;
 const [vertical, horizontal] = cfg.position.split('-');
 const x = horizontal === 'left' ? area.origin.x + margin
   : horizontal === 'center' ? area.origin.x + (area.size.width - cfg.width) / 2
   : area.origin.x + area.size.width - cfg.width - margin;
-const step = cfg.slot * (cfg.height + gap); // banners shown together stack away from the screen edge
-const y = vertical === 'bottom' ? area.origin.y + margin + step
-  : area.origin.y + area.size.height - cfg.height - margin - step;
+// cfg.offset keeps banners shown together from overlapping; stay on screen if there are very many.
+const lowest = area.origin.y + margin;
+const y = vertical === 'bottom' ? Math.min(lowest + cfg.offset, area.origin.y + area.size.height - cfg.height - margin)
+  : Math.max(area.origin.y + area.size.height - cfg.height - margin - cfg.offset, lowest);
 
 const win = $.NSWindow.alloc.initWithContentRectStyleMaskBackingDefer(
   $.NSMakeRect(x, y, cfg.width, cfg.height), $.NSWindowStyleMaskBorderless, $.NSBackingStoreBuffered, false);
@@ -66,7 +66,8 @@ view.setFillColor(color);
 win.setContentView(view);
 
 function label(text, size, bold, frame, lines) {
-  const field = $.NSTextField.labelWithString($(text));
+  // wrappingLabelWithString wraps long text onto further lines; labelWithString would keep it on one line and clip it.
+  const field = $.NSTextField.wrappingLabelWithString($(text));
   field.setFont(bold ? $.NSFont.boldSystemFontOfSize(size) : $.NSFont.systemFontOfSize(size));
   field.setTextColor($.NSColor.whiteColor);
   field.setLineBreakMode($.NSLineBreakByTruncatingTail);
@@ -74,10 +75,11 @@ function label(text, size, bold, frame, lines) {
   field.setFrame(frame);
   view.addSubview(field);
 }
-// The title is one line at the top; the body takes as many lines as the rest of the banner holds.
-label(cfg.title, 15, true, $.NSMakeRect(16, cfg.height - 32, cfg.width - 32, 20), 1);
-const bodyHeight = cfg.height - 42;
-label(cfg.body, 13, false, $.NSMakeRect(16, 8, cfg.width - 32, bodyHeight), Math.max(1, Math.floor(bodyHeight / 16)));
+// Layout, in points, matching the Go side: 12 of padding, a 20 point title line, a 4 point gap, then 16 points per body line.
+// The caller sized the banner to its text; text beyond what fits ends in an ellipsis.
+const bodyHeight = cfg.height - 12 - 20 - 4 - 12;
+label(cfg.title, 15, true, $.NSMakeRect(16, cfg.height - 12 - 20, cfg.width - 32, 20), 1);
+label(cfg.body, 13, false, $.NSMakeRect(16, 12, cfg.width - 32, bodyHeight), Math.max(1, Math.floor(bodyHeight / 16)));
 
 win.orderFront($());
 if (cfg.sound !== 'none') $.NSSound.soundNamed($(cfg.sound)).play;
@@ -88,8 +90,9 @@ if (cfg.duration > 0) {
 
 app.run;
 win.orderOut($());
-console.log(outcome);
 if (outcome === 'clicked' && cfg.bundle) {
-  // Opened from here, not by the process that started us: that one may already have exited.
+  // Opened from here, not by the process that started us, which may already have exited. This must come before the console.log
+  // below: if that process is gone, its pipe is closed and the write kills this script (SIGPIPE) before it could do anything else.
   $.NSTask.launchedTaskWithLaunchPathArguments('/usr/bin/open', ['-b', cfg.bundle]);
 }
+console.log(outcome);

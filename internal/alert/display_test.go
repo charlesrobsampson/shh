@@ -54,7 +54,9 @@ func TestStyleIsResolvedBeforeItReachesTheBackend(t *testing.T) {
 		{"a calendar alert uses the kind override", alert.Alert{Kind: config.KindCalendar, Source: "Calendar", Title: "Sync"},
 			config.Style{Position: "top-right", Size: "small", Color: "#0a84ff", DurationSecs: 8, Sound: "Hero"}, 280, 64},
 		{"a source override applies to its messages", alert.Alert{Kind: config.KindMessage, Source: "Slack", Title: "ops"},
-			config.Style{Position: "bottom-left", Size: "large", Color: "#111111", DurationSecs: 8, Sound: "none"}, 460, 110},
+			config.Style{Position: "bottom-left", Size: "large", Color: "#111111", DurationSecs: 8, Sound: "none"}, 460, 64},
+		{"a longer body makes the banner taller", alert.Alert{Kind: config.KindMessage, Source: "Teams", Title: "Ana", Body: strings.Repeat("word ", 20)},
+			config.Style{Position: "top-right", Size: "small", Color: "#111111", DurationSecs: 8, Sound: "Glass"}, 280, 96},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -77,18 +79,41 @@ func TestStyleIsResolvedBeforeItReachesTheBackend(t *testing.T) {
 	}
 }
 
-func TestEverySizeNameHasPixels(t *testing.T) {
-	for _, size := range []string{"small", "medium", "large"} {
-		w, h := alert.SizePixels(size)
-		if w < 200 || h < 40 {
-			t.Errorf("size %q is %dx%d, too small to read", size, w, h)
-		}
+func TestEverySizeNameHasAWidth(t *testing.T) {
+	small, medium, large := alert.SizeWidth("small"), alert.SizeWidth("medium"), alert.SizeWidth("large")
+	if small < 200 || !(small < medium && medium < large) {
+		t.Errorf("widths %d, %d, %d: want readable and increasing", small, medium, large)
 	}
-	sw, _ := alert.SizePixels("small")
-	mw, _ := alert.SizePixels("medium")
-	lw, _ := alert.SizePixels("large")
-	if !(sw < mw && mw < lw) {
-		t.Errorf("widths %d, %d, %d are not increasing", sw, mw, lw)
+	if alert.SizeWidth("nonsense") != medium {
+		t.Error("an unknown size should fall back to medium")
+	}
+}
+
+func TestTheBannerHeightFollowsTheText(t *testing.T) {
+	tests := []struct {
+		name  string
+		width int
+		body  string
+		want  int
+	}{
+		{"no body still has one line of room", 360, "", 64},
+		{"a short body is one line", 360, "Starts at 10:30", 64},
+		{"a body just under a line", 360, strings.Repeat("a", 43), 64},
+		{"a body just over a line wraps to two", 360, strings.Repeat("a", 44), 80},
+		{"explicit line breaks count", 360, "one\ntwo\nthree", 96},
+		{"blank lines do not add height", 360, "one\n\n\ntwo", 80},
+		{"four lines is the most that is shown", 360, strings.Repeat("a", 43*4), 112},
+		{"a huge message does not make a huge banner", 360, strings.Repeat("a very long message ", 500), 112},
+		{"a wider banner fits more per line", 460, strings.Repeat("a", 100), 80},
+		{"a narrow banner needs more lines for the same text", 280, strings.Repeat("a", 100), 112},
+		{"text is counted in characters, not bytes", 360, strings.Repeat("é", 43), 64},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := alert.BannerHeight(tt.width, tt.body); got != tt.want {
+				t.Errorf("BannerHeight(%d, %d chars) = %d, want %d", tt.width, len([]rune(tt.body)), got, tt.want)
+			}
+		})
 	}
 }
 

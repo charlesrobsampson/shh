@@ -93,7 +93,7 @@ type banner struct {
 	Width    int    `json:"width"`
 	Height   int    `json:"height"`
 	Position string `json:"position"`
-	Slot     int    `json:"slot"`
+	Offset   int    `json:"offset"`
 	Duration int    `json:"duration"`
 	Sound    string `json:"sound"`
 }
@@ -116,7 +116,7 @@ func decode(t *testing.T, p *fakeProcess) banner {
 func request(title, position string) alert.Request {
 	return alert.Request{
 		Title: title, Body: "body of " + title, BundleID: "com.microsoft.teams2", Kind: config.KindMessage,
-		Style: config.Style{Position: position, Size: "medium", Color: "#ff9f0a", DurationSecs: 8, Sound: "Glass"}, Width: 360, Height: 84,
+		Style: config.Style{Position: position, Size: "medium", Color: "#ff9f0a", DurationSecs: 8, Sound: "Glass"}, Width: 360, Height: 64,
 	}
 }
 
@@ -124,7 +124,7 @@ func TestTheBannerIsDescribedToTheHelperAsJSON(t *testing.T) {
 	r := newOverlayRig(t)
 	r.show(request("Ana", "top-right"))
 	got := decode(t, r.process(0))
-	want := banner{Title: "Ana", Body: "body of Ana", Bundle: "com.microsoft.teams2", Color: "#ff9f0a", Width: 360, Height: 84, Position: "top-right", Slot: 0, Duration: 8, Sound: "Glass"}
+	want := banner{Title: "Ana", Body: "body of Ana", Bundle: "com.microsoft.teams2", Color: "#ff9f0a", Width: 360, Height: 64, Position: "top-right", Offset: 0, Duration: 8, Sound: "Glass"}
 	if got != want {
 		t.Errorf("banner = %+v, want %+v", got, want)
 	}
@@ -141,30 +141,71 @@ func TestShowReturnsWithoutWaitingForTheBannerToEnd(t *testing.T) {
 	}
 }
 
-func TestSimultaneousBannersGetDifferentSlotsSoTheyStack(t *testing.T) {
-	r := newOverlayRig(t)
-	r.show(request("first", "top-right"))
-	r.show(request("second", "top-right"))
-	r.show(request("third", "top-right"))
-	r.show(request("elsewhere", "bottom-left"))
-	slots := []int{decode(t, r.process(0)).Slot, decode(t, r.process(1)).Slot, decode(t, r.process(2)).Slot, decode(t, r.process(3)).Slot}
-	if slots[0] != 0 || slots[1] != 1 || slots[2] != 2 {
-		t.Errorf("slots at the same position = %v, want 0, 1, 2", slots[:3])
+func tall(title, position string, height int) alert.Request {
+	r := request(title, position)
+	r.Height = height
+	return r
+}
+
+func offsets(t *testing.T, r *overlayRig, indexes ...int) []int {
+	t.Helper()
+	var out []int
+	for _, i := range indexes {
+		out = append(out, decode(t, r.process(i)).Offset)
 	}
-	if slots[3] != 0 {
-		t.Errorf("a banner at another position got slot %d, want its own slot 0", slots[3])
+	return out
+}
+
+func TestSimultaneousBannersStackWithoutOverlapping(t *testing.T) {
+	r := newOverlayRig(t)
+	r.show(request("first", "top-right"))   // 64 high
+	r.show(tall("second", "top-right", 96)) // below the first, with a 10 point gap
+	r.show(request("third", "top-right"))   // below the second
+	r.show(request("elsewhere", "bottom-left"))
+	got := offsets(t, r, 0, 1, 2, 3)
+	if want := []int{0, 74, 180, 0}; !equalInts(got, want) {
+		t.Fatalf("offsets = %v, want %v (heights 64, 96, 64 and a 10 point gap; another position starts again at 0)", got, want)
 	}
 }
 
-func TestASlotIsReusedOnceItsBannerIsGone(t *testing.T) {
+func equalInts(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestAFreedSpaceIsReusedWhenTheNewBannerFitsInIt(t *testing.T) {
+	r := newOverlayRig(t)
+	r.show(request("first", "top-right"))  // 0..64
+	r.show(request("second", "top-right")) // 74..138
+	r.show(request("third", "top-right"))  // 148..212
+	r.process(0).finish <- "expired"
+	time.Sleep(30 * time.Millisecond) // the release happens on the banner's own goroutine
+
+	r.show(request("fits the gap", "top-right"))
+	r.show(tall("too tall for a gap", "top-right", 112))
+	got := offsets(t, r, 3, 4)
+	if want := []int{0, 222}; !equalInts(got, want) {
+		t.Fatalf("offsets = %v, want %v: the 64 point banner takes the freed top space, the 112 point one goes below everything", got, want)
+	}
+}
+
+func TestEverythingIsFreeAgainOnceAllBannersAreGone(t *testing.T) {
 	r := newOverlayRig(t)
 	r.show(request("first", "top-right"))
 	r.show(request("second", "top-right"))
 	r.process(0).finish <- "expired"
-	time.Sleep(30 * time.Millisecond) // the release happens on the banner's own goroutine
-	r.show(request("third", "top-right"))
-	if slot := decode(t, r.process(2)).Slot; slot != 0 {
-		t.Errorf("third banner slot = %d, want the freed slot 0", slot)
+	r.process(1).finish <- "clicked"
+	time.Sleep(50 * time.Millisecond)
+	r.show(request("next", "top-right"))
+	if got := decode(t, r.process(2)).Offset; got != 0 {
+		t.Errorf("offset = %d, want the screen edge again", got)
 	}
 }
 
@@ -190,6 +231,21 @@ func TestTheScriptOpensTheAppItselfAfterAClick(t *testing.T) {
 	}
 }
 
+func TestTheScriptOpensTheAppBeforeItLogsTheOutcome(t *testing.T) {
+	script := strings.Join(alert.OverlayCommand(request("Ana", "top-right")).Args, " ")
+	open, logOutcome := strings.Index(script, "/usr/bin/open"), strings.Index(script, "console.log(outcome)")
+	if open < 0 || logOutcome < 0 || open > logOutcome {
+		t.Error("the app must be opened before the outcome is logged: when the starting process has exited, writing to its closed pipe kills the script (SIGPIPE) and the click would do nothing")
+	}
+}
+
+func TestTheScriptWrapsLongText(t *testing.T) {
+	script := strings.Join(alert.OverlayCommand(request("Ana", "top-right")).Args, " ")
+	if !strings.Contains(script, "wrappingLabelWithString") {
+		t.Error("the banner text must use wrapping labels, or long bodies are clipped to one line")
+	}
+}
+
 func TestAnEndedBannerIsNotAFailure(t *testing.T) {
 	r := newOverlayRig(t)
 	r.show(request("Ana", "top-right"))
@@ -211,8 +267,8 @@ func TestAHelperThatCannotStartIsReportedAsUnavailable(t *testing.T) {
 	}
 	r.startErr = nil
 	r.show(request("next", "top-right"))
-	if slot := decode(t, r.process(0)).Slot; slot != 0 {
-		t.Errorf("the failed start kept slot 0 reserved: next banner got slot %d", slot)
+	if offset := decode(t, r.process(0)).Offset; offset != 0 {
+		t.Errorf("the failed start kept its space reserved: the next banner got offset %d", offset)
 	}
 }
 

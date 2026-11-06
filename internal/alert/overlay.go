@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -24,20 +25,26 @@ type OverlayConfig struct {
 }
 
 // Overlay draws each banner in its own osascript process (see docs/spikes/03-banner.md), in a window of its own that the banner
-// suppressor never touches. Banners that are on screen together take successive slots so they stack instead of overlapping. A
-// click opens the source app from inside that process, so it works however long the caller lives.
+// suppressor never touches. Banners that are on screen together are placed so they stack instead of overlapping, each in the
+// first free space that fits its height. A click opens the source app from inside that process, so it works however long the
+// caller lives.
 type Overlay struct {
 	cfg OverlayConfig
 
-	mu    sync.Mutex
-	slots map[string]map[int]bool // by position
+	mu     sync.Mutex
+	active map[string][]*placed // banners on screen, by position
 }
+
+// placed is a banner's vertical extent, measured in points from the screen edge it hangs from.
+type placed struct{ offset, height int }
+
+const stackGap = 10
 
 func NewOverlay(cfg OverlayConfig) *Overlay {
 	if cfg.Start == nil {
 		cfg.Start = startOsascript
 	}
-	return &Overlay{cfg: cfg, slots: map[string]map[int]bool{}}
+	return &Overlay{cfg: cfg, active: map[string][]*placed{}}
 }
 
 type bannerSpec struct {
@@ -50,15 +57,16 @@ type bannerSpec struct {
 	Width    int    `json:"width"`
 	Height   int    `json:"height"`
 	Position string `json:"position"`
-	Slot     int    `json:"slot"`
+	// Offset is how far from its screen edge the banner sits, so banners shown together do not overlap.
+	Offset   int    `json:"offset"`
 	Duration int    `json:"duration"`
 	Sound    string `json:"sound"`
 }
 
-func bannerEnv(r Request, slot int) []string {
+func bannerEnv(r Request, offset int) []string {
 	spec, _ := json.Marshal(bannerSpec{
 		Title: r.Title, Body: r.Body, Bundle: r.BundleID, Color: r.Style.Color, Width: r.Width, Height: r.Height,
-		Position: r.Style.Position, Slot: slot, Duration: r.Style.DurationSecs, Sound: r.Style.Sound,
+		Position: r.Style.Position, Offset: offset, Duration: r.Style.DurationSecs, Sound: r.Style.Sound,
 	})
 	return []string{"SHH_BANNER=" + string(spec)}
 }
@@ -90,15 +98,15 @@ func startOsascript(env []string) (func() (string, error), error) {
 }
 
 func (o *Overlay) Show(r Request) error {
-	slot := o.acquire(r.Style.Position)
-	wait, err := o.cfg.Start(bannerEnv(r, slot))
+	spot := o.place(r.Style.Position, r.Height)
+	wait, err := o.cfg.Start(bannerEnv(r, spot.offset))
 	if err != nil {
-		o.release(r.Style.Position, slot)
+		o.remove(r.Style.Position, spot)
 		return fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
 	go func() {
 		outcome, err := wait()
-		o.release(r.Style.Position, slot)
+		o.remove(r.Style.Position, spot)
 		if outcome != "clicked" && outcome != "expired" && err != nil && o.cfg.OnFailure != nil {
 			o.cfg.OnFailure(r, err)
 		}
@@ -106,22 +114,40 @@ func (o *Overlay) Show(r Request) error {
 	return nil
 }
 
-func (o *Overlay) acquire(position string) int {
+// place reserves the first space, from the screen edge outwards, where a banner of this height fits without touching another.
+func (o *Overlay) place(position string, height int) *placed {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if o.slots[position] == nil {
-		o.slots[position] = map[int]bool{}
+	candidates := []int{0}
+	for _, other := range o.active[position] {
+		candidates = append(candidates, other.offset+other.height+stackGap)
 	}
-	slot := 0
-	for o.slots[position][slot] {
-		slot++
+	sort.Ints(candidates)
+	for _, offset := range candidates {
+		clear := true
+		for _, other := range o.active[position] {
+			if offset < other.offset+other.height+stackGap && offset+height+stackGap > other.offset {
+				clear = false
+				break
+			}
+		}
+		if clear {
+			spot := &placed{offset: offset, height: height}
+			o.active[position] = append(o.active[position], spot)
+			return spot
+		}
 	}
-	o.slots[position][slot] = true
-	return slot
+	panic("unreachable: the space past the last banner is always free")
 }
 
-func (o *Overlay) release(position string, slot int) {
+func (o *Overlay) remove(position string, spot *placed) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	delete(o.slots[position], slot)
+	banners := o.active[position]
+	for i, b := range banners {
+		if b == spot {
+			o.active[position] = append(banners[:i], banners[i+1:]...)
+			return
+		}
+	}
 }

@@ -23,10 +23,10 @@ func NewDisplay(cfg config.Alert, primary, fallback Backend, onError func(error)
 
 func (d *Display) Show(a Alert) error {
 	style := d.cfg.Resolve(a.Kind, a.Source)
-	width, height := SizePixels(style.Size)
+	width := SizeWidth(style.Size)
 	req := Request{
 		Kind: a.Kind, Source: a.Source, BundleID: a.BundleID, Title: a.Title, Body: a.Body,
-		Style: style, Width: width, Height: height,
+		Style: style, Width: width, Height: BannerHeight(width, a.Body),
 	}
 	if d.primary == nil && d.fallback == nil {
 		return errors.New("no way to show alerts is configured")
