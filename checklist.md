@@ -201,13 +201,14 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 ## Phase 4: Classifier
 
 ### 18 · Features L0 + L1
-- [ ] Done
+- [x] Done
 - Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/18-features` · Depends: 13
 - Read: `plan.md` §5.1, §5.3
 - Build: `Features` interface returning a versioned vector. L0: VIP/app priority/mention/1:1 vs channel/urgency-word flags. L1: hashed n-gram text features plus sender/app/category hashes. Feature version string.
 - Tests: same input → same vector; different sender/app change the right features; hash collisions don't panic; version string changes when feature config changes.
 - Manual check: none.
+- Notes: `internal/classify/features.go`. `classify.Features` interface (`Extract(Input) Vector`, `Dim()`, `Version()`), implemented by `classify.NewL0L1(rules, WithDim(n)) (*L0L1, error)` (default `DefaultDim` = 16384). `Input{Source, BundleID, Sender, Title, Subtitle, Body, Category}`: the caller derives `Sender`. `Vector{Indices (strictly ascending), Values (positive), Labels}` is sparse, and every entry has a human-readable label (`vip sender`, `word: outage`, `phrase: server down`, `sender: ana`, `app priority: Teams`, `urgency: outage`, `question`...), which task 22 uses to explain decisions. The first `L0Slots` (16) indices are reserved for fixed layer 0 flags (VIP sender, VIP app, app priority as a value, mention, channel, direct, urgency matched, question) and never collide with hashed features; everything else (words, bigrams, per-rule urgency flags, sender, app, category) is FNV-1a hashed into the rest, binary (a repeated word counts once), and colliding features add up. Text is capped at 128 tokens. `Version()` is `l0l1-` plus a hash of the extraction revision, dimension and the feature-relevant rules (urgency rules, VIPs, app priorities), so changing any of them invalidates stored weights; task 20 must append the embedding model id to it. **The channel/direct and mention flags are unverified heuristics** (title or subtitle containing `#` or ` in ` means channel; `@you`, `@here`, `@channel`, `@everyone` or "mentioned you" means mention): all 20 real Teams rows here have only a title and body, so refine them with real captures (`shh capture`, task 36).
 
 ### 19 · Logistic model, SGD, persistence, undo
 - [ ] Done
