@@ -20,7 +20,9 @@ type Score struct {
 	Base         float64
 	Boost        float64
 	BoostReasons []string
-	Vector       Vector
+	// Reason is a short explanation of the score, for the Train tab and the stored notification.
+	Reason string
+	Vector Vector
 }
 
 // NewClassifier builds the classifier over the store. A new install, with no saved weights for this feature version, is trained
@@ -65,5 +67,9 @@ func (c *Classifier) Score(in Input, at time.Time) (Score, error) {
 	if err != nil {
 		return Score{}, err
 	}
-	return Score{Base: c.Model.Predict(v), Boost: boost.Value, BoostReasons: boost.Reasons, Vector: v}, nil
+	base := c.Model.Predict(v)
+	return Score{
+		Base: base, Boost: boost.Value, BoostReasons: boost.Reasons, Vector: v,
+		Reason: Explain(base, c.Model.Contributions(v), boost),
+	}, nil
 }

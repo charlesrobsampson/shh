@@ -14,6 +14,9 @@ import (
 	"github.com/charlesrobsampson/shh/internal/rules"
 )
 
+// meaningLabel labels every dense embedding entry so they can be treated as one factor.
+const meaningLabel = "meaning"
+
 const (
 	// L0Slots is the size of the block at the start of every vector reserved for the layer 0 flags, so they never share an
 	// index with hashed features.
@@ -178,7 +181,7 @@ func (f *L0L1) Extract(in Input) Vector {
 	if f.embedder != nil {
 		for i, v := range f.embedder.Embed(text) {
 			if v != 0 {
-				acc.add(f.dim+i, float64(v), "meaning")
+				acc.add(f.dim+i, float64(v), meaningLabel)
 			}
 		}
 	}
