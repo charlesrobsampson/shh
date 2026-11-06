@@ -65,7 +65,8 @@ name = "outlook-reminder"
 pattern = '^OLAlertsNotificationReminders'
 
 # How a reminder states the start time. The calendar parser tries these in order and reads the named groups
-# year, month, day, hour, minute, ampm and minutes.
+# year, month, day, hour, minute, ampm and minutes. A pattern that matches but captures no time at all (hour or minutes)
+# means an untimed, all-day reminder. With hour and minute but no date, the day is the day the reminder was delivered.
 [[calendar.date]]
 name = "month-day-year-at-time"
 pattern = '(?P<month>[a-z]+) (?P<day>\d{1,2}), (?P<year>\d{4}) at (?P<hour>\d{1,2}):(?P<minute>\d{2})(?: ?(?P<ampm>am|pm))?'

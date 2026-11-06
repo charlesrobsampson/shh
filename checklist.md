@@ -255,13 +255,14 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 ## Phase 5: Calendar
 
 ### 23 · Calendar reminder parser
-- [ ] Done
+- [x] Done
 - Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/23-calendar-parser` · Depends: 13, 08
 - Read: `plan.md` §4.2 (fail-safe strategy and first sample)
 - Build: detect reminders by category from rules; parse the start time leniently with the ordered formats; extract title/subtitle; on parse failure return an "alert immediately" result and record to `unparsed_calendar`.
 - Tests (table incl. the real sample, scrubbed): `November 5, 2026 at 13:30`; `Today at 9:00 AM`; `in 5 minutes`; all-day wording; DST edge; unknown format → immediate alert + stored unparsed; non-reminder Outlook mail is ignored; Teams meeting notification.
 - Manual check: none.
+- Notes: `internal/calendar/parser.go`. `calendar.NewParser(rules, location, store)` (store may be nil; the location is where `Today at 9:00 AM` and `November 5, 2026 at 13:30` are read) and `Parse(calendar.Input{NotificationID, Category, Title, Subtitle, Body, Delivered}) (Reminder, ok, err)`: `ok` is false for anything whose category does not match `rules.CalendarCategories` (mail, no category, other apps); `err` is only a failure to record. `Reminder{Title, Subtitle, Start, AllDay, Unparsed}` with `AlertNow()` true for `AllDay` and `Unparsed`: the scheduler (task 24) fires those immediately and schedules the rest at `Start` minus 60 s. Text is tried in the order body, subtitle, title, and for each the date patterns in rule order; the named groups drive the reading (`minutes` is relative to the delivery time, `hour`/`minute`/`ampm` with optional `year`/`month`/`day`, month names by their first three letters, 12-hour times need hour 1 to 12, impossible dates like November 31 do not parse). A pattern that matches but captures no time means an all-day reminder. Unreadable reminders return `Unparsed`, and are saved with `Store.AddUnparsedCalendar` (`category, title, subtitle, raw_text` plus the notification id) and listed newest first by `Store.UnparsedCalendar()` for `shh rules review` (task 36). DST: times are built in the parser's zone so offsets are right on both sides of a change, a relative "in N minutes" is an exact duration, and a wall-clock time that does not exist (2:30 AM on spring-forward day) still gets a start within the hour. Only the Outlook reminder category is in the default rules; the Teams meeting category is not known (no real sample), so add it under `[[calendar.category]]` in `rules.toml` when captured: a test shows a user-added category works. Tests use `time/tzdata` so they run anywhere.
 
 ### 24 · Calendar scheduler
 - [ ] Done
