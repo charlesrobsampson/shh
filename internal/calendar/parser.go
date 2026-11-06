@@ -23,6 +23,8 @@ type Input struct {
 type Reminder struct {
 	Title    string
 	Subtitle string
+	// Delivered is when the reminder notification arrived.
+	Delivered time.Time
 	// Start is when the meeting begins, in the parser's time zone. It is only meaningful when the reminder is timed.
 	Start time.Time
 	// AllDay marks an untimed (all-day) reminder.
@@ -54,7 +56,7 @@ func (p *Parser) Parse(in Input) (reminder Reminder, ok bool, err error) {
 	if !p.isReminder(in.Category) {
 		return Reminder{}, false, nil
 	}
-	reminder = Reminder{Title: in.Title, Subtitle: in.Subtitle}
+	reminder = Reminder{Title: in.Title, Subtitle: in.Subtitle, Delivered: in.Delivered}
 	delivered := in.Delivered.In(p.loc)
 	for _, text := range []string{in.Body, in.Subtitle, in.Title} {
 		for _, pattern := range p.dates {
