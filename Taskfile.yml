@@ -48,21 +48,7 @@ tasks:
     cmds:
       - python3 tools/capture.py --once
 
-  spike:focus:on:
-    desc: "Spike 02: run the shh-focus-on Shortcut and print its latency"
+  spike:suppress:
+    desc: "Spike 02: run the banner suppressor for 45 s (hides banners except titles starting with [shh])"
     cmds:
-      - /usr/bin/time -p shortcuts run shh-focus-on
-
-  spike:focus:off:
-    desc: "Spike 02: run the shh-focus-off Shortcut and print its latency"
-    cmds:
-      - /usr/bin/time -p shortcuts run shh-focus-off
-
-  spike:focus:notify:
-    desc: "Spike 02: post a test notification, then show the newest rows in the notification DB (read-only)"
-    vars:
-      DB: $HOME/Library/Group Containers/group.com.apple.usernoted/db2/db
-    cmds:
-      - osascript -e 'display notification "shh spike test" with title "shh spike"'
-      - sleep 2
-      - sqlite3 -readonly "{{.DB}}" "select r.rec_id, a.identifier, datetime(r.delivered_date + 978307200, 'unixepoch', 'localtime') from record r join app a using(app_id) order by r.rec_id desc limit 5"
+      - osascript -l JavaScript spikes/focus-ax/ax_filter.js

@@ -22,8 +22,8 @@ Status: DRAFT v2 (decisions from review folded in). Builds on `manifest.md`. Ite
 
 ## 2. Hard constraints discovered (change the design)
 
-1. **We observe after delivery. We cannot intercept.** The notification DB is written once macOS has already received the notification. "Block" therefore means: Focus/DND is on, so the OS suppresses banners and sounds, and `shh` decides whether to *re-emit* its own alert. DND is a hard dependency. "ALLOW" = `shh` shows its own banner.
-2. **Triggering Focus from a CLI:** AppleScript can't toggle Focus directly on modern macOS. The supported route is the user creating two Shortcuts (`shh-focus-on`, `shh-focus-off`) that set the Focus, and `shh` running `shortcuts run <name>`. `shh doctor` checks that these exist and walks the user through creating them. **[DECIDED]** Use a **dedicated custom Focus mode named "shh"**, not literal Do Not Disturb. A custom Focus with no allowed people/apps suppresses notifications the same way, so shh never needs DND itself and doesn't clobber the user's own DND. Turn off Focus-status sharing on it.
+1. **We observe after delivery. We cannot intercept.** The notification DB is written once macOS has already received the notification, and only about 5 s after delivery, when the temporary banner expires. "Block" therefore means: shh hides the OS banner (§2.2), and `shh` decides whether to *re-emit* its own alert. "ALLOW" = `shh` shows its own banner through its own overlay window (never a Notification Center banner, or the suppressor would hide it).
+2. **Hiding banners [DECIDED, spike 02, `docs/spikes/02-focus.md`]:** macOS Focus is **not** used. On this Mac a custom Focus did not suppress banners, and with any Focus or DND on, Outlook mail left no DB row at all, so shh could never classify it. Instead shh runs a **banner suppressor** (Accessibility API via `osascript` JXA, needs the Accessibility permission): the `NotificationCenter` process creates a window per banner; the suppressor moves it to `AXPosition [6000, 6000]` (off-screen) about 0.4 s after delivery. macOS still records the row. Banners whose title starts with `[shh]` (the Notification Center fallback in §7) are left visible. A hidden banner may flash for under half a second, and other banners sharing a window with a `[shh]` one show too. Closing the banner instead of moving it is **not** an option: it prevents the DB row from being written.
 3. **DB access:** **verified on this Mac (Darwin 25.6): `~/Library/Group Containers/group.com.apple.usernoted/db2/db`** (SQLite, WAL mode), readable as the normal user with no Full Disk Access and no admin. Tables: `record` (`rec_id`, `app_id`, `data` plist blob, `delivered_date` in seconds since 2001-01-01), `app` (`app_id`, `identifier`), plus `delivered`, `displayed`, `requests`, `categories`. Plist keys: `req.{titl,subt,body,iden,cate,soun}`, `app`, `date`, `srce`, `styl`, `uuid`. Teams bundle id is `com.microsoft.teams2`. The path differs on older macOS (`.../group.com.apple.usernotificationsd/db`), so the reader must probe for it. Payloads are binary plists, and the schema shifts between releases. The reader must be version-tolerant and fail loudly (`shh doctor`).
 4. **macOS here is Darwin 25.x (Tahoe).** The spike (M0) should be done on this exact version first.
 
@@ -37,7 +37,7 @@ Status: DRAFT v2 (decisions from review folded in). Builds on `manifest.md`. Ite
 - CLI and TUI are thin clients over the socket: status, pause/resume, +/-5m, change threshold, stop, live event stream.
 - `shh stop` asks the worker to end gracefully (restore Focus, write session stats), then SIGTERM fallback.
 - On worker start it **backfills** from the notification DB since session start time, so nothing is missed in the spawn gap.
-- **Worker lifetime [DECIDED]:** the worker lives while *any* level is above 0% (see §3.1). A persistent baseline therefore keeps it running indefinitely. It exits when the effective level returns to 0%/off, and Focus is turned off.
+- **Worker lifetime [DECIDED]:** the worker lives while *any* level is above 0% (see §3.1). A persistent baseline therefore keeps it running indefinitely. It exits when the effective level returns to 0%/off, and the suppressor stops.
 - **Reboot/logout:** the worker dies with the login session. Baseline is persisted in SQLite, and `shh install` (optional launchd agent running the same `shh daemon`) resumes it at login. Without install, the user re-runs `shh` (any command re-arms a persisted baseline, and `shh doctor` warns).
 - **Promotion path [DECIDED: session-only first]:** the launchd agent could later also collect notifications while at 0% as extra training data and enable calendar auto-focus. Nothing in the design blocks it.
 
@@ -69,7 +69,7 @@ State is a **stack of levels**, not one session:
 - `shh stop` pops the top escalation only. `shh stop --all` clears everything including the baseline.
 - Pause/resume applies to the top timed layer. `+`/`-` adjust its duration. `f` changes the top layer's percentage.
 - Multiple stacked escalations are allowed but rare. The UI shows the stack in `shh status`.
-- Focus mode ("shh") stays on while effective level > 0, and is turned off at 0%/`off`.
+- The banner suppressor runs while effective level > 0, and stops at 0%/`off`.
 - Every notification row records `session_id` (or layer id) and the threshold used, so history remains interpretable.
 - Schema: `focus_sessions` gains `kind` (`baseline`|`escalation`), `parent_id`, `then_level`, `paused_at`, `remaining_secs`.
 
@@ -239,7 +239,7 @@ As in manifest, with these additions:
 - `shh focus ... --then <pct|tier|off>` (alias `--clear`): what to fall back to when the timer ends. Default: the layer beneath.
 - `shh stop [--all]`: pop top escalation, or clear everything.
 - `shh pause|resume`.
-- `shh doctor`: checks Full Disk Access, DB path/version, Focus shortcuts, overlay helper, Ollama (if enabled).
+- `shh doctor`: checks the Accessibility permission, DB path/version, Outlook "Display new message alert on desktop" and reminder style, overlay helper, Ollama (if enabled).
 - `shh capture`: log raw notifications for rule-building (dev/M0).
 - `shh train --reset|--rollback|--export|--import`.
 - `shh ls` filters: `--source`, `--since`, `--status`, `--min-score`; read-only.
@@ -286,7 +286,7 @@ internal/summarize/    none/ollama/claude backends
 internal/session/      worker, timer, IPC server/client
 internal/store/        sqlite, migrations, queries
 internal/tui/          bubbletea models
-internal/focus/        shortcuts-based Focus toggle
+internal/suppress/     banner suppressor (Accessibility watcher)
 ```
 **[DECIDED]** Pure-Go everywhere it's sensible: `modernc.org/sqlite` (no CGo), embedded static embeddings (no ONNX). Native bits are isolated behind small interfaces (below).
 
@@ -296,7 +296,7 @@ Every OS-specific piece sits behind an interface so a Linux port is additive, no
 | Interface | macOS (v1) | Linux (later) |
 |---|---|---|
 | `NotificationSource` | notification center SQLite + plist | D-Bus session bus monitor (`org.freedesktop.Notifications`, via `godbus`) |
-| `FocusController` | `shortcuts run` → "shh" Focus | `dunstctl set-paused` / GNOME `show-banners` / etc. |
+| `Suppressor` | Accessibility watcher moves banner windows off-screen | `dunstctl set-paused` / GNOME `show-banners` / etc. |
 | `Alerter` | overlay helper or `osascript` fallback | `notify-send` / libnotify |
 | `MenuBar` | tray lib | tray lib (StatusNotifier) |
 | `Calendar` | notification parsing | same parser rules, different apps |
@@ -309,11 +309,10 @@ Classifier, store, session worker, TUI, CLI are platform-independent. Linux is u
 
 **M0, de-risk spikes (do first, ~1–2 days)**
 - Read and decode the real notification DB on this Mac. Document path, schema, required permissions.
-- Toggle Focus via Shortcuts from Go.
+- Hide OS banners with an Accessibility watcher while the notification DB still records them (spike 02, done).
 - Capture ~10 real Outlook/Teams meeting notifications and write parser rules.
 - Overlay helper proof of concept: a banner with color/size/sound.
 - Menu bar proof of concept: tray lib showing live text (`28m`) next to the icon on this Mac.
-- Create the "shh" Focus mode with no allowed apps/people and toggle it via Shortcuts.
 - Check candidate static-embedding models for size/quality; confirm `go:embed` is viable.
 - Exit criteria: all four work, or the design is revised.
 
@@ -347,7 +346,8 @@ Classifier, store, session worker, TUI, CLI are platform-independent. Linux is u
 |---|---|---|
 | macOS changes DB schema/path | Ingest breaks | Version adapters, `doctor`, fixtures, fail loudly |
 | FDA permission friction | Won't start | `doctor` guides setup |
-| Focus Shortcuts setup is manual | Onboarding friction | `shh init` wizard |
+| Accessibility permission is manual | Onboarding friction | `shh init` wizard and `shh doctor` |
+| Banner flashes for up to ~0.5 s before the suppressor hides it; depends on Notification Center's Accessibility layout | Cosmetic, may break on a macOS update | Accept the flash; `shh doctor` self-test; Outlook mail needs its desktop alert on |
 | Calendar via notifications misses meetings | Missed pre-empt | Rules tuned on real data, documented limits, later ICS option |
 | Model learns "block all" | Missed important alerts | Class weights, `y` boost, threshold hints, rollback |
 | Notification privacy | Sensitive content stored | Local-only, `0600`, 30d TTL, `shh purge`, claude summarizer opt-in |
@@ -361,7 +361,7 @@ Decided:
 3. Python judge (Laya/Jev) only if the offline eval shows it helps.
 4. Pure-Go SQLite (`modernc.org/sqlite`).
 5. Swift only if the overlay/menu bar can't be done well in Go. Spike decides. Linux support designed in via interfaces, shipped later.
-6. Dedicated "shh" Focus mode.
+6. No Focus mode: an Accessibility banner suppressor (spike 02). shh alerts use their own overlay, never Notification Center.
 
 Still open:
 - Can an escalation be *lower* than the baseline? **[ASSUMED yes]**

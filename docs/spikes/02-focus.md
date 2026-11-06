@@ -1,6 +1,6 @@
-# Spike 02: "shh" Focus mode via Shortcuts
+# Spike 02: suppressing OS banners (Focus vs Accessibility)
 
-Question: can `shh` turn a Focus on and off from the CLI, and do notifications still land in the notification DB while it is on? (`plan.md` §2.2, §3.1)
+Question: how does shh hide OS banners while the notification DB still records them? Tried a custom Focus, stock DND, closing banners and moving banners off-screen. (`plan.md` §2.2, §3.1)
 
 Environment: macOS 26.7.1 (Darwin 25.6), managed Mac (MDM, endpoint security agents installed).
 
@@ -51,6 +51,22 @@ Idea: leave Focus off so every notification is recorded, and close each banner t
 - The window does not exist while idle (`windows().length` is 0), and macOS recreates it at `[0, 0]` for each banner. So it cannot be parked once: a watcher must catch every new window and move it.
 - Not yet tested: overlapping banners, real Teams and Outlook banners, CPU cost of polling, and notification sound (sounds are off on this Mac).
 
+### 02d: stacked and mixed banners with a title filter
+
+`spikes/focus-ax/ax_watch.js` (hide everything) and `ax_filter.js` (hide everything except banners whose title starts with `[shh]`), each polling about every 50 ms.
+
+- 6 notifications, 3 of them in a burst: all 6 rows recorded.
+- Hidden banners were not visible, apart from a very brief flash (user: under a second, unreadable, acceptable: "I can assume it's not important").
+- `[shh]` banners showed normally. A fresh window is created at `[0, 0]`, so the watcher only acts when a window needs to change.
+- Mixed stack (hidden and `[shh]` banner posted 0.3 s apart): the window is brought back for the `[shh]` banner, so the other banner shows too. Accepted trade-off.
+- A parked window persists across several banners while it is open, so the watcher does not move the window once per banner.
+
 ## Decision
 
-Open. Leading candidate: Focus stays off, shh runs a watcher that moves each new banner window off-screen, then reads the DB as designed. Needs the user's approval because it replaces the Focus-based design in `plan.md` §2.2 and §3.1. Needs the user. Options and the impact on `plan.md` are in the task report.
+**Drop macOS Focus. Use an Accessibility banner suppressor.** `plan.md` §2, §3.1, §7, §11.1, §12 and §14 are updated.
+
+- Focus is unreliable here (custom Focus did not suppress) and loses Outlook mail from the DB; the suppressor keeps every row.
+- shh's own alerts use its own overlay window, never Notification Center. The Notification Center fallback uses a `[shh]` title prefix so the suppressor leaves it visible.
+- Requires the Accessibility permission for the process running the watcher, and Outlook's "Display new message alert on desktop" turned on.
+- Known limits: sub-second flash of hidden banners, notification sounds are not suppressed, dependence on Notification Center's Accessibility layout (needs a `doctor` self-test).
+- Follow-ups: DB reads must not rely on `rec_id` alone and must allow a few seconds of write lag (tasks 16, 17).
