@@ -43,7 +43,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Notes: **outcome in `docs/spikes/03-banner.md`.** Use the JXA/AppKit overlay (`spikes/banner/overlay.js`, `task spike:banner`), not Swift. Task 29 builds the real alerter: a persistent JXA process fed JSON lines, with the `[shh]`-titled `osascript` fallback. JXA gotchas (zero-arg methods are properties, `NSBox` for the background, subclass `mouseDown:` for clicks) are in the doc.
 
 ### 04 · Spike: menu bar countdown
-- [ ] Done
+- [x] Done
 - Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/04-spike-menubar` · Depends: 01
 - Context: want text like `shh 28m · 65%` next to a menu bar icon, no floating window. `plan.md` §7.1 proposes `fyne.io/systray` in a separate process polling the worker.
@@ -51,6 +51,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Build: `docs/spikes/04-menubar.md`. Prototype a tray app that shows live-updating title text and a small menu (a few items). Confirm CGo/build requirements and whether it works as a separate process on this Mac. Fall back per the plan if not.
 - Tests: none.
 - Manual check: user sees the live title ticking in the menu bar and the menu items clickable.
+- Notes: **outcome in `docs/spikes/04-menubar.md`.** Use the JXA `NSStatusItem` helper (`spikes/menubar/statusitem.js`), not `fyne.io/systray` (CGo, jittery width). Task 30 therefore drives a persistent JXA helper over JSON lines; no CGo. Run the prototypes with `task spike:menubar` (systray) and `task spike:menubar:jxa`.
 
 ### 05 · Spike: static embedding model choice
 - [ ] Done
@@ -307,7 +308,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Session: _(fill on start)_
 - Branch: `task/30-menubar` · Depends: 04, 26
 - Read: `docs/spikes/04-menubar.md`, `plan.md` §7.1
-- Build: `shh menubar` launched by the worker and exiting with it; shows `label` + time left + effective level; paused indicator; menu items for the stack, pause/resume, ±5m, stop, open TUI.
+- Build: `shh menubar` launched by the worker and exiting with it, driving a persistent JXA `NSStatusItem` helper over JSON lines (stdin: title and menu entries, stdout: clicks; see spike 04); shows `label` + time left + effective level; paused indicator; menu items for the stack, pause/resume, ±5m, stop, open TUI.
 - Tests: title/menu formatting from a status payload (table: baseline only, escalation with time left, paused, indefinite, off). Tray rendering itself is manual.
 - Manual check: start a 2m session and watch the countdown; click pause.
 
