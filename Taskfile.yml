@@ -72,13 +72,13 @@ tasks:
       - go run .
 
   spike:embeddings:
-    desc: "Spike 05: compare the candidate models (run spike:embeddings:fetch first)"
+    desc: "Spike 05: compare the candidate models (run model:fetch first)"
     dir: spikes/embeddings
     cmds:
       - go run . ../../private/models
 
-  spike:embeddings:fetch:
-    desc: "Spike 05: download candidate Model2Vec models into private/models (gitignored)"
+  model:fetch:
+    desc: "Download the Model2Vec models (spike 05 candidates) into private/models (gitignored)"
     cmds:
       - for: [potion-base-2M, potion-base-4M, potion-base-8M]
         cmd: |
@@ -86,3 +86,9 @@ tasks:
           for f in config.json tokenizer.json model.safetensors README.md; do
             curl -sSL --fail -o private/models/{{.ITEM}}/$f https://huggingface.co/minishlab/{{.ITEM}}/resolve/main/$f
           done
+
+  model:build:
+    desc: "Build the quantized embedding model asset, private/models/potion-base-8M-int8.bin, and print its sha256"
+    deps: [model:fetch]
+    cmds:
+      - go run ./tools/modelbuild private/models/potion-base-8M private/models/potion-base-8M-int8.bin potion-base-8M-int8
