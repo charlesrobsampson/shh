@@ -44,7 +44,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 ### 04 · Spike: menu bar countdown
 - [ ] Done
-- Session: _(fill on start)_
+- Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/04-spike-menubar` · Depends: 01
 - Context: want text like `shh 28m · 65%` next to a menu bar icon, no floating window. `plan.md` §7.1 proposes `fyne.io/systray` in a separate process polling the worker.
 - Read: `plan.md` §7.1, §11.1
