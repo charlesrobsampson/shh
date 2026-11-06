@@ -471,3 +471,23 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Tests: archive fixtures built from synthetic data; chat versus channel features differ; the heuristics still apply when the metadata is absent.
 - Manual check: send yourself a channel message and a chat message; the Train tab detail shows the right feature for each.
 
+### 44 · Alert buttons: dismiss, go to, preview
+- [ ] Done
+- Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
+- Branch: `task/44-alert-buttons` · Depends: 29, 42
+- Context: alerts are a single clickable banner. The user wants explicit buttons: **Dismiss** (closes it), **Go to** (opens the source app, then closes it), **Preview** (expands the banner in place to the full message without dismissing it) and, reserved for task 45, **Train**. Buttons are configurable, listed in the config as objects so each can later carry its own options: `"buttons": [{"type": "preview", "label": "Preview", "enabled": true}, ...]`; the order is the left-to-right order; every known type is always present in the effective config (a type left out of a user's list comes back with `enabled: false`); an entry with just a `type` is enabled. With no `dismiss` button enabled, clicking anywhere on the banner outside another button dismisses it; with one, a background click does nothing. Defaults: preview, goto and dismiss enabled, train present but disabled. Buttons that do not apply to an alert are hidden (goto needs a source app; preview only shows when the text was cut off; calendar alerts have nothing to train). Per-kind and per-source overrides replace the whole list. Preview is capped (12 lines, then an ellipsis) because alerts are glances, not documents, and it stops the auto-dismiss timer.
+- Read: `internal/alert`, `internal/config`, `docs/spikes/03-banner.md`
+- Build: `config.Button` and a registry of known types (one entry per type, so adding a button type later is a single place), parsing, normalisation, validation and per-kind/per-source resolution; `alert.Request` carries the visible buttons, the full text and the preview height; the overlay script draws the button row, handles the four actions and the background-click rule; the worker passes the full message text (not the 200-character cut) for preview; `shh alert test` includes a long message so preview can be tried.
+- Tests: config (defaults, partial lists, missing types come back disabled, duplicates and unknown types are errors naming the key, overrides replace, effective output round-trips); display (which buttons apply, banner height includes the button row, preview height capped, background-click flag); overlay JSON; script details pinned as before (the click and selectable-label lessons).
+- Manual check: user runs `shh alert test`: buttons look right; Preview expands the long sample without dismissing; Go to opens Calculator and closes it; Dismiss closes it; a `config.json` listing only `dismiss` makes background clicks dismiss.
+
+### 45 · Train button on alerts
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/45-alert-train` · Depends: 33, 44
+- Context: the Train button (registered in task 44, disabled by default) lets the user rate an alert without opening the TUI: it expands the banner to a 0 to 100 slider with Save, like the TUI's exact label, and optionally quick "not important" feedback. Training must reuse the TUI's training path from task 33 (flags, `user_label`, model update, undo), not a second implementation; the alert carries the stored notification id and the worker trains from the stored notification. Calendar alerts have no row to train and hide the button.
+- Read: task 33's notes, `internal/alert`, `internal/session`
+- Build: `alert.Alert.NotificationID`; the banner reports `trained <score>` back to the daemon; a worker method (shared with the TUI) trains from the stored notification; the button applies only when the alert has a notification id.
+- Tests: fake overlay reporting a score trains the model and sets the flags exactly as the TUI does; undo works; the button is hidden for calendar alerts.
+- Manual check: rate a real alert from the banner, then see the label in the Train tab history and the score change in `shh replay`.
+
