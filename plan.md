@@ -267,7 +267,7 @@ CREATE TABLE training_log (id INTEGER PRIMARY KEY, notification_id INTEGER, labe
   predicted REAL, delta_blob BLOB, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);
 ```
 - Fix TTL: manifest purges only `trained AND dismissed`, so untouched rows live forever. Proposed: purge anything older than 30d *except* untrained rows younger than 90d (they're still training candidates). Alerted-and-never-reviewed rows purge at 30d.
-- Indices: `(timestamp)`, `(is_dismissed_inbox, timestamp)`, `(is_trained, timestamp)`, unique `(source_rec_id)`.
+- Indices: `(timestamp)`, `(is_dismissed_inbox, timestamp)`, `(is_trained, timestamp)`, unique `(source_rec_id, timestamp)` (macOS reuses record ids after dismissal, so the id alone is not unique: spike 02).
 - SQLite in WAL mode, single writer (the worker). TUI/CLI read directly or go through the socket for mutations.
 - Keep notification *bodies* local only. `shh.db` is `0600`.
 

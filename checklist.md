@@ -89,13 +89,14 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Notes: `store.Open(path)` (`":memory:"` supported), `Close`, `SchemaVersion`. Repositories (tasks 08, 09, 19, ...) live in package `store` and use the unexported `s.db`. Migrations are appended to `migrations` in `internal/store/migrations.go`, never edited once shipped; the high-water mark for the tailer (task 17) needs its own migration. Store times as UTC. Schema choices: `then_level` NULL means "fall back to the layer beneath", 0 means off; `calendar_events` is unique on `(title, start_time)`; `source_rec_id` is unique; `threshold_at_decision` is nullable (history imports have none); `unparsed_calendar` has `notification_id, category, title, subtitle, raw_text`; foreign keys from `calendar_events`, `unparsed_calendar` and `training_log` to `notifications` are `ON DELETE SET NULL` so the TTL purge keeps history; `model_weights` has one row per saved version (history). Checked on a scratch path: all 7 tables created, files `0600`.
 
 ### 08 · Store: notifications repository
-- [ ] Done
+- [x] Done
 - Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/08-store-notifications` · Depends: 07
 - Read: `plan.md` §8 (flag table), §10; `manifest.md` §5.1
 - Build: insert (dedupe on `source_rec_id`), list with filters (source, since, status, min score on the 0–100 display scale (stored 0–1), tab views: inbox = not dismissed, train = not trained), update flags (`is_read`, `is_dismissed_inbox`, `is_trained` + `user_feedback` / `user_label`), set summary; every inserted row records `threshold_at_decision`. Define the public types here.
 - Tests (table, via public API): duplicate insert ignored; tab views show the correct rows after each flag change (training removes from Train view only; dismiss removes from Inbox only); filters combine; ordering newest first.
 - Manual check: none.
+- Notes: API in `internal/store/notifications.go`: `Notification` (optional ints are pointers: `ThresholdAtDecision`, `UserLabel`; `SourceRecID` and `SessionID` use 0 for none), `InsertNotification` (returns `id, inserted, err`; requires a threshold), `GetNotification`, `ListNotifications(Filter{View, Source, Since, Status, MinScore, Limit})`, `SetRead`, `SetDismissed`, `SetSummary`, `Train(id, Training{Feedback|Label})`, `Untrain`, `ErrNotFound`. Views: `ViewInbox` (not dismissed), `ViewTrain` (not trained). `Train` does not dismiss: the TUI calls `SetDismissed` too when training from the inbox. `MinScore` compares the rounded base score (so 0.57 counts as 57). **Migration 2 changed the dedupe key to `(source_rec_id, timestamp)`** because macOS reuses record ids (spike 02); a repeat with the same pair is ignored, a reused id with a new delivery time is stored. Timestamps are written UTC in a fixed-width text format so SQL ordering is correct.
 
 ### 09 · Store: focus levels repository
 - [ ] Done

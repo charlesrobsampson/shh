@@ -83,4 +83,10 @@ CREATE TABLE training_log (
 	created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 `,
+
+	// macOS reuses record ids once rows are dismissed (spike 02), so a record id alone cannot identify a notification.
+	`
+DROP INDEX notifications_source_rec_id;
+CREATE UNIQUE INDEX notifications_source_rec_id ON notifications (source_rec_id, timestamp);
+`,
 }
