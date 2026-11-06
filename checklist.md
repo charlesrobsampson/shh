@@ -320,7 +320,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 ### 29 · Alerter implementation and config
 - [ ] Done
-- Session: _(fill on start)_
+- Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/29-alerter` · Depends: 03, 10, 25
 - Read: `docs/spikes/03-banner.md`, `plan.md` §7
 - Build: real alerter following the spike's recommendation with config (size, color, position, duration, sound, per-kind/per-source overrides); `osascript` fallback whose title starts with `[shh]` so the suppressor leaves it visible; click opens the source app; `shh alert test`.
