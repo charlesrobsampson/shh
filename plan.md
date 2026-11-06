@@ -108,7 +108,7 @@ Score → effective score → threshold (see §5).
 ```
 S_base   = classifier(features)                  in [0,1]
 boost    = time_sensitivity(text, meta)          in [0, 0.4]
-S_eff    = min(0.99, S_base + boost)             (boost alone can never pierce lockdown)
+S_eff    = max(S_base, min(0.99, S_base + boost))   (boost alone can never pierce lockdown; a base score above 0.99 still does)
 T        = effective_threshold(now)              (§3.1), 0..99
 interrupt = calendar_preempt OR (S_eff > T/100)
 ```

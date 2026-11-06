@@ -163,13 +163,14 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Notes: `classify.NewBooster(rules, store)` and `Boost(BoostInput{Source, Sender, Text, At}) (BoostResult{Value, Reasons}, error)` in `internal/classify/boost.go`. Value is 0 to 0.4, rounded to 3 decimals. Every matching urgency rule adds its boost (sum, then cap); a burst adds 0.1 when the new message is the third from the same source and sender within two minutes (window measured back from `At`, inclusive). The caller builds `Text` from title, subtitle and body and must call `Boost` before inserting the notification. Reasons are `keyword: <rule name>` and `burst: ...` strings for task 22. The burst check needs a sender, so unknown senders never burst. Burst size, window and boost are constants in the file, not yet configurable. Added `Sender` to `store.Filter`.
 
 ### 15 · Decision function
-- [ ] Done
+- [x] Done
 - Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/15-decide` · Depends: 11
 - Read: `plan.md` §4.3
-- Build: `Decide(threshold, baseScore, boost, calendarPreempt)` returns allow/block and the effective score, per `plan.md` §4.3: `S_eff = min(0.99, base + boost)`, interrupt iff calendar pre-empt or `S_eff > threshold/100`. No special case for `lockdown` (it is threshold 99).
+- Build: `Decide(threshold, baseScore, boost, calendarPreempt)` returns allow/block and the effective score, per `plan.md` §4.3: `S_eff = max(base, min(0.99, base + boost))` (corrected from the original `min(0.99, base + boost)`, which would have capped a label-100 score at 0.99), interrupt iff calendar pre-empt or `S_eff > threshold/100`. No special case for `lockdown` (it is threshold 99).
 - Tests (table): equality at threshold is blocked; one point above passes; boost can raise a score over the threshold but never over 0.99 (so boost alone never pierces lockdown); a base score above 0.99 (label-100 style) passes lockdown; score 0 is blocked at any threshold ≥ 0; calendar pre-empt always passes.
 - Manual check: none.
+- Notes: `decide.Decide(threshold, base, boost, calendarPreempt) Decision{Interrupt, Effective}` in `internal/decide/decide.go`. The comparison is strict (`effective*100 > threshold`) with a 1e-9 tolerance so float noise cannot let a score equal to the threshold through (a sweep test covers every score against every threshold). It is pure math: threshold 0 (focus off) is not special-cased, so callers must not decide at level 0 (the worker does not). Corrected `plan.md` §4.3 to the `max` formula.
 
 ---
 
