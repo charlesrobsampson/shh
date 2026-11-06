@@ -445,3 +445,17 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Read: `plan.md` §11.1
 - Build: D-Bus `NotificationSource`, Focus control, alerter, tray implementations behind the existing interfaces.
 - Tests: via fakes and a fake D-Bus service. Manual check: on a Linux desktop.
+
+---
+
+## Phase 10: Follow-ups added during the work
+
+### 42 · Config and rules in JSON (with comments)
+- [ ] Done
+- Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
+- Branch: `task/42-json-config` · Depends: 10, 13, 29
+- Context: the user prefers JSON to TOML (a one-line `[alert] color = ...`, which is invalid TOML, was an easy slip to make) and chose JSON that allows `//` and `/* */` comments and trailing commas, so the default rules keep their explanations. Files become `config.json` and `rules.json`. Nothing has shipped, so there is no migration; the old `.toml` files are simply ignored.
+- Read: `internal/config`, `internal/rules`, `internal/tomlx`
+- Build: `internal/jsonc` (strict decoding with errors that name the file, line and dotted key path: unknown key, wrong type, syntax error; a blank file means `{}`; keys match exactly, not case-insensitively); convert `internal/config` and `internal/rules` (including `default_rules.json`, with the regexes' backslashes doubled) and every caller; drop `internal/tomlx` and the go-toml dependency; update `plan.md`, the checklist notes and any examples.
+- Tests: the existing config and rules tests, rewritten for JSON with the same expectations; comments and trailing commas accepted; error messages still name file, line and key.
+- Manual check: a `config.json` with a comment and a changed colour is picked up by `shh alert test`.
