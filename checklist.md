@@ -62,7 +62,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Build: `docs/spikes/05-embeddings.md`. Evaluate 2–3 candidate small static embedding models (license, size, vocab/tokenizer needs, dims). Prototype loading and embedding in Go; sanity-check similarity on ~20 hand-written notification examples (urgent vs newsletter). Recommend one with size and a plan for the tokenizer. Do not commit large model files without the user's OK.
 - Tests: none.
 - Manual check: user reviews the recommendation, size, and similarity sanity results.
-- Notes: **outcome in `docs/spikes/05-embeddings.md`.** Recommend `minishlab/potion-base-8M` (MIT, 256 dims, 29,528-token BERT WordPiece vocab), quantized to int8 (7.7 MB, lossless in practice). Go tokenizer prototype matches the Python reference exactly (cosine 1.0000); needs `golang.org/x/text/unicode/norm`. Task 20 must ask the user how to ship the asset (commit ~8 MB vs a Taskfile task that downloads and quantizes it); do not commit it without their OK. Run with `task spike:embeddings:fetch` then `task spike:embeddings`.
+- Notes: **outcome in `docs/spikes/05-embeddings.md`.** Recommend `minishlab/potion-base-8M` (MIT, 256 dims, 29,528-token BERT WordPiece vocab), quantized to int8 (7.7 MB, lossless in practice). Go tokenizer prototype matches the Python reference exactly (cosine 1.0000); needs `golang.org/x/text/unicode/norm`. **Asset distribution is decided (see `plan.md` §5.1): not committed; embedded under `-tags embedmodel`, otherwise downloaded by `shh init` from a pinned `models-v1` GitHub release asset with a sha256 check.** Run with `task spike:embeddings:fetch` then `task spike:embeddings`.
 
 ### 06 · Clock package and fake
 - [ ] Done
@@ -211,8 +211,8 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Session: _(fill on start)_
 - Branch: `task/20-embeddings` · Depends: 05, 18
 - Read: `docs/spikes/05-embeddings.md`, `plan.md` §5.1
-- Build: embed the model chosen in spike 05, tokenizer, mean pooling, `Features` adapter appended to L0+L1; feature version includes the model id.
-- Tests: urgent vs newsletter examples score closer to their own class in a tiny trained-model check; deterministic output; empty text handled.
+- Build: model loading from spike 05 with three sources in order: embedded (`-tags embedmodel`), then `~/.config/shh/models/`, else L2 off with a clear status; sha256 checked against a constant; tokenizer, mean pooling, `Features` adapter appended to L0+L1; feature version includes the model id.
+- Tests: urgent vs newsletter examples score closer to their own class in a tiny trained-model check; deterministic output; empty text handled; missing model disables L2 without error; a file with a wrong sha256 is rejected. Tests use a tiny synthetic model, never the real asset.
 - Manual check: `shh classify "server is down"` (temporary command ok) prints a score; binary size noted in the task `Notes:`.
 
 ### 21 · Seed weights and day-one quality
@@ -371,7 +371,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Session: _(fill on start)_
 - Branch: `task/36-cli-extras` · Depends: 17, 21, 23, 27
 - Read: `plan.md` §9, §5.3
-- Build: `ls` (read-only, `--source --since --status --min-score`); `train` (batch, `--reset|--rollback|--export|--import`; exports contain private text, so default to `private/` and warn on any other path); `init` (history bootstrap import, Accessibility permission check, DB check); `rules review` (unparsed calendar rows); `doctor` (DB path, notification permissions for apps seen, Accessibility permission, suppressor self-test, Outlook new-mail alert setting, alerter, menubar); `capture` (log raw notifications for rule-building to a gitignored file).
+- Build: `ls` (read-only, `--source --since --status --min-score`); `train` (batch, `--reset|--rollback|--export|--import`; exports contain private text, so default to `private/` and warn on any other path); `init` (history bootstrap import, Accessibility permission check, DB check); `rules review` (unparsed calendar rows); `doctor` (embedding model present and sha256 ok, DB path, notification permissions for apps seen, Accessibility permission, suppressor self-test, Outlook new-mail alert setting, alerter, menubar); `capture` (log raw notifications for rule-building to a gitignored file).
 - Tests: `ls` doesn't change flags; `doctor` reports each failing check against fakes; `init` imports history from the fake source; export/import round trip.
 - Manual check: `shh doctor` on your Mac gives a clear checklist.
 
@@ -389,7 +389,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Session: _(fill on start)_
 - Branch: `task/38-packaging` · Depends: 36
 - Read: `plan.md` §12
-- Build: release build target (a `Taskfile.yml` task, optionally using goreleaser), README (install, permissions setup including Accessibility and Outlook's "Display new message alert on desktop", config examples), man-style `--help` text review.
+- Build: release build target (a `Taskfile.yml` task, optionally using goreleaser) that fetches the model asset and builds with `-tags embedmodel`; a Taskfile task that publishes the quantized model as the `models-vN` release asset; README note that `go install` users need network once for `shh init`, README (install, permissions setup including Accessibility and Outlook's "Display new message alert on desktop", config examples), man-style `--help` text review.
 - Tests: none.
 - Manual check: a clean install from the built artifact follows the README successfully.
 

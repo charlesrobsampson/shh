@@ -43,7 +43,14 @@ Reference points from the same model cards: all-MiniLM-L6-v2 (transformer) 55.93
 - Load time (about 10 ms) and embed time (a few microseconds) are negligible.
 - The Go tokenizer matches the reference exactly, so no Python is needed at runtime.
 
-Open question for the user: how to ship the asset. Options: (a) commit the 7.7 MB quantized file (reproducible build, no network, repo grows by 8 MB once); (b) keep it out of git and have a Taskfile task download and quantize it before `go build` (small repo, but builds need network and the task). Task 20 must decide; neither commits anything until the user agrees.
+### Distribution (decided by the user)
+
+Not committed to git. `go install github.com/charlesrobsampson/shh@latest` (or any version) builds from the module source, where a gitignored file does not exist, so a plain `go:embed` would fail to compile. So:
+
+- The quantized int8 model is published once as a GitHub release asset under a stable tag (`models-v1`); its URL and sha256 are constants in the source. No quantizing on user machines, no dependence on Hugging Face `main`.
+- Release builds (`task release`, `-tags embedmodel`) embed it and work offline.
+- `go install` builds do not embed; `shh init` downloads and verifies it into `~/.config/shh/models/`. Until then L2 is off and `shh doctor` reports it.
+- A future model gets a new `models-vN` tag and constants; the feature version includes the model id, so old weights are invalidated.
 
 ## Feature version
 

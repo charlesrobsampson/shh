@@ -130,7 +130,7 @@ interrupt = calendar_preempt OR (S_eff > T/100)
 |---|---|---|
 | L0 | Rules/priors: VIP senders, app priority, urgency keywords, 1:1 vs channel, @mention | Yes |
 | L1 | Hashed text features + metadata → online logistic regression | Yes |
-| L2 | Static embedding vectors (Model2Vec-style, pure Go lookup + mean pooling), **bundled in the binary via `go:embed`** (no download, no external service), appended to L1 features | **Yes, v1** (gives semantic generalization out of the box) |
+| L2 | Static embedding vectors (Model2Vec-style, pure Go lookup + mean pooling), **shipped one of two ways (decided, spike 05): embedded via `go:embed` in release builds (`-tags embedmodel`), or downloaded once by `shh init` into `~/.config/shh/models/` for `go install` builds** (the model is not in git), appended to L1 features | **Yes, v1** (gives semantic generalization out of the box) |
 | L3 | Zero-shot "decision model" judge (Laya/Jev-style Python sidecar) used as feature provider | Optional, **decided by measurement** (see §5.2) |
 
 All layers sit behind an `Features` interface that returns a sparse/dense vector with a **feature version** string. Weights are stored per version. Changing the embedder invalidates old weights, so retrain from stored notification text, which is why we keep bodies for 30 days.
@@ -146,7 +146,7 @@ Where it *does* fit: as **L3 feature provider**, a Python sidecar answering fixe
 
 **Decision rule for L3 (python is acceptable if it earns its keep):** don't guess, measure. After M3 we'll have a labeled set of real notifications (see §5.3 bootstrapping). Run an offline Python script that scores that set with Laya (calibrated on a held-out part) and compare against L0+L1+L2 using the replay harness (§13). Adopt L3 only if it measurably improves precision/recall of "should have alerted", especially in the first week of use. Core must remain fully functional without it.
 
-**Out-of-box quality without any external system** comes from: (a) L0 priors/seed weights, (b) bundled static embeddings, (c) bootstrapping from history below. **[DECIDED, spike 05, `docs/spikes/05-embeddings.md`]** `minishlab/potion-base-8M` quantized to int8 (7.7 MB), BERT WordPiece tokenizer implemented in Go; verified against the reference library.
+**Out-of-box quality without any external system** comes from: (a) L0 priors/seed weights, (b) bundled static embeddings, (c) bootstrapping from history below. **[DECIDED, spike 05, `docs/spikes/05-embeddings.md`]** `minishlab/potion-base-8M` quantized to int8 (7.7 MB), BERT WordPiece tokenizer implemented in Go; verified against the reference library. **Distribution [DECIDED]:** the quantized model is not committed. It is published once as a GitHub release asset under a stable tag (`models-v1`) whose URL and sha256 are constants in the source. Release builds embed it (`-tags embedmodel`); plain `go install ...@version` builds do not, and `shh init` downloads and verifies it. Until the model is present L2 is off (L0+L1 only) and `shh doctor` says so. A new model means a new `models-vN` tag and constants; the feature version includes the model id.
 
 ### 5.3 Model and learning
 - `p = σ(w·x + b)` is the score `S_base`. Training is soft-target logistic SGD: `w ← w + α (t − p) x` (the manifest formula plus the sigmoid and a bias), where `t` is the target score in [0,1].
