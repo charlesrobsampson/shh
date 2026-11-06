@@ -310,7 +310,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 ### 28 · Worker lifecycle: spawn, PID file, graceful stop, re-arm
 - [ ] Done
-- Session: _(fill on start)_
+- Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/28-lifecycle` · Depends: 27, 02
 - Read: `plan.md` §3, `docs/spikes/02-focus.md`
 - Build: detached `shh daemon` re-exec, PID file, single-instance lock, graceful stop (stops the suppressor and restores any parked banner window to 0,0), exit when effective level is 0, re-arm a persisted baseline on any command; real macOS `Suppressor` from spike 02 (a persistent `osascript -l JavaScript` watcher polling about every 50 ms, based on `spikes/focus-ax/ax_filter.js`, leaving `[shh]` banners alone; restart the watcher when the NotificationCenter PID changes and on wake from sleep) with its fake.
