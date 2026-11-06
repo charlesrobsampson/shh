@@ -9,7 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charlesrobsampson/shh/internal/alert"
 	"github.com/charlesrobsampson/shh/internal/classify"
+	"github.com/charlesrobsampson/shh/internal/config"
 	"github.com/charlesrobsampson/shh/internal/decide"
 	"github.com/charlesrobsampson/shh/internal/replay"
 	"github.com/charlesrobsampson/shh/internal/rules"
@@ -156,6 +158,38 @@ func (c *uiCmd) Run(env *Env) error {
 	return (&statusCmd{}).Run(env)
 }
 
+type alertCmd struct {
+	Test alertTestCmd `cmd:"" help:"Show a sample alert in each configured style."`
+}
+
+type alertTestCmd struct{}
+
+// Run shows one sample per kind of alert and one per app that has its own style, so changes to config.json can be previewed.
+// The first sample carries Calculator's bundle id: click it to check that clicking opens the source app.
+func (c *alertTestCmd) Run(env *Env) error {
+	if env.NewAlerter == nil {
+		return errors.New("this build cannot show alerts")
+	}
+	alerter, err := env.NewAlerter()
+	if err != nil {
+		return err
+	}
+	samples := []alert.Alert{
+		{Kind: config.KindMessage, Source: "Teams", BundleID: "com.apple.calculator", Title: "Sample message", Body: "A message alert in the default style. Click it to open Calculator."},
+		{Kind: config.KindCalendar, Source: "Calendar", Title: "Sample meeting", Body: "A calendar alert: Starts at 10:30"},
+	}
+	for _, source := range env.AlertSources {
+		samples = append(samples, alert.Alert{Kind: config.KindMessage, Source: source, Title: "Sample from " + source, Body: "A message alert styled for " + source})
+	}
+	for _, sample := range samples {
+		if err := alerter.Show(sample); err != nil {
+			return fmt.Errorf("showing the %s sample: %w", sample.Kind, err)
+		}
+		fmt.Fprintf(env.Stdout, "showed a %s alert from %s\n", sample.Kind, sample.Source)
+	}
+	return nil
+}
+
 type daemonCmd struct{}
 
 func (c *daemonCmd) Run(env *Env) error {
@@ -175,7 +209,7 @@ func (c *replayCmd) Run(env *Env) error {
 	if err != nil {
 		return usagef("-t: %w", err)
 	}
-	r, err := rules.Load(filepath.Join(env.ConfigDir, "rules.toml"))
+	r, err := rules.Load(filepath.Join(env.ConfigDir, "rules.json"))
 	if err != nil {
 		return err
 	}

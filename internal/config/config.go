@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -10,9 +11,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/pelletier/go-toml/v2"
-
-	"github.com/charlesrobsampson/shh/internal/tomlx"
+	"github.com/charlesrobsampson/shh/internal/jsonc"
 )
 
 // Kind is the sort of alert being shown; kinds can override the base style.
@@ -34,11 +33,11 @@ type Style struct {
 
 // StyleOverride changes only the fields that are set.
 type StyleOverride struct {
-	Position     *string `toml:"position"`
-	Size         *string `toml:"size"`
-	Color        *string `toml:"color"`
-	DurationSecs *int    `toml:"duration_secs"`
-	Sound        *string `toml:"sound"`
+	Position     *string `json:"position,omitempty"`
+	Size         *string `json:"size,omitempty"`
+	Color        *string `json:"color,omitempty"`
+	DurationSecs *int    `json:"duration_secs,omitempty"`
+	Sound        *string `json:"sound,omitempty"`
 }
 
 type Alert struct {
@@ -100,25 +99,25 @@ type Config struct {
 	Paths      Paths
 }
 
-// file is the shape of config.toml; pointers tell "not set" apart from zero values.
+// file is the shape of config.json; pointers tell "not set" apart from zero values.
 type file struct {
 	Alert struct {
 		StyleOverride
-		Calendar *StyleOverride           `toml:"calendar,omitempty"`
-		Source   map[string]StyleOverride `toml:"source,omitempty"`
-	} `toml:"alert"`
+		Calendar *StyleOverride           `json:"calendar,omitempty"`
+		Source   map[string]StyleOverride `json:"source,omitempty"`
+	} `json:"alert"`
 	Menubar struct {
-		Label *string `toml:"label"`
-	} `toml:"menubar"`
+		Label *string `json:"label,omitempty"`
+	} `json:"menubar"`
 	Summarizer struct {
-		Backend *string `toml:"backend"`
-	} `toml:"summarizer"`
+		Backend *string `json:"backend,omitempty"`
+	} `json:"summarizer"`
 	Paths struct {
-		Dir    *string `toml:"dir"`
-		DB     *string `toml:"db"`
-		Socket *string `toml:"socket"`
-		PID    *string `toml:"pid"`
-	} `toml:"paths"`
+		Dir    *string `json:"dir,omitempty"`
+		DB     *string `json:"db,omitempty"`
+		Socket *string `json:"socket,omitempty"`
+		PID    *string `json:"pid,omitempty"`
+	} `json:"paths"`
 }
 
 var (
@@ -128,13 +127,13 @@ var (
 	hexColor  = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 )
 
-// DefaultPath is ~/.config/shh/config.toml.
+// DefaultPath is ~/.config/shh/config.json.
 func DefaultPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".config", "shh", "config.toml"), nil
+	return filepath.Join(home, ".config", "shh", "config.json"), nil
 }
 
 // Load reads the config at path over the defaults. A missing file means all defaults.
@@ -147,7 +146,7 @@ func Load(path string) (Config, error) {
 		return Config{}, err
 	}
 	var f file
-	if err := tomlx.Decode(path, raw, &f); err != nil {
+	if err := jsonc.Decode(path, raw, &f); err != nil {
 		return Config{}, err
 	}
 	cfg, err := build(f, filepath.Dir(path))
@@ -245,7 +244,7 @@ func notOneOf(key, got string, allowed []string) error {
 	return fmt.Errorf("%q: %q is not one of %s", key, got, strings.Join(allowed, ", "))
 }
 
-// Effective renders the resolved configuration as TOML that Load reads back to the same values.
+// Effective renders the resolved configuration as JSON that Load reads back to the same values.
 func (c Config) Effective() ([]byte, error) {
 	var f file
 	base := c.Alert.Base
@@ -258,5 +257,6 @@ func (c Config) Effective() ([]byte, error) {
 	f.Menubar.Label = &c.Menubar.Label
 	f.Summarizer.Backend = &c.Summarizer.Backend
 	f.Paths.Dir, f.Paths.DB, f.Paths.Socket, f.Paths.PID = &c.Paths.Dir, &c.Paths.DB, &c.Paths.Socket, &c.Paths.PID
-	return toml.Marshal(f)
+	out, err := json.MarshalIndent(f, "", "  ")
+	return append(out, '\n'), err
 }

@@ -12,7 +12,7 @@ import (
 
 func writeUser(t *testing.T, content string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "rules.toml")
+	path := filepath.Join(t.TempDir(), "rules.json")
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -157,18 +157,14 @@ func TestDefaultsNameTheCommonApps(t *testing.T) {
 }
 
 func TestUserSourcesExtendAndOverride(t *testing.T) {
-	r := load(t, `
-[sources]
-"com.microsoft.teams2" = "MS Teams"
-"com.example.pager" = "Pager"
-`)
+	r := load(t, `{"sources": {"com.microsoft.teams2": "MS Teams", "com.example.pager": "Pager"}}`)
 	if r.Sources["com.microsoft.teams2"] != "MS Teams" || r.Sources["com.example.pager"] != "Pager" || r.Sources["com.apple.mail"] != "Mail" {
 		t.Errorf("Sources = %v, want the override, the addition and the untouched defaults", r.Sources)
 	}
 }
 
 func TestEmptySourceNamesAreRejected(t *testing.T) {
-	_, err := rules.Load(writeUser(t, "[sources]\n\"com.example.pager\" = \"\"\n"))
+	_, err := rules.Load(writeUser(t, `{"sources": {"com.example.pager": ""}}`))
 	if err == nil || !strings.Contains(err.Error(), `"com.example.pager"`) {
 		t.Fatalf("err = %v, want one naming the bundle id", err)
 	}
@@ -176,7 +172,7 @@ func TestEmptySourceNamesAreRejected(t *testing.T) {
 
 func TestMissingUserFileMeansDefaults(t *testing.T) {
 	defaults, _ := rules.Defaults()
-	got, err := rules.Load(filepath.Join(t.TempDir(), "absent.toml"))
+	got, err := rules.Load(filepath.Join(t.TempDir(), "absent.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,27 +191,15 @@ func patternsOf(r rules.Rules) []rules.Pattern {
 
 func TestUserFileExtendsTheDefaults(t *testing.T) {
 	defaults, _ := rules.Defaults()
-	r := load(t, `
-[[urgency]]
-name = "pagerduty"
-pattern = 'pagerduty|triggered'
-boost = 0.4
-
-[vip]
-senders = ["Jane Boss", "ceo@example.com"]
-apps = ["PagerDuty"]
-
-[app_priority]
-PagerDuty = 0.95
-
-[[calendar.category]]
-name = "teams-meeting"
-pattern = '^TeamsMeeting'
-
-[[calendar.date]]
-name = "tonight"
-pattern = 'tonight at (?P<hour>\d+)'
-`)
+	r := load(t, `{
+  "urgency": [{"name": "pagerduty", "pattern": "pagerduty|triggered", "boost": 0.4}],
+  "vip": {"senders": ["Jane Boss", "ceo@example.com"], "apps": ["PagerDuty"]},
+  "app_priority": {"PagerDuty": 0.95},
+  "calendar": {
+    "category": [{"name": "teams-meeting", "pattern": "^TeamsMeeting"}],
+    "date": [{"name": "tonight", "pattern": "tonight at (?P<hour>\\d+)"}]
+  }
+}`)
 	if _, ok := urgency(r, "pagerduty"); !ok {
 		t.Error("new urgency rule was not added")
 	}
@@ -239,12 +223,7 @@ pattern = 'tonight at (?P<hour>\d+)'
 func TestUserRuleWithTheSameNameReplacesTheDefault(t *testing.T) {
 	defaults, _ := rules.Defaults()
 	before, _ := urgency(defaults, "now")
-	r := load(t, `
-[[urgency]]
-name = "now"
-pattern = '\bright now\b'
-boost = 0.25
-`)
+	r := load(t, `{"urgency": [{"name": "now", "pattern": "\\bright now\\b", "boost": 0.25}]}`)
 	after, ok := urgency(r, "now")
 	if !ok || after.Boost != 0.25 || after.Regexp.MatchString("call me now") || !after.Regexp.MatchString("Right NOW please") {
 		t.Fatalf("replaced rule = %+v, want boost 0.25 matching only 'right now' (was %+v)", after, before)
@@ -255,15 +234,10 @@ boost = 0.25
 }
 
 func TestUserCanSwitchOffADefaultRule(t *testing.T) {
-	r := load(t, `
-[[urgency]]
-name = "now"
-enabled = false
-
-[[calendar.category]]
-name = "no-such-default"
-enabled = false
-`)
+	r := load(t, `{
+  "urgency": [{"name": "now", "enabled": false}],
+  "calendar": {"category": [{"name": "no-such-default", "enabled": false}]}
+}`)
 	if _, ok := urgency(r, "now"); ok {
 		t.Error(`the "now" rule is still active after enabled = false`)
 	}
@@ -273,10 +247,7 @@ enabled = false
 }
 
 func TestVIPEntriesAreDeduplicated(t *testing.T) {
-	r := load(t, `
-[vip]
-senders = ["Jane", "jane", "JANE"]
-`)
+	r := load(t, `{"vip": {"senders": ["Jane", "jane", "JANE"]}}`)
 	if !slices.Equal(r.VIPSenders, []string{"jane"}) {
 		t.Errorf("VIPSenders = %v, want one entry", r.VIPSenders)
 	}
@@ -289,9 +260,9 @@ func TestBadRegexNamesTheRule(t *testing.T) {
 		wantName string
 		wantKind string
 	}{
-		{"urgency", "[[urgency]]\nname = \"broken-urgency\"\npattern = '(unclosed'\nboost = 0.2\n", "broken-urgency", "urgency"},
-		{"calendar category", "[[calendar.category]]\nname = \"broken-category\"\npattern = '[a-'\n", "broken-category", "calendar.category"},
-		{"calendar date", "[[calendar.date]]\nname = \"broken-date\"\npattern = '(?P<hour>'\n", "broken-date", "calendar.date"},
+		{"urgency", `{"urgency": [{"name": "broken-urgency", "pattern": "(unclosed", "boost": 0.2}]}`, "broken-urgency", "urgency"},
+		{"calendar category", `{"calendar": {"category": [{"name": "broken-category", "pattern": "[a-"}]}}`, "broken-category", "calendar.category"},
+		{"calendar date", `{"calendar": {"date": [{"name": "broken-date", "pattern": "(?P<hour>"}]}}`, "broken-date", "calendar.date"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -312,15 +283,15 @@ func TestInvalidRuleValuesAreRejected(t *testing.T) {
 		content string
 		wantIn  string
 	}{
-		{"zero boost", "[[urgency]]\nname = \"x\"\npattern = 'x'\nboost = 0\n", `"x"`},
-		{"boost above the 0.4 cap", "[[urgency]]\nname = \"x\"\npattern = 'x'\nboost = 0.5\n", `"x"`},
-		{"negative boost", "[[urgency]]\nname = \"x\"\npattern = 'x'\nboost = -0.1\n", `"x"`},
-		{"missing name", "[[urgency]]\npattern = 'x'\nboost = 0.1\n", "name"},
-		{"missing pattern", "[[urgency]]\nname = \"x\"\nboost = 0.1\n", `"x"`},
-		{"duplicate names in one file", "[[urgency]]\nname = \"x\"\npattern = 'a'\nboost = 0.1\n[[urgency]]\nname = \"x\"\npattern = 'b'\nboost = 0.1\n", `"x"`},
-		{"priority above 1", "[app_priority]\nTeams = 1.5\n", `"Teams"`},
-		{"negative priority", "[app_priority]\nSlack = -0.1\n", `"Slack"`},
-		{"empty VIP entry", "[vip]\nsenders = [\"ok\", \"\"]\n", "vip.senders"},
+		{"zero boost", `{"urgency": [{"name": "x", "pattern": "x", "boost": 0}]}`, `"x"`},
+		{"boost above the 0.4 cap", `{"urgency": [{"name": "x", "pattern": "x", "boost": 0.5}]}`, `"x"`},
+		{"negative boost", `{"urgency": [{"name": "x", "pattern": "x", "boost": -0.1}]}`, `"x"`},
+		{"missing name", `{"urgency": [{"pattern": "x", "boost": 0.1}]}`, "name"},
+		{"missing pattern", `{"urgency": [{"name": "x", "boost": 0.1}]}`, `"x"`},
+		{"duplicate names in one file", `{"urgency": [{"name": "x", "pattern": "a", "boost": 0.1}, {"name": "x", "pattern": "b", "boost": 0.1}]}`, `"x"`},
+		{"priority above 1", `{"app_priority": {"Teams": 1.5}}`, `"Teams"`},
+		{"negative priority", `{"app_priority": {"Slack": -0.1}}`, `"Slack"`},
+		{"empty VIP entry", `{"vip": {"senders": ["ok", ""]}}`, "vip.senders"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -336,7 +307,7 @@ func TestInvalidRuleValuesAreRejected(t *testing.T) {
 }
 
 func TestTheCapBoostIsAllowed(t *testing.T) {
-	r := load(t, "[[urgency]]\nname = \"max\"\npattern = 'x'\nboost = 0.4\n")
+	r := load(t, `{"urgency": [{"name": "max", "pattern": "x", "boost": 0.4}]}`)
 	if u, ok := urgency(r, "max"); !ok || u.Boost != 0.4 {
 		t.Fatalf("rule = %+v, %v", u, ok)
 	}
@@ -347,10 +318,10 @@ func TestUnknownKeysAreErrorsThatNameThem(t *testing.T) {
 		content string
 		wantKey string
 	}{
-		{"[[urgency]]\nname = \"x\"\npattern = 'x'\nboost = 0.1\nweight = 3\n", "urgency.weight"},
-		{"[vipp]\nsenders = []\n", "vipp"},
-		{"[calendar]\ncategories = []\n", "calendar.categories"},
-		{"[[calendar.category]]\nname = \"x\"\npattern = 'x'\nboost = 0.1\n", "calendar.category.boost"},
+		{`{"urgency": [{"name": "x", "pattern": "x", "boost": 0.1, "weight": 3}]}`, "urgency.weight"},
+		{`{"vipp": {"senders": []}}`, "vipp"},
+		{`{"calendar": {"categories": []}}`, "calendar.categories"},
+		{`{"calendar": {"category": [{"name": "x", "pattern": "x", "boost": 0.1}]}}`, "calendar.category.boost"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.wantKey, func(t *testing.T) {
@@ -362,15 +333,15 @@ func TestUnknownKeysAreErrorsThatNameThem(t *testing.T) {
 	}
 }
 
-func TestBrokenTOMLMentionsTheFile(t *testing.T) {
-	path := writeUser(t, "[[urgency\nname = ")
+func TestBrokenJSONMentionsTheFile(t *testing.T) {
+	path := writeUser(t, "{\n  \"urgency\": [{\"name\": ")
 	if _, err := rules.Load(path); err == nil || !strings.Contains(err.Error(), path) {
 		t.Fatalf("err = %v, want one mentioning %s", err, path)
 	}
 }
 
 func TestUserPatternsAreCaseInsensitiveByDefault(t *testing.T) {
-	r := load(t, "[[urgency]]\nname = \"ci\"\npattern = 'Deploy FAILED'\nboost = 0.1\n")
+	r := load(t, `{"urgency": [{"name": "ci", "pattern": "Deploy FAILED", "boost": 0.1}]}`)
 	u, _ := urgency(r, "ci")
 	if !u.Regexp.MatchString("deploy failed") {
 		t.Error("user patterns should also match case-insensitively")

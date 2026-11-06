@@ -241,7 +241,7 @@ func TestOnlyCalendarCategoriesAreReminders(t *testing.T) {
 
 func TestMoreCategoriesCanBeAddedInTheRules(t *testing.T) {
 	r := newRig(t, func(r *rules.Rules) {
-		extra, err := rules.Load(writeRules(t, "[[calendar.category]]\nname = \"teams-meeting\"\npattern = '^TeamsMeeting'\n"))
+		extra, err := rules.Load(writeRules(t, `{"calendar": {"category": [{"name": "teams-meeting", "pattern": "^TeamsMeeting"}]}}`))
 		if err != nil {
 			t.Fatal(err)
 		}

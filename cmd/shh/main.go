@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"syscall"
 	"time"
 
@@ -41,6 +42,13 @@ func realEnv() cli.Env {
 	env.Spawn = func() error { return spawnDaemon(cfg) }
 	env.PersistedFocus = func() bool { return persistedFocus(cfg.Paths.DB) }
 	env.Daemon = func(context.Context) error { return runDaemon(cfg) }
+	env.NewAlerter = func() (alert.Alerter, error) {
+		return newAlerter(cfg, func(err error) { fmt.Fprintln(os.Stderr, "shh:", err) }), nil
+	}
+	for source := range cfg.Alert.Source {
+		env.AlertSources = append(env.AlertSources, source)
+	}
+	sort.Strings(env.AlertSources)
 	return env
 }
 
@@ -94,8 +102,22 @@ func persistedFocus(dbPath string) bool {
 	return err == nil && len(levels) > 0
 }
 
-// runDaemon is the background worker: real notification source, real banner suppressor, and a log line standing in for the
-// alerter until the banner alerter exists.
+// newAlerter draws alerts in the AppKit overlay and falls back to a Notification Center notification (titled with the own-banner
+// prefix so the suppressor lets it through) if the overlay cannot run or dies.
+func newAlerter(cfg config.Config, onError func(error)) alert.Alerter {
+	fallback := alert.NewFallback(alert.FallbackConfig{OwnPrefix: ingest.OwnTitlePrefix})
+	overlay := alert.NewOverlay(alert.OverlayConfig{
+		OnFailure: func(req alert.Request, err error) {
+			onError(fmt.Errorf("the alert overlay failed (%w); using a notification instead", err))
+			if showErr := fallback.Show(req); showErr != nil {
+				onError(showErr)
+			}
+		},
+	})
+	return alert.NewDisplay(cfg.Alert, overlay, fallback, onError)
+}
+
+// runDaemon is the background worker: real notification source, real banner suppressor and the real alerter.
 func runDaemon(cfg config.Config) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
@@ -110,7 +132,7 @@ func runDaemon(cfg config.Config) error {
 		return err
 	}
 	defer db.Close()
-	r, err := rules.Load(filepath.Join(cfg.Paths.Dir, "rules.toml"))
+	r, err := rules.Load(filepath.Join(cfg.Paths.Dir, "rules.json"))
 	if err != nil {
 		return err
 	}
@@ -128,7 +150,7 @@ func runDaemon(cfg config.Config) error {
 
 	worker, err := session.NewWorker(session.Config{
 		Store: db, Source: ingest.NewMacOS(ingest.DefaultPaths(home)...), Clock: clock.Real{}, Rules: r, Embedder: embedder,
-		Alerter:    alert.NewLog(os.Stderr),
+		Alerter:    newAlerter(cfg, onError),
 		Suppressor: suppress.NewAccessibility(suppress.AccessibilityConfig{OwnPrefix: ingest.OwnTitlePrefix, OnError: onError}),
 		Location:   time.Local, OnError: onError,
 	})

@@ -92,13 +92,13 @@ No calendar API. Instead, recognize meeting-reminder notifications:
 - Schedule an alert at `start_time − 60s`. If that time already passed, alert immediately.
 - Persist a row in `calendar_events` so a worker restart re-arms timers. Dedupe by `(title, start_time)`.
 - The alert bypasses the classifier and fires even at the maximum threshold (`lockdown`, 99).
-- **Known limits:** requires Outlook reminders enabled, and the reminder lead time must be ≥ 1 min. Meetings without a reminder are missed. Mitigation, later: ICS feed or Calendar.app account. Format parsing is brittle, so ship rules as editable config (`rules.toml`) and add a `shh capture` command that logs raw notifications so rules can be tuned on real samples.
+- **Known limits:** requires Outlook reminders enabled, and the reminder lead time must be ≥ 1 min. Meetings without a reminder are missed. Mitigation, later: ICS feed or Calendar.app account. Format parsing is brittle, so ship rules as editable config (`rules.json`) and add a `shh capture` command that logs raw notifications so rules can be tuned on real samples.
 - **[FINDING, M0]** On this Mac, macOS notifications for Outlook are OFF (Outlook shows reminders in its own window), so the DB has no Outlook rows at all. The notification-parsing approach **requires macOS notifications to be enabled for Outlook**. Enabling them also lets shh classify Outlook mail, which is desirable. If that's not acceptable, fall back to an ICS feed or Calendar.app account.
 - **[DECIDED] Fail-safe parsing, refine later.** Real samples are rare, so:
   1. Detect calendar reminders by **category** (Outlook uses `OLAlertsNotificationReminders…`; first sample: `…WithJoinAndChatCategoryIdentifier`), not by keywords.
   2. Parse the start time leniently, trying formats in order: `Month D, YYYY at HH:MM` (seen), `Today at …`, `in N minutes`, all-day wording. Add formats as samples arrive.
   3. **If parsing fails, alert immediately** and store the row in `unparsed_calendar`. Worst case is an early alert, never a missed one.
-  4. Category list and date patterns live in `rules.toml`. Every real sample becomes a fixture and a table-test row.
+  4. Category list and date patterns live in `rules.json`. Every real sample becomes a fixture and a table-test row.
   5. `shh rules review` lists unparsed reminders so edge cases surface during normal use.
 - First real sample (2026-11-05): category `OLAlertsNotificationRemindersWithJoinAndChatCategoryIdentifier`, title `Client Portal Sync up`, subtitle `Microsoft Teams Meeting`, body `November 5, 2026 at 13:30`, delivered 3 minutes before start. Saved in `captures/meetings.jsonl` (gitignored: private).
 
@@ -166,7 +166,7 @@ Where it *does* fit: as **L3 feature provider**, a Python sidecar answering fixe
 - Weights persisted in SQLite (`model_weights`, one snapshot per change, the newest 20 kept per feature version, a new feature version starting fresh). Every training call also writes a `training_log` row holding the values it overwrote, so undo is exact; checkpoint rows in that log mark where `--rollback` returns to, and `--reset` takes a checkpoint first so a reset can be rolled back too (`shh train --reset`, `--rollback`).
 
 ### 5.4 Time-sensitivity boost
-Pure function, easily tested. Keyword list (`now`, `ASAP`, `urgent`, `prod`, `down`, `outage`, …) → +0.1…+0.3; recency/quick-follow-ups from the same sender (3 messages in 2 minutes) → +0.1; capped at +0.4. Keywords come from `rules.toml`.
+Pure function, easily tested. Keyword list (`now`, `ASAP`, `urgent`, `prod`, `down`, `outage`, …) → +0.1…+0.3; recency/quick-follow-ups from the same sender (3 messages in 2 minutes) → +0.1; capped at +0.4. Keywords come from `rules.json`.
 
 ---
 
@@ -179,20 +179,21 @@ Pure function, easily tested. Keyword list (`now`, `ASAP`, `urgent`, `prod`, `do
 ---
 
 ## 7. Alert banners (customizable)
-- **[DECIDED, spike 03, `docs/spikes/03-banner.md`]** A persistent `osascript -l JavaScript` helper (AppKit through JXA, embedded in the Go binary, no Swift, no compile step) draws the banner in its own window, so the banner suppressor (§2.2) never hides it. Go talks to it over stdin JSON lines. Size, color, position, sound, duration and click-to-open are all supported. Verified over full-screen apps (Ghostty, Teams call). Untested so far: other Spaces, stacking, multiple displays.
-- Config (`~/.config/shh/config.toml`):
-  ```toml
-  [alert]
-  position = "top-right"      # top-left|top-center|top-right|bottom-*
-  size = "medium"             # small|medium|large
-  color = "#ff9f0a"
-  duration_secs = 8           # 0 = until dismissed
-  sound = "Glass"             # system sound name | "none"
-  [alert.calendar]            # per-kind override
-  color = "#0a84ff"
-  sound = "Hero"
-  [alert.source.Slack]
-  sound = "none"
+- **[DECIDED, spike 03, `docs/spikes/03-banner.md`]** One `osascript -l JavaScript` process per banner (AppKit through JXA, the script embedded in the Go binary, no Swift, no compile step, about 0.1 s to start) draws the banner in a window of its own, so the banner suppressor (§2.2) never hides it. The banner is described by JSON in an environment variable, and Go keeps a slot per screen position so banners shown together stack instead of overlapping. (A persistent helper fed JSON lines was the spike's suggestion; one process per banner is simpler and needed no change in behaviour.) Size, color, position, sound, duration and click-to-open are all supported. Verified over full-screen apps (Ghostty, Teams call). Untested so far: other Spaces, stacking, multiple displays.
+- Config (`~/.config/shh/config.json`, **[DECIDED, task 42]** JSON that also allows `//` and `/* */` comments and trailing commas; `rules.json` works the same way):
+  ```jsonc
+  {
+    "alert": {
+      "position": "top-right",   // top-left|top-center|top-right|bottom-*
+      "size": "medium",          // small|medium|large
+      "color": "#ff9f0a",
+      "duration_secs": 8,        // 0 = until dismissed
+      "sound": "Glass",          // system sound name | "none"
+      "calendar": { "color": "#0a84ff", "sound": "Hero" },   // per-kind override
+      "source": { "Slack": { "sound": "none" } }              // per-app override
+    },
+    "menubar": { "label": "shh" }
+  }
   ```
 - Click → opens the originating app (`open -b <bundle id>`). Fallback if the helper isn't installed: `osascript display notification` (no customization).
 - `shh alert test` previews styles.
