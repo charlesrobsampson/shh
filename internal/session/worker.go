@@ -137,10 +137,15 @@ func (w *Worker) syncSuppressor() error {
 	return nil
 }
 
-// Init re-arms calendar alerts that were pending when the last worker stopped and, when backfillSince is set, handles
+// Init re-arms calendar alerts that were pending when the last worker stopped, starts the suppressor if a level is already
+// in force and, when backfillSince is set, handles
 // notifications delivered since then that were not handled yet.
 func (w *Worker) Init(backfillSince time.Time) error {
 	if err := w.scheduler.Rearm(); err != nil {
+		return err
+	}
+	// A baseline that survived a restart protects from the first moment, not from the first tick.
+	if err := w.syncSuppressor(); err != nil {
 		return err
 	}
 	if !backfillSince.IsZero() {
