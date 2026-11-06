@@ -124,7 +124,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 ### 11 · Threshold and tier parsing
 - [ ] Done
-- Session: _(fill on start)_
+- Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/11-thresholds` · Depends: 01
 - Read: `manifest.md` §3.3, `plan.md` §4.3
 - Build: parse percentages (`75%`) and tier names into an integer level 0–99: `off`=0, `light`=35, `medium`=65, `deep`=90, `lockdown`=99; `100%` is an alias for 99; plain decimals like `0.75` are rejected. Also parse exact training labels 0–100 (tier names allowed) separately, since labels may be 100. Durations (`25m`, `1h30m`, `0`). Read `plan.md` §4.3 for the scale.
