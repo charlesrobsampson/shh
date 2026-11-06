@@ -33,7 +33,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 ### 03 · Spike: alert banner approach
 - [ ] Done
-- Session: _(fill on start)_
+- Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/03-spike-banner` · Depends: 01
 - Context: need custom banners (size, color, position, sound, duration, click to open app) without a second toolchain if possible. `plan.md` §7 lists options: `osascript`, a Go-driven approach, or a small Swift helper.
 - Read: `plan.md` §7, §11.1
