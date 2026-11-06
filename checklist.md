@@ -266,7 +266,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 ### 24 · Calendar scheduler
 - [ ] Done
-- Session: _(fill on start)_
+- Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/24-calendar-scheduler` · Depends: 06, 23
 - Read: `plan.md` §4.2, §11.1
 - Build: define the `Alerter` and `Suppressor` interfaces (in `internal/alert` and `internal/suppress`) with in-memory fakes in `testkit` (the alerter fake records shown banners; the suppressor fake holds running/stopped state); then schedule an alert at start − 60s; fire immediately if past; dedupe by title+start; persist in `calendar_events`; re-arm on restart; no double fire.
