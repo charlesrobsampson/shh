@@ -132,7 +132,7 @@ func runDaemon(cfg config.Config) error {
 		return err
 	}
 	defer db.Close()
-	r, err := rules.Load(filepath.Join(cfg.Paths.Dir, "rules.toml"))
+	r, err := rules.Load(filepath.Join(cfg.Paths.Dir, "rules.json"))
 	if err != nil {
 		return err
 	}

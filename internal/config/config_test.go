@@ -11,7 +11,7 @@ import (
 
 func write(t *testing.T, content string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "config.toml")
+	path := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func load(t *testing.T, content string) config.Config {
 
 func TestDefaultsWhenTheFileIsMissing(t *testing.T) {
 	dir := t.TempDir()
-	cfg, err := config.Load(filepath.Join(dir, "config.toml"))
+	cfg, err := config.Load(filepath.Join(dir, "config.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,17 +59,11 @@ func TestAnEmptyFileMeansDefaults(t *testing.T) {
 }
 
 func TestPartialFileMergesOverDefaults(t *testing.T) {
-	cfg := load(t, `
-[alert]
-color = "#112233"
-duration_secs = 0
-
-[menubar]
-label = "🔇 shh"
-
-[summarizer]
-backend = "ollama"
-`)
+	cfg := load(t, `{
+  "alert": {"color": "#112233", "duration_secs": 0},
+  "menubar": {"label": "🔇 shh"},
+  "summarizer": {"backend": "ollama"}
+}`)
 	got := cfg.Alert.Resolve(config.KindMessage, "")
 	want := config.Style{Position: "top-right", Size: "medium", Color: "#112233", DurationSecs: 0, Sound: "Glass"}
 	if got != want {
@@ -81,23 +75,18 @@ backend = "ollama"
 }
 
 func TestStyleResolutionLayersKindThenSource(t *testing.T) {
-	cfg := load(t, `
-[alert]
-color = "#111111"
-sound = "Glass"
-size = "small"
-
-[alert.calendar]
-color = "#0a84ff"
-sound = "Hero"
-
-[alert.source.Slack]
-sound = "none"
-position = "bottom-left"
-
-[alert.source.Outlook]
-color = "#222222"
-`)
+	cfg := load(t, `{
+  "alert": {
+    "color": "#111111",
+    "sound": "Glass",
+    "size": "small",
+    "calendar": {"color": "#0a84ff", "sound": "Hero"},
+    "source": {
+      "Slack": {"sound": "none", "position": "bottom-left"},
+      "Outlook": {"color": "#222222"}
+    }
+  }
+}`)
 	tests := []struct {
 		name   string
 		kind   config.Kind
@@ -126,12 +115,7 @@ color = "#222222"
 
 func TestPathsCanBeOverridden(t *testing.T) {
 	custom := t.TempDir()
-	cfg := load(t, `
-[paths]
-dir = "`+custom+`"
-socket = "/tmp/shh-custom.sock"
-db = "data/notes.db"
-`)
+	cfg := load(t, `{"paths": {"dir": "`+custom+`", "socket": "/tmp/shh-custom.sock", "db": "data/notes.db"}}`)
 	want := config.Paths{
 		Dir: custom, DB: filepath.Join(custom, "data", "notes.db"), Socket: "/tmp/shh-custom.sock", PID: filepath.Join(custom, "shh.pid"),
 	}
@@ -146,18 +130,18 @@ func TestInvalidValuesNameTheKey(t *testing.T) {
 		content string
 		wantKey string
 	}{
-		{"unknown position", "[alert]\nposition = \"middle\"\n", "alert.position"},
-		{"unknown size", "[alert]\nsize = \"huge\"\n", "alert.size"},
-		{"color without a hash", "[alert]\ncolor = \"ff9f0a\"\n", "alert.color"},
-		{"color that is a name", "[alert]\ncolor = \"orange\"\n", "alert.color"},
-		{"negative duration", "[alert]\nduration_secs = -1\n", "alert.duration_secs"},
-		{"duration of the wrong type", "[alert]\nduration_secs = \"soon\"\n", "alert.duration_secs"},
-		{"empty sound", "[alert]\nsound = \"\"\n", "alert.sound"},
-		{"bad calendar override", "[alert.calendar]\nposition = \"nowhere\"\n", "alert.calendar.position"},
-		{"bad per-source override", "[alert.source.Slack]\ncolor = \"red\"\n", "alert.source.Slack.color"},
-		{"unknown summarizer backend", "[summarizer]\nbackend = \"gpt\"\n", "summarizer.backend"},
-		{"label of the wrong type", "[menubar]\nlabel = 3\n", "menubar.label"},
-		{"empty path", "[paths]\ndb = \"\"\n", "paths.db"},
+		{"unknown position", `{"alert": {"position": "middle"}}`, "alert.position"},
+		{"unknown size", `{"alert": {"size": "huge"}}`, "alert.size"},
+		{"color without a hash", `{"alert": {"color": "ff9f0a"}}`, "alert.color"},
+		{"color that is a name", `{"alert": {"color": "orange"}}`, "alert.color"},
+		{"negative duration", `{"alert": {"duration_secs": -1}}`, "alert.duration_secs"},
+		{"duration of the wrong type", `{"alert": {"duration_secs": "soon"}}`, "alert.duration_secs"},
+		{"empty sound", `{"alert": {"sound": ""}}`, "alert.sound"},
+		{"bad calendar override", `{"alert": {"calendar": {"position": "nowhere"}}}`, "alert.calendar.position"},
+		{"bad per-source override", `{"alert": {"source": {"Slack": {"color": "red"}}}}`, "alert.source.Slack.color"},
+		{"unknown summarizer backend", `{"summarizer": {"backend": "gpt"}}`, "summarizer.backend"},
+		{"label of the wrong type", `{"menubar": {"label": 3}}`, "menubar.label"},
+		{"empty path", `{"paths": {"db": ""}}`, "paths.db"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -178,11 +162,12 @@ func TestUnknownKeysAreErrorsThatNameThem(t *testing.T) {
 		content string
 		wantKey string
 	}{
-		{"misspelled key", "[alert]\ncolour = \"#ffffff\"\n", "alert.colour"},
-		{"unknown section", "[alrt]\ncolor = \"#ffffff\"\n", "alrt"},
-		{"unknown key in a per-source override", "[alert.source.Slack]\nvolume = 3\n", "alert.source.Slack.volume"},
-		{"unknown menubar key", "[menubar]\nlable = \"x\"\n", "menubar.lable"},
-		{"unknown top-level key", "theme = \"dark\"\n", "theme"},
+		{"misspelled key", `{"alert": {"colour": "#ffffff"}}`, "alert.colour"},
+		{"unknown section", `{"alrt": {"color": "#ffffff"}}`, "alrt"},
+		{"unknown key in a per-source override", `{"alert": {"source": {"Slack": {"volume": 3}}}}`, "alert.source.Slack.volume"},
+		{"unknown menubar key", `{"menubar": {"lable": "x"}}`, "menubar.lable"},
+		{"unknown top-level key", `{"theme": "dark"}`, "theme"},
+		{"a key with the wrong capitalisation", `{"alert": {"Color": "#ffffff"}}`, "alert.Color"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -199,18 +184,18 @@ func TestUnknownKeysAreErrorsThatNameThem(t *testing.T) {
 }
 
 func TestErrorsPointAtTheFileAndLine(t *testing.T) {
-	path := write(t, "[alert]\ncolor = \"#ffffff\"\ncolour = \"x\"\n")
+	path := write(t, "{\n  \"alert\": {\n    // the second key is a typo\n    \"color\": \"#ffffff\",\n    \"colour\": \"x\"\n  }\n}\n")
 	_, err := config.Load(path)
 	if err == nil {
 		t.Fatal("Load succeeded")
 	}
-	if !strings.Contains(err.Error(), path+":3") {
-		t.Errorf("error %q should point at %s line 3", err, path)
+	if !strings.Contains(err.Error(), path+":5") {
+		t.Errorf("error %q should point at %s line 5 (comments do not shift the lines)", err, path)
 	}
 }
 
-func TestBrokenTOMLIsReportedWithTheFile(t *testing.T) {
-	path := write(t, "[alert\ncolor = 1")
+func TestBrokenJSONIsReportedWithTheFile(t *testing.T) {
+	path := write(t, "{\n  \"alert\": {\"color\": 1\n")
 	_, err := config.Load(path)
 	if err == nil || !strings.Contains(err.Error(), path) {
 		t.Fatalf("err = %v, want one that mentions %s", err, path)
@@ -224,28 +209,21 @@ func TestAPathThatIsADirectoryIsAnError(t *testing.T) {
 }
 
 func TestEffectiveConfigRoundTrips(t *testing.T) {
-	original := load(t, `
-[alert]
-color = "#112233"
-size = "large"
-
-[alert.calendar]
-sound = "Hero"
-
-[alert.source.Slack]
-sound = "none"
-
-[menubar]
-label = "focus"
-
-[summarizer]
-backend = "claude"
-`)
+	original := load(t, `{
+  "alert": {
+    "color": "#112233",
+    "size": "large",
+    "calendar": {"sound": "Hero"},
+    "source": {"Slack": {"sound": "none"}}
+  },
+  "menubar": {"label": "focus"},
+  "summarizer": {"backend": "claude"}
+}`)
 	shown, err := original.Effective()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(shown), "#112233") || !strings.Contains(string(shown), "[menubar]") {
+	if !strings.Contains(string(shown), "#112233") || !strings.Contains(string(shown), `"menubar"`) {
 		t.Fatalf("effective config looks wrong:\n%s", shown)
 	}
 	reloaded, err := config.Load(write(t, string(shown)))
@@ -274,7 +252,22 @@ func TestDefaultPathLivesUnderTheHomeConfigDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := filepath.Join(home, ".config", "shh", "config.toml"); got != want {
+	if want := filepath.Join(home, ".config", "shh", "config.json"); got != want {
 		t.Errorf("DefaultPath() = %q, want %q", got, want)
+	}
+}
+
+func TestCommentsAndTrailingCommasWorkInTheConfigFile(t *testing.T) {
+	cfg := load(t, `// my shh settings
+{
+  "alert": {
+    "color": "#30d158", // green
+    "position": "bottom-left",
+  },
+}
+`)
+	got := cfg.Alert.Resolve(config.KindMessage, "")
+	if got.Color != "#30d158" || got.Position != "bottom-left" {
+		t.Errorf("style = %+v, want the commented file read as written", got)
 	}
 }

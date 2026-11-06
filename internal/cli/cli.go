@@ -20,7 +20,7 @@ type Env struct {
 	Stdout, Stderr io.Writer
 	// SocketPath is where the worker listens.
 	SocketPath string
-	// ConfigDir holds rules.toml and the models directory.
+	// ConfigDir holds rules.json and the models directory.
 	ConfigDir string
 	// Version is printed by --version.
 	Version string

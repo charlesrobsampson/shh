@@ -9,10 +9,10 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/charlesrobsampson/shh/internal/tomlx"
+	"github.com/charlesrobsampson/shh/internal/jsonc"
 )
 
-//go:embed default_rules.toml
+//go:embed default_rules.json
 var defaultRules []byte
 
 // maxBoost is the cap on a single urgency boost, matching the cap on the total (plan.md section 5.4).
@@ -41,30 +41,30 @@ type Rules struct {
 }
 
 type urgencyRule struct {
-	Name    string  `toml:"name"`
-	Pattern string  `toml:"pattern"`
-	Boost   float64 `toml:"boost"`
-	Enabled *bool   `toml:"enabled"`
+	Name    string  `json:"name"`
+	Pattern string  `json:"pattern"`
+	Boost   float64 `json:"boost"`
+	Enabled *bool   `json:"enabled,omitempty"`
 }
 
 type patternRule struct {
-	Name    string `toml:"name"`
-	Pattern string `toml:"pattern"`
-	Enabled *bool  `toml:"enabled"`
+	Name    string `json:"name"`
+	Pattern string `json:"pattern"`
+	Enabled *bool  `json:"enabled,omitempty"`
 }
 
 type file struct {
-	Urgency []urgencyRule `toml:"urgency"`
+	Urgency []urgencyRule `json:"urgency"`
 	VIP     struct {
-		Senders []string `toml:"senders"`
-		Apps    []string `toml:"apps"`
-	} `toml:"vip"`
-	AppPriority map[string]float64 `toml:"app_priority"`
-	Sources     map[string]string  `toml:"sources"`
+		Senders []string `json:"senders"`
+		Apps    []string `json:"apps"`
+	} `json:"vip"`
+	AppPriority map[string]float64 `json:"app_priority"`
+	Sources     map[string]string  `json:"sources"`
 	Calendar    struct {
-		Category []patternRule `toml:"category"`
-		Date     []patternRule `toml:"date"`
-	} `toml:"calendar"`
+		Category []patternRule `json:"category"`
+		Date     []patternRule `json:"date"`
+	} `json:"calendar"`
 }
 
 // Defaults returns the embedded rules.
@@ -75,7 +75,7 @@ func Defaults() (Rules, error) {
 // Load merges the user file at path over the embedded defaults. An empty path or a missing file means defaults only.
 func Load(path string) (Rules, error) {
 	var base file
-	if err := tomlx.Decode("default rules", defaultRules, &base); err != nil {
+	if err := jsonc.Decode("default rules", defaultRules, &base); err != nil {
 		return Rules{}, err
 	}
 	merged := base
@@ -86,7 +86,7 @@ func Load(path string) (Rules, error) {
 		}
 		if err == nil {
 			var user file
-			if err := tomlx.Decode(path, raw, &user); err != nil {
+			if err := jsonc.Decode(path, raw, &user); err != nil {
 				return Rules{}, err
 			}
 			if merged, err = merge(base, user); err != nil {

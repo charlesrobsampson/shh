@@ -19,10 +19,10 @@ func (b *recordingBackend) Show(r alert.Request) error {
 	return b.err
 }
 
-func loadConfig(t *testing.T, toml string) config.Config {
+func loadConfig(t *testing.T, text string) config.Config {
 	t.Helper()
-	path := t.TempDir() + "/config.toml"
-	if err := writeFile(path, toml); err != nil {
+	path := t.TempDir() + "/config.json"
+	if err := writeFile(path, text); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := config.Load(path)
@@ -33,21 +33,15 @@ func loadConfig(t *testing.T, toml string) config.Config {
 }
 
 func TestStyleIsResolvedBeforeItReachesTheBackend(t *testing.T) {
-	cfg := loadConfig(t, `
-[alert]
-color = "#111111"
-size = "small"
-duration_secs = 8
-
-[alert.calendar]
-color = "#0a84ff"
-sound = "Hero"
-
-[alert.source.Slack]
-sound = "none"
-position = "bottom-left"
-size = "large"
-`)
+	cfg := loadConfig(t, `{
+  "alert": {
+    "color": "#111111",
+    "size": "small",
+    "duration_secs": 8,
+    "calendar": {"color": "#0a84ff", "sound": "Hero"},
+    "source": {"Slack": {"sound": "none", "position": "bottom-left", "size": "large"}}
+  }
+}`)
 	tests := []struct {
 		name      string
 		in        alert.Alert

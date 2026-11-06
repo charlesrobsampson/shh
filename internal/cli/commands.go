@@ -164,7 +164,7 @@ type alertCmd struct {
 
 type alertTestCmd struct{}
 
-// Run shows one sample per kind of alert and one per app that has its own style, so changes to config.toml can be previewed.
+// Run shows one sample per kind of alert and one per app that has its own style, so changes to config.json can be previewed.
 // The first sample carries Calculator's bundle id: click it to check that clicking opens the source app.
 func (c *alertTestCmd) Run(env *Env) error {
 	if env.NewAlerter == nil {
@@ -209,7 +209,7 @@ func (c *replayCmd) Run(env *Env) error {
 	if err != nil {
 		return usagef("-t: %w", err)
 	}
-	r, err := rules.Load(filepath.Join(env.ConfigDir, "rules.toml"))
+	r, err := rules.Load(filepath.Join(env.ConfigDir, "rules.json"))
 	if err != nil {
 		return err
 	}
