@@ -57,6 +57,7 @@ const (
 type Filter struct {
 	View   View
 	Source string
+	Sender string
 	// Since keeps rows delivered at or after it; the zero time means no lower bound.
 	Since  time.Time
 	Status Status
@@ -119,6 +120,10 @@ func (s *Store) ListNotifications(f Filter) ([]Notification, error) {
 	if f.Source != "" {
 		where = append(where, "source = ?")
 		args = append(args, f.Source)
+	}
+	if f.Sender != "" {
+		where = append(where, "sender = ?")
+		args = append(args, f.Sender)
 	}
 	if !f.Since.IsZero() {
 		where = append(where, "timestamp >= ?")
