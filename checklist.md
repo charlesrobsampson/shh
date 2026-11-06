@@ -212,7 +212,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 ### 19 · Logistic model, SGD, persistence, undo
 - [ ] Done
-- Session: _(fill on start)_
+- Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/19-model` · Depends: 07, 18
 - Read: `plan.md` §5.3
 - Build: logistic regression with bias; `Predict`; `Train(example, label)` single-step soft-target SGD with learning rate, L2, clipping, where `label` is either exact (0–100) or a constraint (`y`/`n` plus `threshold_at_decision`) per `plan.md` §5.3 (constraints update only when violated, with margin 0.1); persist weights keyed by feature version with history; log each update in `training_log` with its delta; `Undo(n)`, `Rollback`, `Reset`.
