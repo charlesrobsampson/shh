@@ -113,7 +113,6 @@ func newAlerter(cfg config.Config, onError func(error)) alert.Alerter {
 				onError(showErr)
 			}
 		},
-		OnError: onError,
 	})
 	return alert.NewDisplay(cfg.Alert, overlay, fallback, onError)
 }

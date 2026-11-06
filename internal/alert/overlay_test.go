@@ -22,7 +22,6 @@ type overlayRig struct {
 	t         *testing.T
 	mu        sync.Mutex
 	started   []*fakeProcess
-	opened    []string
 	failures  []error
 	failedFor []alert.Request
 	startErr  error
@@ -48,12 +47,6 @@ func newOverlayRig(t *testing.T) *overlayRig {
 				}
 				return outcome, nil
 			}, nil
-		},
-		Open: func(bundle string) error {
-			r.mu.Lock()
-			defer r.mu.Unlock()
-			r.opened = append(r.opened, bundle)
-			return nil
 		},
 		OnFailure: func(req alert.Request, err error) {
 			r.mu.Lock()
@@ -95,6 +88,7 @@ func (r *overlayRig) eventually(what string, cond func() bool) {
 type banner struct {
 	Title    string `json:"title"`
 	Body     string `json:"body"`
+	Bundle   string `json:"bundle"`
 	Color    string `json:"color"`
 	Width    int    `json:"width"`
 	Height   int    `json:"height"`
@@ -130,7 +124,7 @@ func TestTheBannerIsDescribedToTheHelperAsJSON(t *testing.T) {
 	r := newOverlayRig(t)
 	r.show(request("Ana", "top-right"))
 	got := decode(t, r.process(0))
-	want := banner{Title: "Ana", Body: "body of Ana", Color: "#ff9f0a", Width: 360, Height: 84, Position: "top-right", Slot: 0, Duration: 8, Sound: "Glass"}
+	want := banner{Title: "Ana", Body: "body of Ana", Bundle: "com.microsoft.teams2", Color: "#ff9f0a", Width: 360, Height: 84, Position: "top-right", Slot: 0, Duration: 8, Sound: "Glass"}
 	if got != want {
 		t.Errorf("banner = %+v, want %+v", got, want)
 	}
@@ -174,35 +168,37 @@ func TestASlotIsReusedOnceItsBannerIsGone(t *testing.T) {
 	}
 }
 
-func TestClickingABannerOpensItsApp(t *testing.T) {
+func TestTheSourceAppTravelsWithTheBannerSoTheScriptCanOpenItOnAClick(t *testing.T) {
 	r := newOverlayRig(t)
 	r.show(request("Ana", "top-right"))
-	r.process(0).finish <- "clicked"
-	r.eventually("the app to be opened", func() bool { return len(r.opened) == 1 })
-	if r.opened[0] != "com.microsoft.teams2" {
-		t.Errorf("opened %q, want the source app's bundle id", r.opened[0])
+	if got := decode(t, r.process(0)).Bundle; got != "com.microsoft.teams2" {
+		t.Errorf("bundle = %q, want the source app's id", got)
+	}
+	noApp := request("Sync", "top-right")
+	noApp.BundleID = ""
+	r.show(noApp)
+	if got := decode(t, r.process(1)).Bundle; got != "" {
+		t.Errorf("a banner with no app carries bundle %q", got)
 	}
 }
 
-func TestAnExpiredBannerOpensNothing(t *testing.T) {
-	r := newOverlayRig(t)
-	r.show(request("Ana", "top-right"))
-	r.process(0).finish <- "expired"
-	time.Sleep(50 * time.Millisecond)
-	if len(r.opened) != 0 {
-		t.Errorf("opened %v although nobody clicked", r.opened)
+func TestTheScriptOpensTheAppItselfAfterAClick(t *testing.T) {
+	cmd := alert.OverlayCommand(request("Ana", "top-right"))
+	script := strings.Join(cmd.Args, " ")
+	if !strings.Contains(script, "clicked") || !strings.Contains(script, "/usr/bin/open") || !strings.Contains(script, "cfg.bundle") {
+		t.Error("the banner script must open cfg.bundle itself on a click: the process that showed it may already be gone")
 	}
 }
 
-func TestClickingABannerWithoutAnAppOpensNothing(t *testing.T) {
+func TestAnEndedBannerIsNotAFailure(t *testing.T) {
 	r := newOverlayRig(t)
-	req := request("Sync", "top-right")
-	req.BundleID = ""
-	r.show(req)
+	r.show(request("Ana", "top-right"))
+	r.show(request("Bo", "top-right"))
 	r.process(0).finish <- "clicked"
+	r.process(1).finish <- "expired"
 	time.Sleep(50 * time.Millisecond)
-	if len(r.opened) != 0 {
-		t.Errorf("opened %v for a banner with no bundle id", r.opened)
+	if len(r.failures) != 0 {
+		t.Errorf("normal endings were reported as failures: %v", r.failures)
 	}
 }
 
@@ -227,9 +223,6 @@ func TestAHelperThatCrashesAfterStartingHandsTheAlertToTheFailureHook(t *testing
 	r.eventually("the failure hook", func() bool { return len(r.failures) == 1 })
 	if r.failedFor[0].Title != "Ana" {
 		t.Errorf("the hook got %+v, want the alert that was lost, so it can be shown another way", r.failedFor[0])
-	}
-	if len(r.opened) != 0 {
-		t.Error("a crash must not open the app")
 	}
 }
 

@@ -165,7 +165,7 @@ type alertCmd struct {
 type alertTestCmd struct{}
 
 // Run shows one sample per kind of alert and one per app that has its own style, so changes to config.toml can be previewed.
-// The first sample carries Finder's bundle id: click it to check that clicking opens the source app.
+// The first sample carries Calculator's bundle id: click it to check that clicking opens the source app.
 func (c *alertTestCmd) Run(env *Env) error {
 	if env.NewAlerter == nil {
 		return errors.New("this build cannot show alerts")
@@ -175,7 +175,7 @@ func (c *alertTestCmd) Run(env *Env) error {
 		return err
 	}
 	samples := []alert.Alert{
-		{Kind: config.KindMessage, Source: "Teams", BundleID: "com.apple.finder", Title: "Sample message", Body: "A message alert in the default style. Click it to open Finder."},
+		{Kind: config.KindMessage, Source: "Teams", BundleID: "com.apple.calculator", Title: "Sample message", Body: "A message alert in the default style. Click it to open Calculator."},
 		{Kind: config.KindCalendar, Source: "Calendar", Title: "Sample meeting", Body: "A calendar alert: Starts at 10:30"},
 	}
 	for _, source := range env.AlertSources {

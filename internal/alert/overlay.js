@@ -1,6 +1,6 @@
 // Draws one alert banner in a window of its own, so Notification Center and the banner suppressor never touch it.
-// The banner is described by JSON in SHH_BANNER. On exit the last line printed is "clicked" or "expired"; the caller opens the
-// source app after a click. Prototyped in spikes/banner/overlay.js (docs/spikes/03-banner.md).
+// The banner is described by JSON in SHH_BANNER. On exit the last line printed is "clicked" or "expired", and after a click the
+// source app (cfg.bundle), if there is one, is opened from here. Prototyped in spikes/banner/overlay.js (docs/spikes/03-banner.md).
 ObjC.import('Cocoa');
 
 const cfg = JSON.parse($.NSProcessInfo.processInfo.environment.objectForKey('SHH_BANNER').js);
@@ -89,3 +89,7 @@ if (cfg.duration > 0) {
 app.run;
 win.orderOut($());
 console.log(outcome);
+if (outcome === 'clicked' && cfg.bundle) {
+  // Opened from here, not by the process that started us: that one may already have exited.
+  $.NSTask.launchedTaskWithLaunchPathArguments('/usr/bin/open', ['-b', cfg.bundle]);
+}

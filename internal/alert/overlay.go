@@ -19,16 +19,13 @@ type OverlayConfig struct {
 	// Start launches one banner process with the extra environment and returns a function that waits for it and reports how it
 	// ended: "clicked", "expired", or an error.
 	Start func(env []string) (wait func() (string, error), err error)
-	// Open opens an app by bundle id when its banner is clicked; `open -b` by default.
-	Open func(bundle string) error
 	// OnFailure receives alerts whose banner process died without showing them, so they can be shown another way.
 	OnFailure func(Request, error)
-	// OnError hears about problems that did not lose an alert, such as an app that would not open.
-	OnError func(error)
 }
 
 // Overlay draws each banner in its own osascript process (see docs/spikes/03-banner.md), in a window of its own that the banner
-// suppressor never touches. Banners that are on screen together take successive slots so they stack instead of overlapping.
+// suppressor never touches. Banners that are on screen together take successive slots so they stack instead of overlapping. A
+// click opens the source app from inside that process, so it works however long the caller lives.
 type Overlay struct {
 	cfg OverlayConfig
 
@@ -40,15 +37,15 @@ func NewOverlay(cfg OverlayConfig) *Overlay {
 	if cfg.Start == nil {
 		cfg.Start = startOsascript
 	}
-	if cfg.Open == nil {
-		cfg.Open = func(bundle string) error { return exec.Command("open", "-b", bundle).Run() }
-	}
 	return &Overlay{cfg: cfg, slots: map[string]map[int]bool{}}
 }
 
 type bannerSpec struct {
-	Title    string `json:"title"`
-	Body     string `json:"body"`
+	Title string `json:"title"`
+	Body  string `json:"body"`
+	// Bundle is the app the banner script opens when the banner is clicked. The script does it itself, because the process that
+	// showed the banner (a short-lived CLI command, say) may be gone by the time of the click.
+	Bundle   string `json:"bundle"`
 	Color    string `json:"color"`
 	Width    int    `json:"width"`
 	Height   int    `json:"height"`
@@ -60,7 +57,7 @@ type bannerSpec struct {
 
 func bannerEnv(r Request, slot int) []string {
 	spec, _ := json.Marshal(bannerSpec{
-		Title: r.Title, Body: r.Body, Color: r.Style.Color, Width: r.Width, Height: r.Height,
+		Title: r.Title, Body: r.Body, Bundle: r.BundleID, Color: r.Style.Color, Width: r.Width, Height: r.Height,
 		Position: r.Style.Position, Slot: slot, Duration: r.Style.DurationSecs, Sound: r.Style.Sound,
 	})
 	return []string{"SHH_BANNER=" + string(spec)}
@@ -102,12 +99,7 @@ func (o *Overlay) Show(r Request) error {
 	go func() {
 		outcome, err := wait()
 		o.release(r.Style.Position, slot)
-		switch {
-		case outcome == "clicked" && r.BundleID != "":
-			if err := o.cfg.Open(r.BundleID); err != nil && o.cfg.OnError != nil {
-				o.cfg.OnError(fmt.Errorf("opening %s: %w", r.BundleID, err))
-			}
-		case outcome != "clicked" && outcome != "expired" && err != nil && o.cfg.OnFailure != nil:
+		if outcome != "clicked" && outcome != "expired" && err != nil && o.cfg.OnFailure != nil {
 			o.cfg.OnFailure(r, err)
 		}
 	}()
