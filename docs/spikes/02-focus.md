@@ -44,6 +44,13 @@ Idea: leave Focus off so every notification is recorded, and close each banner t
 - The banner exposes only `title`, `subtitle`, `body` (static texts with those identifiers) and a UUID. **No app name or bundle id.** Source attribution would need a heuristic.
 - So this path replaces DB ingest with screen scraping for suppressed notifications, loses the source app, and depends on Accessibility permission and Notification Center's current layout.
 
+### 02c: move the banner window off-screen instead of closing it
+
+- The `NotificationCenter` window's `AXPosition` is settable (the banner group itself is not). Setting it to `[6000, 6000]` takes the banner off-screen without dismissing it.
+- Posted a notification and moved the window 403 to 412 ms later. **The user saw nothing, and the DB row still landed at about 5.16 s** (twice). Restoring to `[0, 0]` afterwards showed no banner either.
+- The window does not exist while idle (`windows().length` is 0), and macOS recreates it at `[0, 0]` for each banner. So it cannot be parked once: a watcher must catch every new window and move it.
+- Not yet tested: overlapping banners, real Teams and Outlook banners, CPU cost of polling, and notification sound (sounds are off on this Mac).
+
 ## Decision
 
-Open. Needs the user. Options and the impact on `plan.md` are in the task report.
+Open. Leading candidate: Focus stays off, shh runs a watcher that moves each new banner window off-screen, then reads the DB as designed. Needs the user's approval because it replaces the Focus-based design in `plan.md` §2.2 and §3.1. Needs the user. Options and the impact on `plan.md` are in the task report.
