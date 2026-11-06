@@ -71,9 +71,6 @@ type Training struct {
 	Label    *int
 }
 
-// Fixed width so that text comparison in SQL orders timestamps correctly.
-const timeLayout = "2006-01-02 15:04:05.000000000"
-
 const notificationColumns = `id, source, sender, title, body, CAST(timestamp AS TEXT), status, predicted_score, time_sensitivity_boost,
 	reason, bundle_id, source_rec_id, threshold_at_decision, session_id, summary,
 	is_read, is_dismissed_inbox, is_trained, user_feedback, user_label`
@@ -88,7 +85,7 @@ func (s *Store) InsertNotification(n Notification) (id int64, inserted bool, err
 		 reason, bundle_id, source_rec_id, threshold_at_decision, session_id)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT DO NOTHING`,
-		n.Source, n.Sender, nullString(n.Title), n.Body, n.Timestamp.UTC().Format(timeLayout), string(n.Status), n.Score, n.Boost,
+		n.Source, n.Sender, nullString(n.Title), n.Body, formatTime(n.Timestamp), string(n.Status), n.Score, n.Boost,
 		nullString(n.Reason), nullString(n.BundleID), nullID(n.SourceRecID), *n.ThresholdAtDecision, nullID(n.SessionID))
 	if err != nil {
 		return 0, false, err
@@ -125,7 +122,7 @@ func (s *Store) ListNotifications(f Filter) ([]Notification, error) {
 	}
 	if !f.Since.IsZero() {
 		where = append(where, "timestamp >= ?")
-		args = append(args, f.Since.UTC().Format(timeLayout))
+		args = append(args, formatTime(f.Since))
 	}
 	if f.Status != "" {
 		where = append(where, "status = ?")
@@ -219,9 +216,8 @@ func scanNotification(row scanner) (Notification, error) {
 	if err != nil {
 		return Notification{}, err
 	}
-	// Rows written by SQL defaults have no fractional seconds; Go's parser accepts either.
-	if n.Timestamp, err = time.ParseInLocation("2006-01-02 15:04:05", stamp, time.UTC); err != nil {
-		return Notification{}, fmt.Errorf("store: bad timestamp %q: %w", stamp, err)
+	if n.Timestamp, err = parseTime(stamp); err != nil {
+		return Notification{}, err
 	}
 	n.Status = Status(status)
 	n.Title, n.Reason, n.BundleID, n.Summary, n.UserFeedback = title.String, reason.String, bundle.String, summary.String, feedback.String

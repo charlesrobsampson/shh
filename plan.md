@@ -71,7 +71,7 @@ State is a **stack of levels**, not one session:
 - Multiple stacked escalations are allowed but rare. The UI shows the stack in `shh status`.
 - The banner suppressor runs while effective level > 0, and stops at 0%/`off`.
 - Every notification row records `session_id` (or layer id) and the threshold used, so history remains interpretable.
-- Schema: `focus_sessions` gains `kind` (`baseline`|`escalation`), `parent_id`, `then_level`, `paused_at`, `remaining_secs`.
+- Schema: `focus_sessions` gains `kind` (`baseline`|`escalation`), `parent_id`, `then_level`, `paused_at`, `remaining_secs`, and `expires_at` (set while a timed layer runs; paused layers keep `remaining_secs` instead). Only one baseline can be active.
 
 ---
 

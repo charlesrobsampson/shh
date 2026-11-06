@@ -89,4 +89,11 @@ CREATE TABLE training_log (
 DROP INDEX notifications_source_rec_id;
 CREATE UNIQUE INDEX notifications_source_rec_id ON notifications (source_rec_id, timestamp);
 `,
+
+	// A running timed level needs its expiry stored; a paused one keeps remaining_secs instead. Only one baseline may be active.
+	`
+ALTER TABLE focus_sessions ADD COLUMN expires_at DATETIME;
+CREATE UNIQUE INDEX focus_sessions_one_active_baseline ON focus_sessions (kind) WHERE kind = 'baseline' AND end_time IS NULL;
+CREATE INDEX focus_sessions_active ON focus_sessions (end_time);
+`,
 }
