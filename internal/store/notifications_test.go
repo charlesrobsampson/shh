@@ -358,6 +358,26 @@ func TestListFilters(t *testing.T) {
 	}
 }
 
+func TestListFiltersBySender(t *testing.T) {
+	s := open(t)
+	ana := insert(t, s, sample(func(n *store.Notification) { n.Sender = "Ana"; n.Timestamp = t0 }))
+	insert(t, s, sample(func(n *store.Notification) { n.Sender = "Bo"; n.Timestamp = t0.Add(time.Minute) }))
+	anaOutlook := insert(t, s, sample(func(n *store.Notification) {
+		n.Sender = "Ana"
+		n.Source = "Outlook"
+		n.Timestamp = t0.Add(2 * time.Minute)
+	}))
+
+	got, _ := s.ListNotifications(store.Filter{Sender: "Ana"})
+	if !sameIDs(got, anaOutlook, ana) {
+		t.Errorf("by sender = %v, want [%d %d]", ids(got), anaOutlook, ana)
+	}
+	got, _ = s.ListNotifications(store.Filter{Sender: "Ana", Source: "Teams"})
+	if !sameIDs(got, ana) {
+		t.Errorf("by sender and source = %v, want [%d]", ids(got), ana)
+	}
+}
+
 func TestViewsCombineWithFilters(t *testing.T) {
 	s := open(t)
 	teams := insert(t, s, sample(func(n *store.Notification) { n.Source = "Teams"; n.Timestamp = t0 }))

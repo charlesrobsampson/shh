@@ -153,13 +153,14 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Notes: `rules.Load(userPath)` (empty or missing path = embedded defaults from `internal/rules/default_rules.toml`; `rules.Defaults()`), the user file is normally `<config dir>/rules.toml`. `Rules{Urgency []Urgency{Pattern{Name, Regexp}, Boost}, VIPSenders, VIPApps (lower-cased, deduplicated), AppPriority map, CalendarCategories, DatePatterns}`. Merge rules: a rule with the same `name` replaces the default, a new name adds one, `enabled = false` removes one; VIP lists are unioned; `app_priority` entries override per key. All patterns are Go regexps, compiled case-insensitively (a `(?i)` prefix is added). Boost must be above 0 and at most 0.4. Errors name the file, key, or the rule kind and name. Contract for task 23: date patterns are tried in order and expose the named groups `year`, `month`, `day`, `hour`, `minute`, `ampm`, `minutes` (the seeded set is a starting point, edit as real samples arrive). Task 17 should add the bundle-id to source-name mapping to this file (a `[sources]` table) since the plan wants it extensible via rules. New shared package `internal/tomlx` does strict decoding with errors naming file, line and key; `config` now uses it too.
 
 ### 14 · Time-sensitivity boost
-- [ ] Done
+- [x] Done
 - Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/14-boost` · Depends: 06, 08, 13
 - Read: `manifest.md` §3.2, `plan.md` §5.4
 - Build: boost function (keywords, same-sender burst within a window using recent history) capped at 0.4.
 - Tests (table): each keyword; case-insensitivity; cap; burst detection with fake clock; no match → 0.
 - Manual check: none.
+- Notes: `classify.NewBooster(rules, store)` and `Boost(BoostInput{Source, Sender, Text, At}) (BoostResult{Value, Reasons}, error)` in `internal/classify/boost.go`. Value is 0 to 0.4, rounded to 3 decimals. Every matching urgency rule adds its boost (sum, then cap); a burst adds 0.1 when the new message is the third from the same source and sender within two minutes (window measured back from `At`, inclusive). The caller builds `Text` from title, subtitle and body and must call `Boost` before inserting the notification. Reasons are `keyword: <rule name>` and `burst: ...` strings for task 22. The burst check needs a sender, so unknown senders never burst. Burst size, window and boost are constants in the file, not yet configurable. Added `Sender` to `store.Filter`.
 
 ### 15 · Decision function
 - [ ] Done
