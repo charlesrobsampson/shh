@@ -179,7 +179,7 @@ Pure function, easily tested. Keyword list (`now`, `ASAP`, `urgent`, `prod`, `do
 ---
 
 ## 7. Alert banners (customizable)
-- **[DECIDED, spike 03, `docs/spikes/03-banner.md`]** A persistent `osascript -l JavaScript` helper (AppKit through JXA, embedded in the Go binary, no Swift, no compile step) draws the banner in its own window, so the banner suppressor (§2.2) never hides it. Go talks to it over stdin JSON lines. Size, color, position, sound, duration and click-to-open are all supported. Untested so far: over full-screen apps, stacking, multiple displays.
+- **[DECIDED, spike 03, `docs/spikes/03-banner.md`]** A persistent `osascript -l JavaScript` helper (AppKit through JXA, embedded in the Go binary, no Swift, no compile step) draws the banner in its own window, so the banner suppressor (§2.2) never hides it. Go talks to it over stdin JSON lines. Size, color, position, sound, duration and click-to-open are all supported. Verified over full-screen apps (Ghostty, Teams call). Untested so far: other Spaces, stacking, multiple displays.
 - Config (`~/.config/shh/config.toml`):
   ```toml
   [alert]

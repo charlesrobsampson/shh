@@ -20,6 +20,8 @@ Environment: macOS 26.7.1, Command Line Tools (Swift 6.3 available but not neede
 - A real mouse click opens the source app (`open -b <bundle id>`): Finder and Calculator opened.
 - **The overlay stays visible while the banner suppressor runs** (spike 02): a Notification Center banner posted at the same time was hidden and the overlay was not.
 
+- The overlay shows over a full-screen Ghostty window and over a full-screen Teams meeting (user confirmed).
+
 ## Gotchas found
 
 - JXA exposes zero-argument methods as properties: `sound.play` plays, `sound.play()` throws; `win.orderFrontRegardless` and `win.close` do not exist in the bridge, use `win.orderFront($())` and `win.orderOut($())`.
@@ -29,7 +31,7 @@ Environment: macOS 26.7.1, Command Line Tools (Swift 6.3 available but not neede
 
 ## Not tested
 
-- Visibility over full-screen apps and on other Spaces (window level and collection behavior are set for it).
+- Visibility on other Spaces (window level and collection behavior are set for it).
 - Several overlays at once (stacking offsets).
 - Multiple displays.
 
