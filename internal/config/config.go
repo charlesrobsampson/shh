@@ -27,7 +27,7 @@ type Style struct {
 	Position     string
 	Size         string
 	Color        string
-	DurationSecs int // 0 means until dismissed
+	DurationSecs int // 0 (the default) means until dismissed: alerts are the important ones, so they stay until acted on
 	Sound        string
 }
 
@@ -165,7 +165,7 @@ func Load(path string) (Config, error) {
 
 func build(f file, configDir string) (Config, error) {
 	cfg := Config{
-		Alert:      Alert{Base: Style{Position: "top-right", Size: "medium", Color: "#ff9f0a", DurationSecs: 8, Sound: "Glass"}},
+		Alert:      Alert{Base: Style{Position: "top-right", Size: "medium", Color: "#ff9f0a", DurationSecs: 0, Sound: "Glass"}},
 		Menubar:    Menubar{Label: "shh"},
 		Summarizer: Summarizer{Backend: "none"},
 	}

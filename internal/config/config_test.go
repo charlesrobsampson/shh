@@ -34,7 +34,7 @@ func TestDefaultsWhenTheFileIsMissing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := config.Style{Position: "top-right", Size: "medium", Color: "#ff9f0a", DurationSecs: 8, Sound: "Glass"}
+	want := config.Style{Position: "top-right", Size: "medium", Color: "#ff9f0a", DurationSecs: 0, Sound: "Glass"}
 	if got := cfg.Alert.Resolve(config.KindMessage, ""); got != want {
 		t.Errorf("default alert style = %+v, want %+v", got, want)
 	}
@@ -61,14 +61,14 @@ func TestAnEmptyFileMeansDefaults(t *testing.T) {
 
 func TestPartialFileMergesOverDefaults(t *testing.T) {
 	cfg := load(t, `{
-  "alert": {"color": "#112233", "duration_secs": 0},
+  "alert": {"color": "#112233", "duration_secs": 5},
   "menubar": {"label": "🔇 shh"},
   "summarizer": {"backend": "ollama"}
 }`)
 	got := cfg.Alert.Resolve(config.KindMessage, "")
-	want := config.Style{Position: "top-right", Size: "medium", Color: "#112233", DurationSecs: 0, Sound: "Glass"}
+	want := config.Style{Position: "top-right", Size: "medium", Color: "#112233", DurationSecs: 5, Sound: "Glass"}
 	if got != want {
-		t.Errorf("alert style = %+v, want %+v (only color and duration change; 0 means until dismissed)", got, want)
+		t.Errorf("alert style = %+v, want %+v (only color and duration change)", got, want)
 	}
 	if cfg.Menubar.Label != "🔇 shh" || cfg.Summarizer.Backend != "ollama" {
 		t.Errorf("menubar=%q summarizer=%q", cfg.Menubar.Label, cfg.Summarizer.Backend)
@@ -95,15 +95,15 @@ func TestStyleResolutionLayersKindThenSource(t *testing.T) {
 		want   config.Style
 	}{
 		{"plain message, unknown source", config.KindMessage, "Teams",
-			config.Style{Position: "top-right", Size: "small", Color: "#111111", DurationSecs: 8, Sound: "Glass"}},
+			config.Style{Position: "top-right", Size: "small", Color: "#111111", DurationSecs: 0, Sound: "Glass"}},
 		{"calendar kind overrides the base", config.KindCalendar, "",
-			config.Style{Position: "top-right", Size: "small", Color: "#0a84ff", DurationSecs: 8, Sound: "Hero"}},
+			config.Style{Position: "top-right", Size: "small", Color: "#0a84ff", DurationSecs: 0, Sound: "Hero"}},
 		{"source override applies to messages", config.KindMessage, "Slack",
-			config.Style{Position: "bottom-left", Size: "small", Color: "#111111", DurationSecs: 8, Sound: "none"}},
+			config.Style{Position: "bottom-left", Size: "small", Color: "#111111", DurationSecs: 0, Sound: "none"}},
 		{"source wins over kind, other kind fields still apply", config.KindCalendar, "Slack",
-			config.Style{Position: "bottom-left", Size: "small", Color: "#0a84ff", DurationSecs: 8, Sound: "none"}},
+			config.Style{Position: "bottom-left", Size: "small", Color: "#0a84ff", DurationSecs: 0, Sound: "none"}},
 		{"source color wins over kind color", config.KindCalendar, "Outlook",
-			config.Style{Position: "top-right", Size: "small", Color: "#222222", DurationSecs: 8, Sound: "Hero"}},
+			config.Style{Position: "top-right", Size: "small", Color: "#222222", DurationSecs: 0, Sound: "Hero"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -405,5 +405,21 @@ func TestEffectiveConfigKeepsButtons(t *testing.T) {
 	}
 	if !strings.Contains(string(shown), `"train"`) {
 		t.Errorf("effective config should list every button, including train:\n%s", shown)
+	}
+}
+
+func TestAlertsStayUntilDismissedUnlessATimeoutIsConfigured(t *testing.T) {
+	if got := load(t, "").Alert.Resolve(config.KindMessage, "").DurationSecs; got != 0 {
+		t.Errorf("default duration = %d, want 0 (stay until dismissed)", got)
+	}
+	cfg := load(t, `{"alert": {"calendar": {"duration_secs": 30}, "source": {"Slack": {"duration_secs": 5}}}}`)
+	for _, tt := range []struct {
+		kind   config.Kind
+		source string
+		want   int
+	}{{config.KindMessage, "Teams", 0}, {config.KindCalendar, "Teams", 30}, {config.KindMessage, "Slack", 5}} {
+		if got := cfg.Alert.Resolve(tt.kind, tt.source).DurationSecs; got != tt.want {
+			t.Errorf("duration for %s/%s = %d, want %d", tt.kind, tt.source, got, tt.want)
+		}
 	}
 }

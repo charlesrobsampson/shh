@@ -187,7 +187,7 @@ Pure function, easily tested. Keyword list (`now`, `ASAP`, `urgent`, `prod`, `do
       "position": "top-right",   // top-left|top-center|top-right|bottom-*
       "size": "medium",          // small|medium|large
       "color": "#ff9f0a",
-      "duration_secs": 8,        // 0 = until dismissed
+      "duration_secs": 0,        // 0 (default) = stays until dismissed or opened; N = disappears after N seconds
       "sound": "Glass",          // system sound name | "none"
       "buttons": [               // left to right; every known type is always present, one left out is disabled
         { "type": "preview", "label": "Preview", "enabled": true },
