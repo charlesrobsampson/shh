@@ -141,6 +141,39 @@ func TestDefaultDatePatternsCaptureNamedFields(t *testing.T) {
 	}
 }
 
+func TestDefaultsNameTheCommonApps(t *testing.T) {
+	r, _ := rules.Defaults()
+	for bundle, want := range map[string]string{
+		"com.microsoft.teams2":      "Teams",
+		"com.microsoft.outlook":     "Outlook",
+		"com.tinyspeck.slackmacgap": "Slack",
+		"com.apple.mail":            "Mail",
+		"com.apple.mobilesms":       "Messages",
+	} {
+		if got := r.Sources[bundle]; got != want {
+			t.Errorf("Sources[%q] = %q, want %q", bundle, got, want)
+		}
+	}
+}
+
+func TestUserSourcesExtendAndOverride(t *testing.T) {
+	r := load(t, `
+[sources]
+"com.microsoft.teams2" = "MS Teams"
+"com.example.pager" = "Pager"
+`)
+	if r.Sources["com.microsoft.teams2"] != "MS Teams" || r.Sources["com.example.pager"] != "Pager" || r.Sources["com.apple.mail"] != "Mail" {
+		t.Errorf("Sources = %v, want the override, the addition and the untouched defaults", r.Sources)
+	}
+}
+
+func TestEmptySourceNamesAreRejected(t *testing.T) {
+	_, err := rules.Load(writeUser(t, "[sources]\n\"com.example.pager\" = \"\"\n"))
+	if err == nil || !strings.Contains(err.Error(), `"com.example.pager"`) {
+		t.Fatalf("err = %v, want one naming the bundle id", err)
+	}
+}
+
 func TestMissingUserFileMeansDefaults(t *testing.T) {
 	defaults, _ := rules.Defaults()
 	got, err := rules.Load(filepath.Join(t.TempDir(), "absent.toml"))
