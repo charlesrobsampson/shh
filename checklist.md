@@ -123,13 +123,14 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 ## Phase 2: Levels and decisions (pure logic)
 
 ### 11 · Threshold and tier parsing
-- [ ] Done
+- [x] Done
 - Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/11-thresholds` · Depends: 01
 - Read: `manifest.md` §3.3, `plan.md` §4.3
 - Build: parse percentages (`75%`) and tier names into an integer level 0–99: `off`=0, `light`=35, `medium`=65, `deep`=90, `lockdown`=99; `100%` is an alias for 99; plain decimals like `0.75` are rejected. Also parse exact training labels 0–100 (tier names allowed) separately, since labels may be 100. Durations (`25m`, `1h30m`, `0`). Read `plan.md` §4.3 for the scale.
 - Tests: table of valid/invalid inputs, boundaries (`0%`, `99%`, `100%` as threshold → 99, `101%`, `-5%`, `abc`, `1h30m`, `0`; label `100` valid, label `101` invalid).
 - Manual check: none.
+- Notes: package `internal/decide` (`parse.go`): `ParseThreshold("75%"|tier)` returns 0-99 (`MaxLevel` = 99); `ParseLabel("80"|"80%"|tier)` returns 0-100; `ParseDuration("25m")` returns a `time.Duration` (0 = indefinite). Decisions: a threshold must be `N%` or a tier name, a bare number such as `75` is rejected with a hint (ambiguous with decimals and durations), while labels accept bare numbers because the training prompt takes them; tier names are case-insensitive; durations need a unit (`25` is rejected, `0` is allowed), reject negatives and anything non-zero under a second, and accept decimals like `1.5h`. Errors quote the input and say what to write.
 
 ### 12 · Level stack engine
 - [ ] Done
