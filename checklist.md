@@ -109,13 +109,14 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Notes: API in `internal/store/levels.go`: `Level` (`Kind` baseline/escalation, `Percent` 0-99, `ThenLevel` nil=layer beneath/0=off, `StartTime`, `EndTime` nil while active, `TargetMinutes` for display, `ExpiresAt` for a running timed level, `PausedAt`+`RemainingSecs` for a paused one, `Blocked`/`Allowed`), `PushLevel` (sets `ParentID` to the current top), `ActiveLevels` (bottom first, baseline always at the bottom, last element is the top), `GetLevel`, `CloseLevel(id, end)` (any level, e.g. an expired one below the top), `PopLevel(end)` (top escalation only, `ErrNotFound` if none), `PauseLevel(id, now)` (stores remaining seconds rounded up, clears `ExpiresAt`), `ResumeLevel(id, now)`, `SetThenLevel`, `AddCounts`. **Migration 3** added `expires_at` and a unique index allowing one active baseline, so the engine must close the old baseline before pushing a new one. Not here yet, add in task 12 if needed: change a level's percent (`SetLevel`) and adjust the expiry (`Adjust`).
 
 ### 10 · Config loader
-- [ ] Done
+- [x] Done
 - Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/10-config` · Depends: 01
 - Read: `plan.md` §7, §7.1, §6
 - Build: `internal/config` loads `~/.config/shh/config.toml` (path overridable) with defaults: alert style (position, size, color, duration, sound, per-kind and per-source overrides), `[menubar] label = "shh"`, summarizer backend (`none`), paths. Unknown keys are errors with a clear message.
 - Tests: defaults when file missing; partial file merges over defaults; per-source override resolves; invalid value or unknown key errors name the key.
 - Manual check: `shh config show` (temporary or real command if present) prints effective config.
+- Notes: `config.Load(path)` (missing file = defaults; `config.DefaultPath()` is `~/.config/shh/config.toml`), TOML via `github.com/pelletier/go-toml/v2` in strict mode. `Config{Alert, Menubar, Summarizer, Paths}`. `cfg.Alert.Resolve(kind, source)` returns the resolved `Style` (defaults, then base, then kind override (`KindCalendar`), then per-source override); size names (`small|medium|large`) map to pixels in task 29. `Paths` default to the config file's directory (`shh.db`, `shh.sock`, `shh.pid`); `[paths] dir` moves them and relative overrides are relative to it. Errors name the file, line and key (`unknown key "alert.colour"`). `cfg.Effective()` renders the resolved config as TOML that loads back identically: use it for `shh config show` (task 27 or 36). Summarizer settings beyond `backend` (URL, model) are added in task 35. Checked with a throwaway program, not committed.
 
 ---
 
