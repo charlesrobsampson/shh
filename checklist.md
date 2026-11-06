@@ -280,7 +280,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 ### 25 · Worker pipeline (end to end, in memory)
 - [ ] Done
-- Session: _(fill on start)_
+- Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/25-worker-pipeline` · Depends: 12, 15, 17, 19, 22, 24
 - Read: `plan.md` §3, §4
 - Build: `internal/session` worker wiring tailer → classify → boost → decide → deliver (alerter interface) or store; updates counters; calendar pre-empt path; uses the `Alerter` and `Suppressor` interfaces and fakes from task 24.
