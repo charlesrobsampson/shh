@@ -1,7 +1,6 @@
 package config
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -12,6 +11,8 @@ import (
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
+
+	"github.com/charlesrobsampson/shh/internal/tomlx"
 )
 
 // Kind is the sort of alert being shown; kinds can override the base style.
@@ -146,34 +147,14 @@ func Load(path string) (Config, error) {
 		return Config{}, err
 	}
 	var f file
-	decoder := toml.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&f); err != nil {
-		return Config{}, describeDecodeError(path, err)
+	if err := tomlx.Decode(path, raw, &f); err != nil {
+		return Config{}, err
 	}
 	cfg, err := build(f, filepath.Dir(path))
 	if err != nil {
 		return Config{}, fmt.Errorf("%s: %w", path, err)
 	}
 	return cfg, nil
-}
-
-func describeDecodeError(path string, err error) error {
-	var strict *toml.StrictMissingError
-	if errors.As(err, &strict) && len(strict.Errors) > 0 {
-		first := strict.Errors[0]
-		line, _ := first.Position()
-		return fmt.Errorf("%s:%d: unknown key %q", path, line, strings.Join(first.Key(), "."))
-	}
-	var decode *toml.DecodeError
-	if errors.As(err, &decode) {
-		line, _ := decode.Position()
-		if key := decode.Key(); len(key) > 0 {
-			return fmt.Errorf("%s:%d: %q has the wrong type", path, line, strings.Join(key, "."))
-		}
-		return fmt.Errorf("%s:%d: %s", path, line, decode.Error())
-	}
-	return fmt.Errorf("%s: %w", path, err)
 }
 
 func build(f file, configDir string) (Config, error) {

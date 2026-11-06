@@ -143,13 +143,14 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Notes: lives in `internal/session` (`stack.go`; plan §11 has no separate package). `session.NewStack(store, clock)`; methods `SetBaseline(level)` (0 turns it off), `Escalate(Escalation{Level, Duration, Then, Note})`, `Stop` (top escalation only, `ErrNothingToStop` otherwise), `StopAll`, `Pause`/`Resume` (top timed layer; `ErrNoTimer`, `ErrNotPaused`), `Adjust(delta)`, `SetLevel(level)` (top layer, `ErrNoSession` if empty), `Status()` returning `Status{Level, Layers}` where each `Layer` embeds `store.Level` plus `Timed`, `Paused`, `Remaining`, and `NextExpiry()` for scheduling the worker's wake-up. The stack holds no state, so restarts just reload from the store; expired timers are settled lazily on every call, each closed at its own deadline. Semantics decided here (also in `plan.md` §3.1): `Then` only applies on timer expiry (closes everything beneath, then starts a baseline at X if X is above 0); manual `Stop` ignores it; pause freezes the countdown, not the level; cutting a timer past its end expires it immediately. Added store methods `SetExpiresAt`, `SetRemainingSecs`, `SetPercent`.
 
 ### 13 · Rules file loader
-- [ ] Done
+- [x] Done
 - Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/13-rules-loader` · Depends: 01
 - Read: `plan.md` §4.2, §5.1 (L0), §5.4
 - Build: `internal/rules` loads `rules.toml` (embedded defaults, user override): urgency keywords with boosts, VIP senders/apps, per-app priorities, calendar categories, date patterns list.
 - Tests: defaults load; user file overrides/extends; invalid regex is an error naming the rule.
 - Manual check: none.
+- Notes: `rules.Load(userPath)` (empty or missing path = embedded defaults from `internal/rules/default_rules.toml`; `rules.Defaults()`), the user file is normally `<config dir>/rules.toml`. `Rules{Urgency []Urgency{Pattern{Name, Regexp}, Boost}, VIPSenders, VIPApps (lower-cased, deduplicated), AppPriority map, CalendarCategories, DatePatterns}`. Merge rules: a rule with the same `name` replaces the default, a new name adds one, `enabled = false` removes one; VIP lists are unioned; `app_priority` entries override per key. All patterns are Go regexps, compiled case-insensitively (a `(?i)` prefix is added). Boost must be above 0 and at most 0.4. Errors name the file, key, or the rule kind and name. Contract for task 23: date patterns are tried in order and expose the named groups `year`, `month`, `day`, `hour`, `minute`, `ampm`, `minutes` (the seeded set is a starting point, edit as real samples arrive). Task 17 should add the bundle-id to source-name mapping to this file (a `[sources]` table) since the plan wants it extensible via rules. New shared package `internal/tomlx` does strict decoding with errors naming file, line and key; `config` now uses it too.
 
 ### 14 · Time-sensitivity boost
 - [ ] Done
