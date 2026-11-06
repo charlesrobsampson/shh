@@ -290,7 +290,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 ### 26 · IPC server and client
 - [ ] Done
-- Session: _(fill on start)_
+- Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/26-ipc` · Depends: 25
 - Read: `plan.md` §3
 - Build: unix-socket JSON-lines protocol: `status`, `focus`, `baseline`, `stop`, `pause`, `resume`, `adjust`, `subscribe` (live events). Client library. Socket path configurable (temp dir in tests).
