@@ -144,7 +144,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 ### 13 · Rules file loader
 - [ ] Done
-- Session: _(fill on start)_
+- Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/13-rules-loader` · Depends: 01
 - Read: `plan.md` §4.2, §5.1 (L0), §5.4
 - Build: `internal/rules` loads `rules.toml` (embedded defaults, user override): urgency keywords with boosts, VIP senders/apps, per-app priorities, calendar categories, date patterns list.
