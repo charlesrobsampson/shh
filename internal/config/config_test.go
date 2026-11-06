@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -269,5 +270,140 @@ func TestCommentsAndTrailingCommasWorkInTheConfigFile(t *testing.T) {
 	got := cfg.Alert.Resolve(config.KindMessage, "")
 	if got.Color != "#30d158" || got.Position != "bottom-left" {
 		t.Errorf("style = %+v, want the commented file read as written", got)
+	}
+}
+
+func types(buttons []config.Button) []string {
+	var out []string
+	for _, b := range buttons {
+		out = append(out, b.Type)
+	}
+	return out
+}
+
+func enabledTypes(buttons []config.Button) []string {
+	var out []string
+	for _, b := range buttons {
+		if b.Enabled {
+			out = append(out, b.Type)
+		}
+	}
+	return out
+}
+
+func TestDefaultButtonsListEveryKnownTypeWithTrainOff(t *testing.T) {
+	cfg := load(t, "")
+	got := cfg.Alert.ButtonsFor(config.KindMessage, "")
+	if want := []string{"preview", "goto", "dismiss", "train"}; strings.Join(types(got), ",") != strings.Join(want, ",") {
+		t.Fatalf("button types = %v, want %v", types(got), want)
+	}
+	if want := "preview,goto,dismiss"; strings.Join(enabledTypes(got), ",") != want {
+		t.Errorf("enabled = %v, want %s (train is off until task 45)", enabledTypes(got), want)
+	}
+	if got[0].Label != "Preview" || got[1].Label != "Go to" || got[2].Label != "Dismiss" {
+		t.Errorf("default labels = %+v", got)
+	}
+}
+
+func TestButtonOrderIsTheListOrderAndMissingTypesComeBackDisabled(t *testing.T) {
+	cfg := load(t, `{"alert": {"buttons": [{"type": "dismiss"}, {"type": "goto", "label": "Open"}]}}`)
+	got := cfg.Alert.ButtonsFor(config.KindMessage, "")
+	if want := "dismiss,goto,preview,train"; strings.Join(types(got), ",") != want {
+		t.Fatalf("order = %v, want %s (listed first, in the user's order; the rest appended)", types(got), want)
+	}
+	if want := "dismiss,goto"; strings.Join(enabledTypes(got), ",") != want {
+		t.Errorf("enabled = %v, want %s (a type left out is disabled)", enabledTypes(got), want)
+	}
+	if got[1].Label != "Open" || got[0].Label != "Dismiss" {
+		t.Errorf("labels = %q, %q; want an unset label to take the default", got[0].Label, got[1].Label)
+	}
+}
+
+func TestButtonCanBeDisabledExplicitly(t *testing.T) {
+	cfg := load(t, `{"alert": {"buttons": [{"type": "preview", "enabled": false}]}}`)
+	got := cfg.Alert.ButtonsFor(config.KindMessage, "")
+	if strings.Contains(strings.Join(enabledTypes(got), ","), "preview") {
+		t.Errorf("preview enabled in %v", got)
+	}
+	if got[0].Type != "preview" || got[0].Enabled {
+		t.Errorf("first = %+v, want the disabled preview", got[0])
+	}
+}
+
+func TestButtonOverridesReplaceTheWholeList(t *testing.T) {
+	cfg := load(t, `{"alert": {
+	  "buttons": [{"type": "dismiss"}],
+	  "calendar": {"buttons": [{"type": "goto"}]},
+	  "source": {"Slack": {"buttons": [{"type": "preview"}]}}
+	}}`)
+	tests := []struct {
+		kind   config.Kind
+		source string
+		want   string
+	}{
+		{config.KindMessage, "Teams", "dismiss"},
+		{config.KindCalendar, "Teams", "goto"},
+		{config.KindMessage, "Slack", "preview"},
+		{config.KindCalendar, "Slack", "preview"},
+	}
+	for _, tt := range tests {
+		got := enabledTypes(cfg.Alert.ButtonsFor(tt.kind, tt.source))
+		if strings.Join(got, ",") != tt.want {
+			t.Errorf("ButtonsFor(%q, %q) enabled = %v, want %s", tt.kind, tt.source, got, tt.want)
+		}
+	}
+}
+
+func TestInvalidButtonsNameTheKey(t *testing.T) {
+	tests := []struct {
+		name, content, wantKey string
+	}{
+		{"unknown type", `{"alert": {"buttons": [{"type": "snooze"}]}}`, "alert.buttons[0].type"},
+		{"missing type", `{"alert": {"buttons": [{"label": "x"}]}}`, "alert.buttons[0].type"},
+		{"duplicate type", `{"alert": {"buttons": [{"type": "goto"}, {"type": "goto"}]}}`, "alert.buttons[1].type"},
+		{"empty label", `{"alert": {"buttons": [{"type": "goto", "label": ""}]}}`, "alert.buttons[0].label"},
+		{"bad calendar override", `{"alert": {"calendar": {"buttons": [{"type": "nope"}]}}}`, "alert.calendar.buttons[0].type"},
+		{"bad source override", `{"alert": {"source": {"Slack": {"buttons": [{"type": "nope"}]}}}}`, "alert.source.Slack.buttons[0].type"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := config.Load(write(t, tt.content))
+			if err == nil || !strings.Contains(err.Error(), `"`+tt.wantKey+`"`) {
+				t.Errorf("err = %v, want one naming %q", err, tt.wantKey)
+			}
+		})
+	}
+}
+
+func TestUnknownKeyInAButtonIsAnError(t *testing.T) {
+	_, err := config.Load(write(t, `{"alert": {"buttons": [{"type": "goto", "colour": "red"}]}}`))
+	if err == nil || !strings.Contains(err.Error(), "unknown key") {
+		t.Errorf("err = %v, want an unknown key error", err)
+	}
+}
+
+func TestEffectiveConfigKeepsButtons(t *testing.T) {
+	original := load(t, `{"alert": {
+	  "buttons": [{"type": "dismiss", "label": "Close"}, {"type": "preview", "enabled": false}],
+	  "source": {"Slack": {"buttons": [{"type": "goto"}]}}
+	}}`)
+	shown, err := original.Effective()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := config.Load(write(t, string(shown)))
+	if err != nil {
+		t.Fatalf("effective config does not load back: %v\n%s", err, shown)
+	}
+	for _, source := range []string{"", "Slack"} {
+		for _, kind := range []config.Kind{config.KindMessage, config.KindCalendar} {
+			got, want := reloaded.Alert.ButtonsFor(kind, source), original.Alert.ButtonsFor(kind, source)
+			if fmt.Sprint(got) != fmt.Sprint(want) {
+				t.Errorf("ButtonsFor(%q, %q) after round trip = %v, want %v", kind, source, got, want)
+			}
+		}
+	}
+	if !strings.Contains(string(shown), `"train"`) {
+		t.Errorf("effective config should list every button, including train:\n%s", shown)
 	}
 }
