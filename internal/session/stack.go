@@ -16,6 +16,8 @@ var (
 	ErrNoTimer       = errors.New("no running timer")
 	ErrNotPaused     = errors.New("no paused timer")
 	ErrNoSession     = errors.New("no focus session is active")
+	// ErrInvalid wraps problems with a command's values, such as a level outside 0-99.
+	ErrInvalid = errors.New("invalid value")
 )
 
 // Escalation is a temporary focus level on top of the baseline. Duration 0 means until stopped.
@@ -83,7 +85,7 @@ func (s *Stack) Escalate(e Escalation) (id int64, err error) {
 		}
 	}
 	if e.Duration < 0 {
-		return 0, fmt.Errorf("duration %v is negative", e.Duration)
+		return 0, fmt.Errorf("%w: duration %v is negative", ErrInvalid, e.Duration)
 	}
 	err = s.act(func(now time.Time, _ []store.Level) error {
 		level := store.Level{Kind: store.LevelEscalation, Percent: e.Level, StartTime: now, ThenLevel: e.Then, Note: e.Note}
@@ -275,7 +277,7 @@ func laterOf(a, b time.Time) time.Time {
 
 func checkLevel(level int) error {
 	if level < 0 || level > decide.MaxLevel {
-		return fmt.Errorf("level %d is outside 0-%d", level, decide.MaxLevel)
+		return fmt.Errorf("%w: level %d is outside 0-%d", ErrInvalid, level, decide.MaxLevel)
 	}
 	return nil
 }
