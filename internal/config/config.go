@@ -1,0 +1,281 @@
+package config
+
+import (
+	"bytes"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strings"
+
+	"github.com/pelletier/go-toml/v2"
+)
+
+// Kind is the sort of alert being shown; kinds can override the base style.
+type Kind string
+
+const (
+	KindMessage  Kind = "message"
+	KindCalendar Kind = "calendar"
+)
+
+// Style is a fully resolved banner style.
+type Style struct {
+	Position     string
+	Size         string
+	Color        string
+	DurationSecs int // 0 means until dismissed
+	Sound        string
+}
+
+// StyleOverride changes only the fields that are set.
+type StyleOverride struct {
+	Position     *string `toml:"position"`
+	Size         *string `toml:"size"`
+	Color        *string `toml:"color"`
+	DurationSecs *int    `toml:"duration_secs"`
+	Sound        *string `toml:"sound"`
+}
+
+type Alert struct {
+	Base     Style
+	Calendar StyleOverride
+	Source   map[string]StyleOverride
+}
+
+// Resolve layers the base style, then the kind override, then the per-source override.
+func (a Alert) Resolve(kind Kind, source string) Style {
+	style := a.Base
+	if kind == KindCalendar {
+		style = style.with(a.Calendar)
+	}
+	if override, ok := a.Source[source]; ok {
+		style = style.with(override)
+	}
+	return style
+}
+
+func (s Style) with(o StyleOverride) Style {
+	if o.Position != nil {
+		s.Position = *o.Position
+	}
+	if o.Size != nil {
+		s.Size = *o.Size
+	}
+	if o.Color != nil {
+		s.Color = *o.Color
+	}
+	if o.DurationSecs != nil {
+		s.DurationSecs = *o.DurationSecs
+	}
+	if o.Sound != nil {
+		s.Sound = *o.Sound
+	}
+	return s
+}
+
+type Menubar struct {
+	Label string
+}
+
+type Summarizer struct {
+	Backend string
+}
+
+type Paths struct {
+	Dir    string
+	DB     string
+	Socket string
+	PID    string
+}
+
+type Config struct {
+	Alert      Alert
+	Menubar    Menubar
+	Summarizer Summarizer
+	Paths      Paths
+}
+
+// file is the shape of config.toml; pointers tell "not set" apart from zero values.
+type file struct {
+	Alert struct {
+		StyleOverride
+		Calendar *StyleOverride           `toml:"calendar,omitempty"`
+		Source   map[string]StyleOverride `toml:"source,omitempty"`
+	} `toml:"alert"`
+	Menubar struct {
+		Label *string `toml:"label"`
+	} `toml:"menubar"`
+	Summarizer struct {
+		Backend *string `toml:"backend"`
+	} `toml:"summarizer"`
+	Paths struct {
+		Dir    *string `toml:"dir"`
+		DB     *string `toml:"db"`
+		Socket *string `toml:"socket"`
+		PID    *string `toml:"pid"`
+	} `toml:"paths"`
+}
+
+var (
+	positions = []string{"top-left", "top-center", "top-right", "bottom-left", "bottom-center", "bottom-right"}
+	sizes     = []string{"small", "medium", "large"}
+	backends  = []string{"none", "ollama", "claude"}
+	hexColor  = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+)
+
+// DefaultPath is ~/.config/shh/config.toml.
+func DefaultPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".config", "shh", "config.toml"), nil
+}
+
+// Load reads the config at path over the defaults. A missing file means all defaults.
+// Relative paths in the file are resolved against the directory it names, which defaults to the file's own directory.
+func Load(path string) (Config, error) {
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		raw = nil
+	} else if err != nil {
+		return Config{}, err
+	}
+	var f file
+	decoder := toml.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&f); err != nil {
+		return Config{}, describeDecodeError(path, err)
+	}
+	cfg, err := build(f, filepath.Dir(path))
+	if err != nil {
+		return Config{}, fmt.Errorf("%s: %w", path, err)
+	}
+	return cfg, nil
+}
+
+func describeDecodeError(path string, err error) error {
+	var strict *toml.StrictMissingError
+	if errors.As(err, &strict) && len(strict.Errors) > 0 {
+		first := strict.Errors[0]
+		line, _ := first.Position()
+		return fmt.Errorf("%s:%d: unknown key %q", path, line, strings.Join(first.Key(), "."))
+	}
+	var decode *toml.DecodeError
+	if errors.As(err, &decode) {
+		line, _ := decode.Position()
+		if key := decode.Key(); len(key) > 0 {
+			return fmt.Errorf("%s:%d: %q has the wrong type", path, line, strings.Join(key, "."))
+		}
+		return fmt.Errorf("%s:%d: %s", path, line, decode.Error())
+	}
+	return fmt.Errorf("%s: %w", path, err)
+}
+
+func build(f file, configDir string) (Config, error) {
+	cfg := Config{
+		Alert:      Alert{Base: Style{Position: "top-right", Size: "medium", Color: "#ff9f0a", DurationSecs: 8, Sound: "Glass"}},
+		Menubar:    Menubar{Label: "shh"},
+		Summarizer: Summarizer{Backend: "none"},
+	}
+	if err := validateOverride("alert", f.Alert.StyleOverride); err != nil {
+		return Config{}, err
+	}
+	cfg.Alert.Base = cfg.Alert.Base.with(f.Alert.StyleOverride)
+	if f.Alert.Calendar != nil {
+		if err := validateOverride("alert.calendar", *f.Alert.Calendar); err != nil {
+			return Config{}, err
+		}
+		cfg.Alert.Calendar = *f.Alert.Calendar
+	}
+	for source, override := range f.Alert.Source {
+		if err := validateOverride("alert.source."+source, override); err != nil {
+			return Config{}, err
+		}
+	}
+	cfg.Alert.Source = f.Alert.Source
+
+	if f.Menubar.Label != nil {
+		cfg.Menubar.Label = *f.Menubar.Label
+	}
+	if f.Summarizer.Backend != nil {
+		if !slices.Contains(backends, *f.Summarizer.Backend) {
+			return Config{}, notOneOf("summarizer.backend", *f.Summarizer.Backend, backends)
+		}
+		cfg.Summarizer.Backend = *f.Summarizer.Backend
+	}
+
+	paths, err := buildPaths(f, configDir)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.Paths = paths
+	return cfg, nil
+}
+
+func buildPaths(f file, configDir string) (Paths, error) {
+	for key, value := range map[string]*string{"paths.dir": f.Paths.Dir, "paths.db": f.Paths.DB, "paths.socket": f.Paths.Socket, "paths.pid": f.Paths.PID} {
+		if value != nil && *value == "" {
+			return Paths{}, fmt.Errorf("%q must not be empty", key)
+		}
+	}
+	dir := configDir
+	if f.Paths.Dir != nil {
+		dir = *f.Paths.Dir
+	}
+	resolve := func(override *string, name string) string {
+		if override == nil {
+			return filepath.Join(dir, name)
+		}
+		if filepath.IsAbs(*override) {
+			return *override
+		}
+		return filepath.Join(dir, *override)
+	}
+	return Paths{
+		Dir:    dir,
+		DB:     resolve(f.Paths.DB, "shh.db"),
+		Socket: resolve(f.Paths.Socket, "shh.sock"),
+		PID:    resolve(f.Paths.PID, "shh.pid"),
+	}, nil
+}
+
+func validateOverride(prefix string, o StyleOverride) error {
+	switch {
+	case o.Position != nil && !slices.Contains(positions, *o.Position):
+		return notOneOf(prefix+".position", *o.Position, positions)
+	case o.Size != nil && !slices.Contains(sizes, *o.Size):
+		return notOneOf(prefix+".size", *o.Size, sizes)
+	case o.Color != nil && !hexColor.MatchString(*o.Color):
+		return fmt.Errorf("%q: %q is not a #rrggbb color", prefix+".color", *o.Color)
+	case o.DurationSecs != nil && *o.DurationSecs < 0:
+		return fmt.Errorf("%q: %d is negative (use 0 for until dismissed)", prefix+".duration_secs", *o.DurationSecs)
+	case o.Sound != nil && *o.Sound == "":
+		return fmt.Errorf("%q must not be empty (use \"none\" for silence)", prefix+".sound")
+	}
+	return nil
+}
+
+func notOneOf(key, got string, allowed []string) error {
+	return fmt.Errorf("%q: %q is not one of %s", key, got, strings.Join(allowed, ", "))
+}
+
+// Effective renders the resolved configuration as TOML that Load reads back to the same values.
+func (c Config) Effective() ([]byte, error) {
+	var f file
+	base := c.Alert.Base
+	f.Alert.Position, f.Alert.Size, f.Alert.Color, f.Alert.DurationSecs, f.Alert.Sound =
+		&base.Position, &base.Size, &base.Color, &base.DurationSecs, &base.Sound
+	if c.Alert.Calendar != (StyleOverride{}) {
+		f.Alert.Calendar = &c.Alert.Calendar
+	}
+	f.Alert.Source = c.Alert.Source
+	f.Menubar.Label = &c.Menubar.Label
+	f.Summarizer.Backend = &c.Summarizer.Backend
+	f.Paths.Dir, f.Paths.DB, f.Paths.Socket, f.Paths.PID = &c.Paths.Dir, &c.Paths.DB, &c.Paths.Socket, &c.Paths.PID
+	return toml.Marshal(f)
+}

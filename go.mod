@@ -2,7 +2,10 @@ module github.com/charlesrobsampson/shh
 
 go 1.27.3
 
-require modernc.org/sqlite v1.61.1
+require (
+	github.com/pelletier/go-toml/v2 v2.4.3
+	modernc.org/sqlite v1.61.1
+)
 
 require (
 	github.com/dustin/go-humanize v1.1.0 // indirect
