@@ -262,4 +262,3 @@ func (a *accumulator) vector() Vector {
 	}
 	return v
 }
-
