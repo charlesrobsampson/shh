@@ -55,7 +55,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 ### 05 · Spike: static embedding model choice
 - [ ] Done
-- Session: _(fill on start)_
+- Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/05-spike-embeddings` · Depends: 01
 - Context: layer L2 needs small pure-Go embeddings bundled via `go:embed` (Model2Vec-style: token lookup + mean pooling). Binary size and quality matter.
 - Read: `plan.md` §5.1–5.2
