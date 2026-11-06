@@ -154,7 +154,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 ### 14 · Time-sensitivity boost
 - [ ] Done
-- Session: _(fill on start)_
+- Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/14-boost` · Depends: 06, 08, 13
 - Read: `manifest.md` §3.2, `plan.md` §5.4
 - Build: boost function (keywords, same-sender burst within a window using recent history) capped at 0.4.
