@@ -178,3 +178,30 @@ func TestErrorsExplainWhatToWrite(t *testing.T) {
 		})
 	}
 }
+
+func TestFormatLevelNamesTheTiers(t *testing.T) {
+	tests := []struct {
+		level int
+		want  string
+	}{
+		{0, "off"}, {35, "35% (light)"}, {65, "65% (medium)"}, {90, "90% (deep)"}, {99, "99% (lockdown)"},
+		{1, "1%"}, {50, "50%"}, {75, "75%"}, {98, "98%"},
+	}
+	for _, tt := range tests {
+		if got := decide.FormatLevel(tt.level); got != tt.want {
+			t.Errorf("FormatLevel(%d) = %q, want %q", tt.level, got, tt.want)
+		}
+	}
+}
+
+func TestFormatLevelRoundTripsThroughParseThreshold(t *testing.T) {
+	for level := 0; level <= decide.MaxLevel; level++ {
+		text := decide.FormatLevel(level)
+		if i := strings.Index(text, " "); i > 0 {
+			text = text[:i]
+		}
+		if got, err := decide.ParseThreshold(text); err != nil || got != level {
+			t.Fatalf("level %d formats as %q which parses to %d, %v", level, text, got, err)
+		}
+	}
+}
