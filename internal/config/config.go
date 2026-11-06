@@ -27,7 +27,7 @@ type Style struct {
 	Position     string
 	Size         string
 	Color        string
-	DurationSecs int // 0 means until dismissed
+	DurationSecs int // 0 (the default) means until dismissed: alerts are the important ones, so they stay until acted on
 	Sound        string
 }
 
@@ -38,10 +38,17 @@ type StyleOverride struct {
 	Color        *string `json:"color,omitempty"`
 	DurationSecs *int    `json:"duration_secs,omitempty"`
 	Sound        *string `json:"sound,omitempty"`
+	// Buttons replaces the whole button list when set; it is not merged with the list above it.
+	Buttons []ButtonEntry `json:"buttons,omitempty"`
+}
+
+func (o StyleOverride) isZero() bool {
+	return o.Position == nil && o.Size == nil && o.Color == nil && o.DurationSecs == nil && o.Sound == nil && o.Buttons == nil
 }
 
 type Alert struct {
 	Base     Style
+	Buttons  []ButtonEntry // the base button list as written; nil means the defaults
 	Calendar StyleOverride
 	Source   map[string]StyleOverride
 }
@@ -158,7 +165,7 @@ func Load(path string) (Config, error) {
 
 func build(f file, configDir string) (Config, error) {
 	cfg := Config{
-		Alert:      Alert{Base: Style{Position: "top-right", Size: "medium", Color: "#ff9f0a", DurationSecs: 8, Sound: "Glass"}},
+		Alert:      Alert{Base: Style{Position: "top-right", Size: "medium", Color: "#ff9f0a", DurationSecs: 0, Sound: "Glass"}},
 		Menubar:    Menubar{Label: "shh"},
 		Summarizer: Summarizer{Backend: "none"},
 	}
@@ -166,6 +173,7 @@ func build(f file, configDir string) (Config, error) {
 		return Config{}, err
 	}
 	cfg.Alert.Base = cfg.Alert.Base.with(f.Alert.StyleOverride)
+	cfg.Alert.Buttons = f.Alert.Buttons
 	if f.Alert.Calendar != nil {
 		if err := validateOverride("alert.calendar", *f.Alert.Calendar); err != nil {
 			return Config{}, err
@@ -237,7 +245,7 @@ func validateOverride(prefix string, o StyleOverride) error {
 	case o.Sound != nil && *o.Sound == "":
 		return fmt.Errorf("%q must not be empty (use \"none\" for silence)", prefix+".sound")
 	}
-	return nil
+	return validateButtons(prefix, o.Buttons)
 }
 
 func notOneOf(key, got string, allowed []string) error {
@@ -250,10 +258,23 @@ func (c Config) Effective() ([]byte, error) {
 	base := c.Alert.Base
 	f.Alert.Position, f.Alert.Size, f.Alert.Color, f.Alert.DurationSecs, f.Alert.Sound =
 		&base.Position, &base.Size, &base.Color, &base.DurationSecs, &base.Sound
-	if c.Alert.Calendar != (StyleOverride{}) {
-		f.Alert.Calendar = &c.Alert.Calendar
+	f.Alert.Buttons = entries(normalize(c.Alert.Buttons))
+	if !c.Alert.Calendar.isZero() {
+		calendar := c.Alert.Calendar
+		if calendar.Buttons != nil {
+			calendar.Buttons = entries(normalize(calendar.Buttons))
+		}
+		f.Alert.Calendar = &calendar
 	}
-	f.Alert.Source = c.Alert.Source
+	if c.Alert.Source != nil {
+		f.Alert.Source = make(map[string]StyleOverride, len(c.Alert.Source))
+		for name, override := range c.Alert.Source {
+			if override.Buttons != nil {
+				override.Buttons = entries(normalize(override.Buttons))
+			}
+			f.Alert.Source[name] = override
+		}
+	}
 	f.Menubar.Label = &c.Menubar.Label
 	f.Summarizer.Backend = &c.Summarizer.Backend
 	f.Paths.Dir, f.Paths.DB, f.Paths.Socket, f.Paths.PID = &c.Paths.Dir, &c.Paths.DB, &c.Paths.Socket, &c.Paths.PID

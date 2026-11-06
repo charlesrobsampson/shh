@@ -187,15 +187,21 @@ Pure function, easily tested. Keyword list (`now`, `ASAP`, `urgent`, `prod`, `do
       "position": "top-right",   // top-left|top-center|top-right|bottom-*
       "size": "medium",          // small|medium|large
       "color": "#ff9f0a",
-      "duration_secs": 8,        // 0 = until dismissed
+      "duration_secs": 0,        // 0 (default) = stays until dismissed or opened; N = disappears after N seconds
       "sound": "Glass",          // system sound name | "none"
+      "buttons": [               // left to right; every known type is always present, one left out is disabled
+        { "type": "preview", "label": "Preview", "enabled": true },
+        { "type": "goto",    "label": "Go to",   "enabled": true },
+        { "type": "dismiss", "label": "Dismiss", "enabled": true },
+        { "type": "train",   "label": "Train",   "enabled": false }   // reserved, task 45
+      ],
       "calendar": { "color": "#0a84ff", "sound": "Hero" },   // per-kind override
-      "source": { "Slack": { "sound": "none" } }              // per-app override
+      "source": { "Slack": { "sound": "none", "buttons": [{ "type": "dismiss" }] } }   // per-app override; a buttons list replaces the whole list
     },
     "menubar": { "label": "shh" }
   }
   ```
-- Click → opens the originating app (`open -b <bundle id>`). Fallback if the helper isn't installed: `osascript display notification` (no customization).
+- **[DECIDED, task 44]** Buttons, not a click target: **Go to** opens the originating app (`open -b <bundle id>`) and closes the banner, **Dismiss** closes it, **Preview** (only shown when the text was cut off) grows the banner in place to the full text (up to 12 lines) and stops the auto-dismiss timer. Goto is hidden when there is no app to open. With the Dismiss button turned off, a click anywhere outside the other buttons dismisses. Fallback if the helper isn't installed: `osascript display notification` (no customization).
 - `shh alert test` previews styles.
 
 ---

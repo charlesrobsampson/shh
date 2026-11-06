@@ -19,7 +19,9 @@ import (
 	"github.com/charlesrobsampson/shh/internal/suppress"
 )
 
-const maxAlertBody = 200
+// maxAlertBody is the most text an alert carries. The banner shows a few lines and Preview up to MaxPreviewLines, so a body longer
+// than that is cut here with an ellipsis rather than shipped whole.
+const maxAlertBody = 600
 
 type Config struct {
 	Store      *store.Store

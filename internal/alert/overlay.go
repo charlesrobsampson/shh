@@ -18,7 +18,7 @@ var overlayScript string
 // OverlayConfig configures the AppKit overlay backend. The zero value runs the real thing; tests replace Start and Open.
 type OverlayConfig struct {
 	// Start launches one banner process with the extra environment and returns a function that waits for it and reports how it
-	// ended: "clicked", "expired", or an error.
+	// ended: "opened" (Go to), "dismissed", "expired", or an error.
 	Start func(env []string) (wait func() (string, error), err error)
 	// OnFailure receives alerts whose banner process died without showing them, so they can be shown another way.
 	OnFailure func(Request, error)
@@ -26,7 +26,7 @@ type OverlayConfig struct {
 
 // Overlay draws each banner in its own osascript process (see docs/spikes/03-banner.md), in a window of its own that the banner
 // suppressor never touches. Banners that are on screen together are placed so they stack instead of overlapping, each in the
-// first free space that fits its height. A click opens the source app from inside that process, so it works however long the
+// first free space that fits its height. The Go to button opens the source app from inside that process, so it works however long the
 // caller lives.
 type Overlay struct {
 	cfg OverlayConfig
@@ -61,12 +61,28 @@ type bannerSpec struct {
 	Offset   int    `json:"offset"`
 	Duration int    `json:"duration"`
 	Sound    string `json:"sound"`
+	// Buttons are drawn left to right. Pressing one of type preview, goto or dismiss does that; the outcome the script reports is
+	// "dismissed", "opened" or "expired".
+	Buttons        []bannerButton `json:"buttons"`
+	DismissOnClick bool           `json:"dismissOnClick"`
+	// PreviewHeight is the height the banner grows to on Preview.
+	PreviewHeight int `json:"previewHeight"`
+}
+
+type bannerButton struct {
+	Type  string `json:"type"`
+	Label string `json:"label"`
 }
 
 func bannerEnv(r Request, offset int) []string {
+	buttons := make([]bannerButton, 0, len(r.Buttons))
+	for _, b := range r.Buttons {
+		buttons = append(buttons, bannerButton{Type: b.Type, Label: b.Label})
+	}
 	spec, _ := json.Marshal(bannerSpec{
 		Title: r.Title, Body: r.Body, Bundle: r.BundleID, Color: r.Style.Color, Width: r.Width, Height: r.Height,
 		Position: r.Style.Position, Offset: offset, Duration: r.Style.DurationSecs, Sound: r.Style.Sound,
+		Buttons: buttons, DismissOnClick: r.DismissOnClick, PreviewHeight: r.PreviewHeight,
 	})
 	return []string{"SHH_BANNER=" + string(spec)}
 }
@@ -107,7 +123,7 @@ func (o *Overlay) Show(r Request) error {
 	go func() {
 		outcome, err := wait()
 		o.remove(r.Style.Position, spot)
-		if outcome != "clicked" && outcome != "expired" && err != nil && o.cfg.OnFailure != nil {
+		if outcome != "opened" && outcome != "dismissed" && outcome != "expired" && err != nil && o.cfg.OnFailure != nil {
 			o.cfg.OnFailure(r, err)
 		}
 	}()

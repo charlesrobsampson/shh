@@ -28,6 +28,7 @@ func (d *Display) Show(a Alert) error {
 		Kind: a.Kind, Source: a.Source, BundleID: a.BundleID, Title: a.Title, Body: a.Body,
 		Style: style, Width: width, Height: BannerHeight(width, a.Body),
 	}
+	d.addButtons(&req, a)
 	if d.primary == nil && d.fallback == nil {
 		return errors.New("no way to show alerts is configured")
 	}
@@ -47,4 +48,43 @@ func (d *Display) Show(a Alert) error {
 		return errors.Join(primaryErr, err)
 	}
 	return nil
+}
+
+// addButtons picks the buttons that are enabled and make sense for this alert, and grows the banner to fit their row.
+func (d *Display) addButtons(req *Request, a Alert) {
+	req.DismissOnClick = true
+	for _, b := range d.cfg.ButtonsFor(a.Kind, a.Source) {
+		if !b.Enabled {
+			continue
+		}
+		if b.Type == config.ButtonDismiss {
+			req.DismissOnClick = false
+		}
+		if applies(b.Type, req.Width, a) {
+			req.Buttons = append(req.Buttons, b)
+		}
+	}
+	if len(req.Buttons) == 0 {
+		return
+	}
+	req.Height += ButtonRowHeight
+	for _, b := range req.Buttons {
+		if b.Type == config.ButtonPreview {
+			req.PreviewHeight = PreviewHeight(req.Width, a.Body) + ButtonRowHeight
+		}
+	}
+}
+
+// applies is where each button type says when it makes sense: goto needs an app to open, preview needs cut-off text, and train
+// (task 45) will need a stored notification, which alerts do not carry yet.
+func applies(buttonType string, width int, a Alert) bool {
+	switch buttonType {
+	case config.ButtonDismiss:
+		return true
+	case config.ButtonGoto:
+		return a.BundleID != ""
+	case config.ButtonPreview:
+		return Truncated(width, a.Body)
+	}
+	return false
 }

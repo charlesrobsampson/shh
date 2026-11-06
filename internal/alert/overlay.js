@@ -1,6 +1,6 @@
 // Draws one alert banner in a window of its own, so Notification Center and the banner suppressor never touch it.
-// The banner is described by JSON in SHH_BANNER. On exit the last line printed is "clicked" or "expired", and after a click the
-// source app (cfg.bundle), if there is one, is opened from here. Prototyped in spikes/banner/overlay.js (docs/spikes/03-banner.md).
+// The banner is described by JSON in SHH_BANNER. On exit the last line printed is "opened" (the Go to button), "dismissed" or
+// "expired", and for "opened" the source app (cfg.bundle) is opened from here. Prototyped in spikes/banner/overlay.js (docs/spikes/03-banner.md).
 ObjC.import('Cocoa');
 
 const cfg = JSON.parse($.NSProcessInfo.processInfo.environment.objectForKey('SHH_BANNER').js);
@@ -22,8 +22,23 @@ ObjC.registerSubclass({
   name: 'ShhBannerBox',
   superclass: 'NSBox',
   methods: {
-    'mouseDown:': { types: ['void', ['id']], implementation: function () { finish('clicked'); } },
+    // A click on the background. Buttons take their own clicks, so this is only reached outside them.
+    'mouseDown:': { types: ['void', ['id']], implementation: function () { if (cfg.dismissOnClick) finish('dismissed'); } },
     'acceptsFirstMouse:': { types: ['bool', ['id']], implementation: function () { return true; } },
+  },
+});
+ObjC.registerSubclass({
+  name: 'ShhBannerButton',
+  superclass: 'NSButton',
+  methods: {
+    'acceptsFirstMouse:': { types: ['bool', ['id']], implementation: function () { return true; } },
+  },
+});
+ObjC.registerSubclass({
+  name: 'ShhBannerActions',
+  superclass: 'NSObject',
+  methods: {
+    'press:': { types: ['void', ['id']], implementation: function (sender) { press(cfg.buttons[sender.tag]); } },
   },
 });
 ObjC.registerSubclass({
@@ -73,34 +88,87 @@ function label(text, size, bold, frame, lines) {
   // Wrapping labels are selectable by default, and a selectable field keeps the mouse for text selection, so a click on the text
   // would never reach the banner. Static text lets the click through.
   field.setSelectable(false);
-  if (lines > 1) {
-    // A truncating line-break mode would turn the field into a single-line one (measured: wraps = false). To wrap and still end
-    // in an ellipsis when the text runs past the last allowed line, use word wrapping plus truncatesLastVisibleLine.
-    field.setLineBreakMode($.NSLineBreakByWordWrapping);
-    field.cell.setTruncatesLastVisibleLine(true);
-  } else {
-    field.setLineBreakMode($.NSLineBreakByTruncatingTail);
-  }
+  // A truncating line-break mode would turn the field into a single-line one (measured: wraps = false). To wrap and still end
+  // in an ellipsis when the text runs past the last allowed line, use word wrapping plus truncatesLastVisibleLine.
+  field.setLineBreakMode($.NSLineBreakByWordWrapping);
+  field.cell.setTruncatesLastVisibleLine(true);
   field.setMaximumNumberOfLines(lines);
   field.setFrame(frame);
   view.addSubview(field);
+  return field;
 }
-// Layout, in points, matching the Go side: 12 of padding, a 20 point title line, a 4 point gap, then 16 points per body line.
-// The caller sized the banner to its text; text beyond what fits ends in an ellipsis.
-const bodyHeight = cfg.height - 12 - 20 - 4 - 12;
-label(cfg.title, 15, true, $.NSMakeRect(16, cfg.height - 12 - 20, cfg.width - 32, 20), 1);
-label(cfg.body, 13, false, $.NSMakeRect(16, 12, cfg.width - 32, bodyHeight), Math.max(1, Math.floor(bodyHeight / 16)));
+
+// Layout, in points, matching the Go side: 12 of padding, a 20 point title line, a 4 point gap, 16 points per body line, and when
+// there are buttons a 32 point row at the bottom. The caller sized the banner to its text; text beyond what fits ends in an ellipsis.
+const buttonRow = cfg.buttons.length > 0 ? 32 : 0;
+let height = cfg.height;
+const title = label(cfg.title, 15, true, $.NSMakeRect(16, height - 12 - 20, cfg.width - 32, 20), 1);
+const body = label(cfg.body, 13, false, $.NSMakeRect(16, 12 + buttonRow, cfg.width - 32, height - 12 - 20 - 4 - 12 - buttonRow), 1);
+function layoutText() {
+  const room = height - 12 - 20 - 4 - 12 - buttonRow;
+  title.setFrame($.NSMakeRect(16, height - 12 - 20, cfg.width - 32, 20));
+  body.setFrame($.NSMakeRect(16, 12 + buttonRow, cfg.width - 32, room));
+  body.setMaximumNumberOfLines(Math.max(1, Math.floor(room / 16)));
+}
+layoutText();
+
+const actions = $.ShhBannerActions.alloc.init;
+const buttons = cfg.buttons.map((spec, i) => {
+  const button = $.ShhBannerButton.alloc.init;
+  button.setTitle($(spec.label));
+  button.setBezelStyle($.NSBezelStyleRounded);
+  button.setControlSize($.NSControlSizeSmall);
+  button.setFont($.NSFont.systemFontOfSize(12));
+  button.setTag(i);
+  button.setTarget(actions);
+  button.setAction('press:');
+  view.addSubview(button);
+  return button;
+});
+// Visible buttons are laid out left to right in the configured order, evenly sharing the width.
+function layoutButtons() {
+  const shown = buttons.filter(b => !b.isHidden);
+  const gap = 8;
+  const each = Math.min(96, (cfg.width - 32 - gap * (shown.length - 1)) / Math.max(shown.length, 1));
+  shown.forEach((b, n) => b.setFrame($.NSMakeRect(16 + n * (each + gap), 8, each, 24)));
+}
+layoutButtons();
+
+let timer = null;
+// Grows the banner in place to show more of the text. A banner at the top keeps its top edge, one at the bottom its bottom edge.
+function expand() {
+  const grown = Math.max(cfg.previewHeight, height);
+  const frame = win.frame;
+  const bottomUp = vertical === 'bottom';
+  const top = frame.origin.y + frame.size.height;
+  const newY = bottomUp ? frame.origin.y : Math.max(top - grown, area.origin.y + margin);
+  height = grown;
+  win.setFrameDisplay($.NSMakeRect(frame.origin.x, newY, cfg.width, grown), true);
+  view.setFrame($.NSMakeRect(0, 0, cfg.width, grown));
+  layoutText();
+}
+function press(spec) {
+  if (spec.type === 'dismiss') finish('dismissed');
+  else if (spec.type === 'goto') finish('opened');
+  else if (spec.type === 'preview') {
+    // Someone reading the full text should not have it vanish: stop the auto-dismiss timer.
+    if (timer) { timer.invalidate; timer = null; }
+    expand();
+    buttons[cfg.buttons.indexOf(spec)].setHidden(true);
+    layoutButtons();
+  }
+}
 
 win.orderFront($());
 if (cfg.sound !== 'none') $.NSSound.soundNamed($(cfg.sound)).play;
 if (cfg.duration > 0) {
-  $.NSTimer.scheduledTimerWithTimeIntervalTargetSelectorUserInfoRepeats(
+  timer = $.NSTimer.scheduledTimerWithTimeIntervalTargetSelectorUserInfoRepeats(
     cfg.duration, $.ShhBannerTimer.alloc.init, 'expire:', $(), false);
 }
 
 app.run;
 win.orderOut($());
-if (outcome === 'clicked' && cfg.bundle) {
+if (outcome === 'opened' && cfg.bundle) {
   // Opened from here, not by the process that started us, which may already have exited. This must come before the console.log
   // below: if that process is gone, its pipe is closed and the write kills this script (SIGPIPE) before it could do anything else.
   $.NSTask.launchedTaskWithLaunchPathArguments('/usr/bin/open', ['-b', cfg.bundle]);
