@@ -79,3 +79,16 @@ func ParseDuration(input string) (time.Duration, error) {
 	}
 	return d, nil
 }
+
+// FormatLevel writes a level the way people type it, naming the tier when it is exactly one: "65% (medium)", "75%", "off".
+func FormatLevel(level int) string {
+	if level == 0 {
+		return "off"
+	}
+	for name, tier := range tiers {
+		if tier == level {
+			return fmt.Sprintf("%d%% (%s)", level, name)
+		}
+	}
+	return fmt.Sprintf("%d%%", level)
+}
