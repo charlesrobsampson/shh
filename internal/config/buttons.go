@@ -33,6 +33,8 @@ type ButtonEntry struct {
 	Type    string  `json:"type"`
 	Label   *string `json:"label,omitempty"`
 	Enabled *bool   `json:"enabled,omitempty"`
+	// CollapseLabel (preview only) is what the button says while the banner is expanded; pressing it folds the banner back up.
+	CollapseLabel *string `json:"collapse_label,omitempty"`
 }
 
 // Button is a resolved button.
@@ -40,6 +42,8 @@ type Button struct {
 	Type    string
 	Label   string
 	Enabled bool
+	// CollapseLabel is only set for preview.
+	CollapseLabel string
 }
 
 // ButtonsFor is the full button list for an alert, left to right: the per-source list if there is one, else the per-kind list, else
@@ -59,7 +63,7 @@ func normalize(entries []ButtonEntry) []Button {
 	if entries == nil {
 		out := make([]Button, 0, len(buttonSpecs))
 		for _, s := range buttonSpecs {
-			out = append(out, Button{s.Type, s.Label, s.Enabled})
+			out = append(out, Button{s.Type, s.Label, s.Enabled, defaultCollapse(s.Type)})
 		}
 		return out
 	}
@@ -67,7 +71,10 @@ func normalize(entries []ButtonEntry) []Button {
 	seen := map[string]bool{}
 	for _, e := range entries {
 		spec := buttonSpecs[specIndex(e.Type)]
-		b := Button{Type: spec.Type, Label: spec.Label, Enabled: true}
+		b := Button{Type: spec.Type, Label: spec.Label, Enabled: true, CollapseLabel: defaultCollapse(spec.Type)}
+		if e.CollapseLabel != nil {
+			b.CollapseLabel = *e.CollapseLabel
+		}
 		if e.Label != nil {
 			b.Label = *e.Label
 		}
@@ -79,10 +86,17 @@ func normalize(entries []ButtonEntry) []Button {
 	}
 	for _, s := range buttonSpecs {
 		if !seen[s.Type] {
-			out = append(out, Button{s.Type, s.Label, false})
+			out = append(out, Button{s.Type, s.Label, false, defaultCollapse(s.Type)})
 		}
 	}
 	return out
+}
+
+func defaultCollapse(buttonType string) string {
+	if buttonType == ButtonPreview {
+		return "Collapse"
+	}
+	return ""
 }
 
 func specIndex(t string) int {
@@ -93,7 +107,12 @@ func entries(buttons []Button) []ButtonEntry {
 	out := make([]ButtonEntry, 0, len(buttons))
 	for _, b := range buttons {
 		label, enabled := b.Label, b.Enabled
-		out = append(out, ButtonEntry{Type: b.Type, Label: &label, Enabled: &enabled})
+		entry := ButtonEntry{Type: b.Type, Label: &label, Enabled: &enabled}
+		if b.CollapseLabel != "" {
+			collapse := b.CollapseLabel
+			entry.CollapseLabel = &collapse
+		}
+		out = append(out, entry)
 	}
 	return out
 }
@@ -113,6 +132,10 @@ func validateButtons(prefix string, list []ButtonEntry) error {
 			return fmt.Errorf("%q: %q is listed twice", key+".type", e.Type)
 		case e.Label != nil && *e.Label == "":
 			return fmt.Errorf("%q must not be empty (leave it out to use the default label)", key+".label")
+		case e.CollapseLabel != nil && e.Type != ButtonPreview:
+			return fmt.Errorf("%q: only the preview button has a collapse label", key+".collapse_label")
+		case e.CollapseLabel != nil && *e.CollapseLabel == "":
+			return fmt.Errorf("%q must not be empty (leave it out to use the default label)", key+".collapse_label")
 		}
 		seen[e.Type] = true
 	}

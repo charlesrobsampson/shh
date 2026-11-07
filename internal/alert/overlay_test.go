@@ -14,9 +14,43 @@ import (
 
 // fakeProcess stands in for one osascript banner process: it runs until finish is called.
 type fakeProcess struct {
-	env    []string
-	finish chan string
+	env     []string
+	finish  chan string
+	onEvent func(string)
+	mu      sync.Mutex
+	sent    []layout
 }
+
+type layout struct{ Offset, Height int }
+
+func (p *fakeProcess) Send(message []byte) error {
+	var l layout
+	if err := json.Unmarshal(message, &l); err != nil {
+		panic("the overlay sent a message that is not JSON: " + string(message))
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.sent = append(p.sent, l)
+	return nil
+}
+
+func (p *fakeProcess) Wait() (string, error) {
+	outcome := <-p.finish
+	if outcome == "crash" {
+		return "", errors.New("osascript: exit status 1")
+	}
+	return outcome, nil
+}
+
+// messages are what the overlay has told this banner so far, oldest first.
+func (p *fakeProcess) messages() []layout {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]layout(nil), p.sent...)
+}
+
+// emit is the banner reporting an event, as the script does when Preview or Collapse is pressed.
+func (p *fakeProcess) emit(line string) { p.onEvent(line) }
 
 type overlayRig struct {
 	t         *testing.T
@@ -32,21 +66,15 @@ func newOverlayRig(t *testing.T) *overlayRig {
 	t.Helper()
 	r := &overlayRig{t: t}
 	r.overlay = alert.NewOverlay(alert.OverlayConfig{
-		Start: func(env []string) (func() (string, error), error) {
+		Start: func(env []string, onEvent func(string)) (alert.Process, error) {
 			r.mu.Lock()
 			defer r.mu.Unlock()
 			if r.startErr != nil {
 				return nil, r.startErr
 			}
-			p := &fakeProcess{env: env, finish: make(chan string, 1)}
+			p := &fakeProcess{env: env, finish: make(chan string, 1), onEvent: onEvent}
 			r.started = append(r.started, p)
-			return func() (string, error) {
-				outcome := <-p.finish
-				if outcome == "crash" {
-					return "", errors.New("osascript: exit status 1")
-				}
-				return outcome, nil
-			}, nil
+			return p, nil
 		},
 		OnFailure: func(req alert.Request, err error) {
 			r.mu.Lock()
@@ -180,19 +208,125 @@ func equalInts(a, b []int) bool {
 	return true
 }
 
-func TestAFreedSpaceIsReusedWhenTheNewBannerFitsInIt(t *testing.T) {
-	r := newOverlayRig(t)
-	r.show(request("first", "top-right"))  // 0..64
-	r.show(request("second", "top-right")) // 74..138
-	r.show(request("third", "top-right"))  // 148..212
-	r.process(0).finish <- "expired"
-	time.Sleep(30 * time.Millisecond) // the release happens on the banner's own goroutine
+// settle waits for the goroutines that watch banners end, then returns.
+func settle() { time.Sleep(40 * time.Millisecond) }
 
-	r.show(request("fits the gap", "top-right"))
-	r.show(tall("too tall for a gap", "top-right", 112))
-	got := offsets(t, r, 3, 4)
-	if want := []int{0, 222}; !equalInts(got, want) {
-		t.Fatalf("offsets = %v, want %v: the 64 point banner takes the freed top space, the 112 point one goes below everything", got, want)
+func lastMessage(t *testing.T, p *fakeProcess) layout {
+	t.Helper()
+	m := p.messages()
+	if len(m) == 0 {
+		t.Fatal("the banner was told nothing")
+	}
+	return m[len(m)-1]
+}
+
+func TestDismissingABannerMovesTheOnesBelowItUp(t *testing.T) {
+	r := newOverlayRig(t)
+	r.show(request("first", "top-right"))  // 0
+	r.show(request("second", "top-right")) // 74
+	r.show(request("third", "top-right"))  // 148
+	r.process(1).finish <- "dismissed"
+	settle()
+	if got := lastMessage(t, r.process(2)); got != (layout{Offset: 74, Height: 64}) {
+		t.Errorf("third was told %+v, want to close the gap at offset 74", got)
+	}
+	if n := len(r.process(0).messages()); n != 0 {
+		t.Errorf("the first banner did not move but was sent %d messages", n)
+	}
+}
+
+func TestANewBannerGoesBelowWhatIsStillThereNotWhereAGapUsedToBe(t *testing.T) {
+	r := newOverlayRig(t)
+	r.show(request("first", "top-right"))
+	r.show(request("second", "top-right"))
+	r.process(0).finish <- "dismissed"
+	settle()
+	r.show(request("next", "top-right"))
+	if got := decode(t, r.process(2)).Offset; got != 74 {
+		t.Errorf("new banner offset = %d, want 74: below the second, which moved up to 0", got)
+	}
+	if got := lastMessage(t, r.process(1)); got != (layout{Offset: 0, Height: 64}) {
+		t.Errorf("second was told %+v, want the top", got)
+	}
+}
+
+func TestPreviewMakesRoomAndCollapseGivesItBack(t *testing.T) {
+	r := newOverlayRig(t)
+	req := request("middle", "top-right")
+	req.PreviewHeight = 200
+	r.show(request("top", "top-right"))
+	r.show(req)
+	r.show(request("bottom", "top-right")) // at 74+64+10 = 148
+	r.process(1).emit("height 200")
+	if got := lastMessage(t, r.process(2)); got != (layout{Offset: 74 + 200 + 10, Height: 64}) {
+		t.Errorf("bottom was told %+v, want to move down below the expanded banner", got)
+	}
+	if got := lastMessage(t, r.process(1)); got != (layout{Offset: 74, Height: 200}) {
+		t.Errorf("the expanded banner was told %+v", got)
+	}
+	r.process(1).emit("height 64")
+	if got := lastMessage(t, r.process(2)); got != (layout{Offset: 148, Height: 64}) {
+		t.Errorf("bottom was told %+v after the collapse, want its old place", got)
+	}
+	if n := len(r.process(0).messages()); n != 0 {
+		t.Errorf("the banner above the preview was sent %d messages; it should never move", n)
+	}
+}
+
+func TestAHeightReportIsKeptBetweenTheCollapsedAndPreviewHeights(t *testing.T) {
+	r := newOverlayRig(t)
+	req := request("a", "top-right")
+	req.PreviewHeight = 200
+	r.show(req)
+	r.show(request("b", "top-right"))
+	r.process(0).emit("height 100000")
+	if got := lastMessage(t, r.process(1)); got.Offset != 200+10 {
+		t.Errorf("b offset = %d, want 210: a banner cannot claim more than its preview height", got.Offset)
+	}
+	r.process(0).emit("height 1")
+	if got := lastMessage(t, r.process(1)); got.Offset != 64+10 {
+		t.Errorf("b offset = %d, want 74: a banner cannot shrink below its collapsed height", got.Offset)
+	}
+	r.process(0).emit("height soon")
+	r.process(0).emit("nonsense")
+}
+
+func TestBannersInOtherPositionsAreLeftAlone(t *testing.T) {
+	r := newOverlayRig(t)
+	req := request("a", "top-right")
+	req.PreviewHeight = 200
+	r.show(req)
+	r.show(request("other", "bottom-left"))
+	r.process(0).emit("height 200")
+	if n := len(r.process(1).messages()); n != 0 {
+		t.Errorf("a banner elsewhere was sent %d messages", n)
+	}
+}
+
+func TestAnEventFromABannerThatIsGoneIsIgnored(t *testing.T) {
+	r := newOverlayRig(t)
+	req := request("a", "top-right")
+	req.PreviewHeight = 200
+	r.show(req)
+	r.show(request("b", "top-right"))
+	r.process(0).finish <- "dismissed"
+	settle()
+	before := len(r.process(1).messages())
+	r.process(0).emit("height 200")
+	if after := len(r.process(1).messages()); after != before {
+		t.Errorf("a late event from a dismissed banner moved another one (%d messages before, %d after)", before, after)
+	}
+}
+
+func TestBannersAreOnlyToldAboutRealChanges(t *testing.T) {
+	r := newOverlayRig(t)
+	req := request("a", "top-right")
+	req.PreviewHeight = 200
+	r.show(req)
+	r.show(request("b", "top-right"))
+	r.process(0).emit("height 64") // no change
+	if n := len(r.process(1).messages()); n != 0 {
+		t.Errorf("b was sent %d messages for a report that changed nothing", n)
 	}
 }
 
@@ -202,11 +336,22 @@ func TestEverythingIsFreeAgainOnceAllBannersAreGone(t *testing.T) {
 	r.show(request("second", "top-right"))
 	r.process(0).finish <- "expired"
 	r.process(1).finish <- "opened"
-	time.Sleep(50 * time.Millisecond)
+	settle()
 	r.show(request("next", "top-right"))
 	if got := decode(t, r.process(2)).Offset; got != 0 {
 		t.Errorf("offset = %d, want the screen edge again", got)
 	}
+}
+
+func TestTheBannerKnowsItIsManaged(t *testing.T) {
+	r := newOverlayRig(t)
+	r.show(request("a", "top-right"))
+	for _, kv := range r.process(0).env {
+		if v, ok := strings.CutPrefix(kv, "SHH_BANNER="); ok && strings.Contains(v, `"managed":true`) {
+			return
+		}
+	}
+	t.Error("the banner is not told that Go is controlling it, so it would not listen on stdin")
 }
 
 func TestTheSourceAppTravelsWithTheBannerSoTheScriptCanOpenItOnAClick(t *testing.T) {
@@ -262,7 +407,7 @@ func TestAnEndedBannerIsNotAFailure(t *testing.T) {
 	r.show(request("Bo", "top-right"))
 	r.process(0).finish <- "opened"
 	r.process(1).finish <- "expired"
-	time.Sleep(50 * time.Millisecond)
+	settle()
 	if len(r.failures) != 0 {
 		t.Errorf("normal endings were reported as failures: %v", r.failures)
 	}
@@ -343,5 +488,34 @@ func TestTheScriptHandlesEveryButtonTypeAndTheBackgroundRule(t *testing.T) {
 	}
 	if !strings.Contains(script, "ShhBannerButton") || strings.Count(script, "acceptsFirstMouse") < 2 {
 		t.Error("buttons must accept the first mouse click too: the banner never becomes the active window, so a button that needs a second click looks broken")
+	}
+}
+
+func TestTheScriptListensForLayoutAndStaysSilentOnceGoIsGone(t *testing.T) {
+	script := strings.Join(alert.OverlayCommand(request("Ana", "top-right")).Args, " ")
+	for _, want := range []string{"waitForDataInBackgroundAndNotify", "layoutTo", "emit('height '", "collapseLabel"} {
+		if !strings.Contains(script, want) {
+			t.Errorf("the banner script does not mention %s", want)
+		}
+	}
+	if !strings.Contains(script, "getppid") || !strings.Contains(script, "attached()") {
+		t.Error("the script must stop writing once its parent is gone: a write to the closed pipe kills it (SIGPIPE)")
+	}
+}
+
+func TestActiveCountsBannersOnScreen(t *testing.T) {
+	r := newOverlayRig(t)
+	if r.overlay.Active() != 0 {
+		t.Fatal("a new overlay has banners")
+	}
+	r.show(request("a", "top-right"))
+	r.show(request("b", "bottom-left"))
+	if got := r.overlay.Active(); got != 2 {
+		t.Errorf("Active = %d, want 2", got)
+	}
+	r.process(0).finish <- "dismissed"
+	settle()
+	if got := r.overlay.Active(); got != 1 {
+		t.Errorf("Active = %d after one was dismissed, want 1", got)
 	}
 }

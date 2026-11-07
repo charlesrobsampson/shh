@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -277,4 +278,27 @@ func TestTheLockIsReleasedWhenTheDaemonStops(t *testing.T) {
 	r.cfg.Worker = r.worker
 	r.worker.SetBaseline(30)
 	r.start() // would fail with ErrAlreadyRunning if the lock were still held
+}
+
+func TestTheDaemonStaysUpWhileSomethingIsOnScreenAndLeavesAfterwards(t *testing.T) {
+	r := newDaemonRig(t)
+	var busy atomic.Bool
+	busy.Store(true)
+	r.cfg.Busy = busy.Load
+	r.start()
+	r.clock.Advance(20 * time.Second)
+	time.Sleep(50 * time.Millisecond)
+	if done, _ := r.exited(); done {
+		t.Fatal("the daemon left while banners were still on screen: they would lose the process that lays them out")
+	}
+	busy.Store(false)
+	r.clock.Advance(time.Second) // the busy time does not count towards the grace period
+	time.Sleep(50 * time.Millisecond)
+	if done, _ := r.exited(); done {
+		t.Fatal("the daemon left at once; the grace period starts when the last banner goes")
+	}
+	r.clock.Advance(6 * time.Second)
+	if !r.waitExit() {
+		t.Fatal("the daemon never left after the banners were gone")
+	}
 }

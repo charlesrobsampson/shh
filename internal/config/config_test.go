@@ -423,3 +423,47 @@ func TestAlertsStayUntilDismissedUnlessATimeoutIsConfigured(t *testing.T) {
 		}
 	}
 }
+
+func TestPreviewHasACollapseLabelThatCanBeCustomised(t *testing.T) {
+	def := load(t, "").Alert.ButtonsFor(config.KindMessage, "")
+	if def[0].Type != "preview" || def[0].CollapseLabel != "Collapse" {
+		t.Errorf("default preview = %+v, want collapse label Collapse", def[0])
+	}
+	if def[1].CollapseLabel != "" {
+		t.Errorf("only preview has a collapse label, goto has %q", def[1].CollapseLabel)
+	}
+	custom := load(t, `{"alert": {"buttons": [{"type": "preview", "label": "More", "collapse_label": "Less"}]}}`).Alert.ButtonsFor(config.KindMessage, "")
+	if custom[0].Label != "More" || custom[0].CollapseLabel != "Less" {
+		t.Errorf("custom preview = %+v", custom[0])
+	}
+}
+
+func TestCollapseLabelErrors(t *testing.T) {
+	tests := []struct{ name, content, wantKey string }{
+		{"on another button", `{"alert": {"buttons": [{"type": "goto", "collapse_label": "x"}]}}`, "alert.buttons[0].collapse_label"},
+		{"empty", `{"alert": {"buttons": [{"type": "preview", "collapse_label": ""}]}}`, "alert.buttons[0].collapse_label"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := config.Load(write(t, tt.content))
+			if err == nil || !strings.Contains(err.Error(), `"`+tt.wantKey+`"`) {
+				t.Errorf("err = %v, want one naming %q", err, tt.wantKey)
+			}
+		})
+	}
+}
+
+func TestCollapseLabelSurvivesTheEffectiveRoundTrip(t *testing.T) {
+	original := load(t, `{"alert": {"buttons": [{"type": "preview", "collapse_label": "Less"}]}}`)
+	shown, err := original.Effective()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := config.Load(write(t, string(shown)))
+	if err != nil {
+		t.Fatalf("%v\n%s", err, shown)
+	}
+	if got := reloaded.Alert.ButtonsFor(config.KindMessage, "")[0].CollapseLabel; got != "Less" {
+		t.Errorf("collapse label after round trip = %q, want Less", got)
+	}
+}
