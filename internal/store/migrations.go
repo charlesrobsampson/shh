@@ -117,4 +117,11 @@ CREATE INDEX ingest_seen_delivered ON ingest_seen (delivered);
 	`
 ALTER TABLE notifications ADD COLUMN thread TEXT;
 `,
+
+	// The subtitle and category as the app sent them, next to the title as the app sent it (it used to be stored with the subtitle
+	// joined on), so that a notification's features can be worked out again from its row exactly as they were when it was decided.
+	`
+ALTER TABLE notifications ADD COLUMN subtitle TEXT;
+ALTER TABLE notifications ADD COLUMN category TEXT;
+`,
 }

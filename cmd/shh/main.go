@@ -255,5 +255,14 @@ func runTUI(cfg config.Config) error {
 		return err
 	}
 	defer db.Close()
-	return tui.Run(tui.Config{Data: db, Worker: session.NewClient(cfg.Paths.Socket), Label: cfg.Menubar.Label})
+	client := session.NewClient(cfg.Paths.Socket)
+	return tui.Run(tui.Config{
+		Data: db, Worker: client, Label: cfg.Menubar.Label,
+		// Training goes through the worker, which owns the model; start one if none is running.
+		Trainer: client,
+		Ensure: func() error {
+			_, err := session.Ensure(client, func() error { return spawnDaemon(cfg) }, 0)
+			return err
+		},
+	})
 }

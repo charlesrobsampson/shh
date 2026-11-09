@@ -23,6 +23,10 @@ const (
 	defaultMargin       = 0.1
 	// maxQuickSteps bounds the SGD steps spent satisfying one quick y/n constraint.
 	maxQuickSteps = 200
+	// A right-call label (the model already agreed) pushes a score near the threshold out to a margin from it, but never beyond these:
+	// a probability of exactly 0 or 1 is unreachable, and chasing it would only distort the weights.
+	maxReinforced = 0.995
+	minReinforced = 0.005
 	// tolerance matches decide: a score within this of the threshold counts as equal to it.
 	tolerance = 1e-9
 
@@ -168,8 +172,9 @@ func (m *Model) Weights() (bias float64, weights map[int]float64) {
 	return m.bias, weights
 }
 
-// Train applies one label to the model and logs it. Exact labels take a single SGD step toward N/100. A quick label changes
-// nothing if its constraint already holds; otherwise it steps toward just past the threshold until the constraint is met.
+// Train applies one label to the model and logs it. Exact labels take a single SGD step toward N/100. A quick label whose
+// constraint is violated steps toward just past the threshold until it holds; one that already holds is reinforced if the score is
+// within a margin of the threshold (moved out to the margin), and changes nothing if the score is already clear of it.
 func (m *Model) Train(notificationID int64, v Vector, l Label) (TrainResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -191,16 +196,37 @@ func (m *Model) Train(notificationID int64, v Vector, l Label) (TrainResult, err
 		limit := float64(l.Threshold) / 100
 		// Capped at 1, not 0.99: at lockdown the constraint is S > 0.99, which a target of 0.99 can only approach from below.
 		target := math.Min(1, limit+m.margin)
-		for result.Before+tolerance <= limit && m.predict(v) <= limit+tolerance && result.Steps < maxQuickSteps {
-			m.step(v, target)
-			result.Steps++
+		if result.Before+tolerance <= limit {
+			// The model was wrong: step until the score is just past the threshold.
+			for result.Before+tolerance <= limit && m.predict(v) <= limit+tolerance && result.Steps < maxQuickSteps {
+				m.step(v, target)
+				result.Steps++
+			}
+		} else {
+			// The model was right, so reinforce it, but only where it matters: a score within a margin of the threshold is moved out
+			// to the margin, one that is already clear of it is left alone.
+			goal := math.Min(limit+m.margin, maxReinforced)
+			pull := math.Min(1, goal+m.margin) // aimed past the goal: a step only ever approaches its target, so aiming at the goal never reaches it
+			for m.predict(v) < goal-tolerance && result.Steps < maxQuickSteps {
+				m.step(v, pull)
+				result.Steps++
+			}
 		}
 	default:
 		limit := float64(l.Threshold) / 100
 		target := math.Max(0, limit-m.margin)
-		for m.predict(v) > limit+tolerance && result.Steps < maxQuickSteps {
-			m.step(v, target)
-			result.Steps++
+		if result.Before > limit+tolerance {
+			for m.predict(v) > limit+tolerance && result.Steps < maxQuickSteps {
+				m.step(v, target)
+				result.Steps++
+			}
+		} else {
+			goal := math.Max(limit-m.margin, minReinforced)
+			pull := math.Max(0, goal-m.margin)
+			for m.predict(v) > goal+tolerance && result.Steps < maxQuickSteps {
+				m.step(v, pull)
+				result.Steps++
+			}
 		}
 	}
 	result.After = m.predict(v)
@@ -237,6 +263,22 @@ func (m *Model) Undo(n int) error {
 		return ErrNothingToUndo
 	}
 	return m.revert(undo, log, undo[len(undo)-1].ID)
+}
+
+// LastTraining is the training call that Undo(1) would reverse, so a caller can tell which notification it was about.
+func (m *Model) LastTraining() (store.TrainingLogEntry, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	log, err := m.store.TrainingLog(0)
+	if err != nil {
+		return store.TrainingLogEntry{}, false
+	}
+	for _, e := range log {
+		if e.Label != checkpointLabel {
+			return e, true
+		}
+	}
+	return store.TrainingLogEntry{}, false
 }
 
 // Checkpoint marks the current weights as a point Rollback can return to.

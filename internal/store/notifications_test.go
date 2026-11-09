@@ -430,3 +430,20 @@ func TestThreadKindIsStoredAndReadBack(t *testing.T) {
 		}
 	}
 }
+
+func TestSubtitleAndCategoryAreStoredAndReadBack(t *testing.T) {
+	s := open(t)
+	id := insert(t, s, sample(func(n *store.Notification) {
+		n.Subtitle = "Weekly sync"
+		n.Category = "OLAlertsNotificationCategory"
+		n.SourceRecID = 7
+	}))
+	got, err := s.GetNotification(id)
+	if err != nil || got.Subtitle != "Weekly sync" || got.Category != "OLAlertsNotificationCategory" {
+		t.Errorf("subtitle/category = %q, %q, %v", got.Subtitle, got.Category, err)
+	}
+	plain := insert(t, s, sample(func(n *store.Notification) { n.SourceRecID = 8 }))
+	if got, _ := s.GetNotification(plain); got.Subtitle != "" || got.Category != "" {
+		t.Errorf("a notification without them reads back %q, %q", got.Subtitle, got.Category)
+	}
+}

@@ -151,9 +151,10 @@ Where it *does* fit: as **L3 feature provider**, a Python sidecar answering fixe
 ### 5.3 Model and learning
 - `p = σ(w·x + b)` is the score `S_base`. Training is soft-target logistic SGD: `w ← w + α (t − p) x` (the manifest formula plus the sigmoid and a bias), where `t` is the target score in [0,1].
 - **[DECIDED] Hybrid labels.** Both feed the same update:
-  - **Exact label** (`l` then 0–100, or a tier name): `t = N/100`. Always updates.
-  - **Quick `y`**: "this should have reached me at the threshold it was at." Constraint `S > T_dec/100`. If violated, `t = min(1, T_dec/100 + margin)` (capped at 1 rather than 0.99 so that `y` at lockdown, which needs `S > 0.99`, is satisfiable); otherwise no update.
-  - **Quick `n`**: "this should have been muted at that threshold." Constraint `S ≤ T_dec/100`. If violated (e.g. an item that was alerted), `t = max(0, T_dec/100 − margin)`; otherwise no update.
+  - **Exact label** (`t` then 0–100, or a tier name): `t = N/100`. Always updates.
+  - **Quick `y`**: "this should have reached me at the threshold it was at." Constraint `S > T_dec/100`. If violated, `t = min(1, T_dec/100 + margin)` (capped at 1 rather than 0.99 so that `y` at lockdown, which needs `S > 0.99`, is satisfiable); otherwise (the model was right) **[DECIDED, task 33]** a score within `margin` of the threshold is reinforced: stepped out to `T_dec/100 + margin` (at most 0.995), and one already clear of that is left alone, so a right call that only just got it right still teaches the model something and a confident one does not drift it.
+  - **Quick `n`**: "this should have been muted at that threshold." Constraint `S ≤ T_dec/100`. If violated (e.g. an item that was alerted), `t = max(0, T_dec/100 − margin)`; otherwise a score within `margin` below the threshold is stepped down to `T_dec/100 − margin` (at least 0.005), and a clearer one is left alone.
+  - In the TUI `y`/`n` are asked as "did shh do the right thing?" and mapped onto these absolute labels from what shh did (see §8).
   - `T_dec` is the row's `threshold_at_decision`, so feedback given hours later is still interpreted correctly. `margin` defaults to 0.1 **[ASSUMED]**.
 - **Training order:** the Train list shows the most informative items first (scores near the user's usual thresholds, or where recent labels disagree with the model).
 - **Later, not v1:** implicit weak labels (opened right away, dismissed unread).
@@ -223,9 +224,9 @@ Keep manifest layout, but make the state model explicit:
 |---|---|---|
 | `is_read` | Opened in detail view | Opening (`Enter`/`o`) only. Preview/expand does **not**. |
 | `is_dismissed_inbox` | Gone from Tab 1 | `d`/`x`, or training with quick-train |
-| `is_trained` | Gone from Train list | `y`, `n`, or `l` + number (stored in `user_feedback` / `user_label`) |
+| `is_trained` | Gone from Train list | `y`, `n`, or `t` + number (stored in `user_feedback` / `user_label`) |
 
-Train tab keys: `y` = "should have reached me at that level", `n` = "should have been muted at that level", `l` = exact label (0–100 or a tier name, e.g. `light`). Every row in the Train list shows the score the model gave (0–100) and whether it was alerted or blocked. The detail pane shows the score, boost, `threshold_at_decision`, and the reason.
+Train tab keys: **[DECIDED, task 33]** `y` and `n` answer "did shh do the right thing?" (the row shows what shh did): `y` = right call, `n` = wrong call. The worker's quick labels underneath stay absolute (`user_feedback` `y` = it should have reached the user at that level, `n` = it should have stayed muted), so the UI turns the answer into one of them from what shh did (a blocked row: `y` stores `n`, `n` stores `y`; an alerted row: `y` stores `y`, `n` stores `n`); `t` = exact label (0–100 or a tier name, e.g. `light`; typing a digit starts it too; **[DECIDED, task 33]** `t`, not `l`, so that `h`/`l` stay free for moving between tabs). Every row in the Train list shows the score the model gave (0–100) and whether it was alerted or blocked. The detail pane shows the score, boost, `threshold_at_decision`, and the reason.
 
 - **Entry point [DECIDED]:** bare `shh` opens the TUI (`shh ui` remains an alias). (`ssh` is OpenSSH and can't be used.) Three tabs, switched with `Tab`/`Shift-Tab` and `F1`–`F3` (digits are reserved for training labels):
   1. **Focus:** level stack and time left; start, stop, baseline, pause/resume, adjust, change level. Everything the CLI can do.

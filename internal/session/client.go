@@ -98,25 +98,45 @@ func (c *Client) Subscribe(ctx context.Context) (<-chan Event, error) {
 }
 
 func (c *Client) do(req Request) (StatusView, error) {
+	resp, err := c.call(req)
+	if err != nil || resp.Status == nil {
+		return StatusView{}, err
+	}
+	return *resp.Status, nil
+}
+
+// call sends one request and returns the worker's whole answer.
+func (c *Client) call(req Request) (Response, error) {
 	conn, err := c.dial()
 	if err != nil {
-		return StatusView{}, err
+		return Response{}, err
 	}
 	defer conn.Close()
 	conn.SetDeadline(time.Now().Add(requestTimeout))
 	if err := json.NewEncoder(conn).Encode(req); err != nil {
-		return StatusView{}, c.wrap(err)
+		return Response{}, c.wrap(err)
 	}
 	scanner := bufio.NewScanner(conn)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
-	resp, err := readResponse(scanner)
-	if err != nil {
-		return StatusView{}, err
+	return readResponse(scanner)
+}
+
+// Train labels a stored notification, teaching the worker's model, and says how its score moved.
+func (c *Client) Train(req TrainRequest) (TrainView, error) {
+	resp, err := c.call(Request{Cmd: "train", NotificationID: req.NotificationID, Label: req.Label, Feedback: req.Feedback})
+	if err != nil || resp.Train == nil {
+		return TrainView{}, err
 	}
-	if resp.Status == nil {
-		return StatusView{}, nil
+	return *resp.Train, nil
+}
+
+// UndoTraining reverses the worker's most recent training exactly and says which notification it was about.
+func (c *Client) UndoTraining() (TrainView, error) {
+	resp, err := c.call(Request{Cmd: "undo"})
+	if err != nil || resp.Train == nil {
+		return TrainView{}, err
 	}
-	return *resp.Status, nil
+	return *resp.Train, nil
 }
 
 func readResponse(scanner *bufio.Scanner) (Response, error) {
@@ -150,4 +170,36 @@ func (c *Client) wrap(err error) error {
 		return fmt.Errorf("%w (no worker is listening on %s)", ErrNotRunning, c.path)
 	}
 	return err
+}
+
+// Ensure makes sure a worker is answering on the client's socket, starting one with spawn if none is, and returns its status. With no
+// spawn function it reports that a worker cannot be started from here. wait is how long to give a started worker to answer; five
+// seconds when zero.
+func Ensure(c *Client, spawn func() error, wait time.Duration) (StatusView, error) {
+	view, err := c.Status()
+	if err == nil || !errors.Is(err, ErrNotRunning) {
+		return view, err
+	}
+	if spawn == nil {
+		return StatusView{}, fmt.Errorf("%w, and a worker cannot be started from here", err)
+	}
+	if err := spawn(); err != nil {
+		return StatusView{}, fmt.Errorf("starting the worker: %w", err)
+	}
+	if wait == 0 {
+		wait = 5 * time.Second
+	}
+	deadline := time.Now().Add(wait)
+	for {
+		view, err := c.Status()
+		switch {
+		case err == nil:
+			return view, nil
+		case !errors.Is(err, ErrNotRunning):
+			return StatusView{}, err
+		case time.Now().After(deadline):
+			return StatusView{}, fmt.Errorf("the worker did not start within %v", wait)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
 }

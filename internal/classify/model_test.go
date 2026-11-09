@@ -485,3 +485,101 @@ func TestModelOptionsChangeLearning(t *testing.T) {
 		t.Errorf("a higher learning rate moved the score %v, a lower one %v; want the higher to move more", fastP, slowP)
 	}
 }
+
+func TestQuickYesOnARightCallNearTheThresholdPushesItOutToTheMargin(t *testing.T) {
+	r := newModelRig(t)
+	r.steerTo(t, outage, 0.68) // alerted, but only just: the model was right, and a y confirms it
+	res := r.train(t, outage, classify.QuickLabel("y", 65))
+	got := r.predict(outage)
+	if !res.Updated || res.Steps == 0 {
+		t.Fatalf("result = %+v, want the right call near the line to be reinforced", res)
+	}
+	if got < 0.75-1e-6 {
+		t.Errorf("score after y = %v, want it moved out to the 10 point margin (0.75)", got)
+	}
+	if got > 0.90 {
+		t.Errorf("score after y = %v: reinforcing should stop at the margin, not run away", got)
+	}
+}
+
+func TestQuickNoOnARightCallNearTheThresholdPushesItDownToTheMargin(t *testing.T) {
+	r := newModelRig(t)
+	r.steerTo(t, newsletter, 0.62) // blocked, but only just
+	res := r.train(t, newsletter, classify.QuickLabel("n", 65))
+	got := r.predict(newsletter)
+	if !res.Updated {
+		t.Fatalf("result = %+v, want a reinforcement", res)
+	}
+	if got > 0.55+1e-6 || got < 0.40 {
+		t.Errorf("score after n = %v, want it moved down to the margin (0.55) and no further", got)
+	}
+}
+
+func TestAScoreClearOfTheMarginIsLeftAloneByARightCall(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		score float64
+		label classify.Label
+	}{
+		{"y well above", 0.80, classify.QuickLabel("y", 65)},
+		{"n well below", 0.40, classify.QuickLabel("n", 65)},
+		{"y exactly at the margin", 0.75, classify.QuickLabel("y", 65)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			r := newModelRig(t)
+			r.steerTo(t, outage, tt.score)
+			before := r.fingerprint()
+			if res := r.train(t, outage, tt.label); res.Updated && !sameFloats(before, r.fingerprint()) && tt.score != 0.75 {
+				t.Errorf("a right call clear of the margin changed the model: %+v", res)
+			}
+		})
+	}
+}
+
+func TestReinforcingNeverCrossesTheThresholdTheWrongWay(t *testing.T) {
+	r := newModelRig(t)
+	r.steerTo(t, newsletter, 0.64)
+	r.train(t, newsletter, classify.QuickLabel("n", 65))
+	if got := r.predict(newsletter); got > 0.65 {
+		t.Errorf("an n at 65 left the score at %v, above the threshold", got)
+	}
+	r2 := newModelRig(t)
+	r2.steerTo(t, outage, 0.66)
+	r2.train(t, outage, classify.QuickLabel("y", 65))
+	if got := r2.predict(outage); got <= 0.65 {
+		t.Errorf("a y at 65 left the score at %v, at or below the threshold", got)
+	}
+}
+
+func TestReinforcingAtLockdownStopsShortOfCertainty(t *testing.T) {
+	r := newModelRig(t)
+	r.steerTo(t, outage, 0.9945)
+	if r.predict(outage) <= 0.99 {
+		t.Skip("could not steer the score above lockdown")
+	}
+	before := r.predict(outage)
+	res := r.train(t, outage, classify.QuickLabel("y", 99))
+	got := r.predict(outage)
+	if got < before-1e-9 || got > 0.9999 || got < 0.995-1e-6 {
+		t.Errorf("score %v -> %v (%+v): a right call at lockdown should nudge towards 0.995 without chasing 1", before, got, res)
+	}
+	if res.Steps >= 200 {
+		t.Errorf("%d steps: the reinforcement ran to the step limit", res.Steps)
+	}
+}
+
+func TestAReinforcementIsUndoneExactly(t *testing.T) {
+	r := newModelRig(t)
+	r.steerTo(t, outage, 0.68)
+	before := r.fingerprint()
+	r.train(t, outage, classify.QuickLabel("y", 65))
+	if sameFloats(before, r.fingerprint()) {
+		t.Fatal("setup: the reinforcement changed nothing")
+	}
+	if err := r.model.Undo(1); err != nil {
+		t.Fatal(err)
+	}
+	if !sameFloats(before, r.fingerprint()) {
+		t.Error("undo did not restore the weights from before the reinforcement")
+	}
+}
