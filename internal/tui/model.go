@@ -106,6 +106,8 @@ type Model struct {
 	// filter narrows both lists to notifications containing this text; totals is how many each list holds before it is applied.
 	filter string
 	totals [tabCount]int
+	// focusCursor is the selected row of the Focus tab's menu.
+	focusCursor int
 	// count is the number typed before a motion (3 in 3k), vim style; 0 when none is pending.
 	count int
 	// prompt is the label being typed after t; nil when there is none.
@@ -117,6 +119,10 @@ type Model struct {
 	restartBlink bool
 	// undoStack remembers what each training in this session did besides teaching the model, so undo can put that back too.
 	undoStack []trainedEntry
+	// noticeCmd is the shh command that does what the last action did, shown at the right of the notice. noticeHasCmd says the action
+	// is one that has such a thing to show; noticeCmd is then empty when the command line has no equivalent.
+	noticeCmd    string
+	noticeHasCmd bool
 	// notice is what the last action did or why it could not, shown in the status bar until the next key.
 	notice string
 }
@@ -246,7 +252,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	m.notice = ""
+	m.notice, m.noticeCmd, m.noticeHasCmd = "", "", false
 	if m.prompt != nil {
 		m.promptKey(msg)
 		return m, m.takeBlink()
@@ -774,6 +780,7 @@ func countDigit(key string) (int, bool) {
 // jumpTo goes to a row (counting from 0), or, in the expanded view, to a line of the text.
 func (m *Model) jumpTo(row int) {
 	if m.tab == TabFocus {
+		m.focusCursor = max(0, min(row, len(m.focusItems())-1))
 		return
 	}
 	if m.expanded() {
@@ -788,6 +795,7 @@ func (m *Model) jumpTo(row int) {
 // move changes the selected row by delta, staying inside the list.
 func (m *Model) move(delta int) {
 	if m.tab == TabFocus {
+		m.focusCursor = max(0, min(m.focusCursor+delta, len(m.focusItems())-1)) // the Focus tab's rows are its menu
 		return
 	}
 	if m.expanded() {
@@ -1118,7 +1126,7 @@ func (m *Model) stateLine() string {
 // the last action did, a problem, what is wrong with the label being typed, or, when there is nothing to report, the keys that
 // apply here.
 func (m *Model) messageLine() string {
-	var text string
+	var text, right string
 	var style lipgloss.Style
 	switch {
 	case m.count > 0 && m.prompt == nil:
@@ -1131,10 +1139,31 @@ func (m *Model) messageLine() string {
 		text, style = m.err, errStyle
 	case m.notice != "":
 		text, style = oneLine(m.notice), errStyle
+		if m.noticeHasCmd {
+			right = commandText(m.noticeCmd)
+		}
 	default:
 		text, style = m.keyHints(), dim
+		if items := m.focusItems(); m.tab == TabFocus && m.focusCursor < len(items) {
+			right = commandText(items[m.focusCursor].cmd) // what the selected row is, as a command, so the menu teaches the command line
+		}
 	}
-	return style.Render(fit(" "+text, m.width))
+	return style.Render(withRight(" "+text, right, m.width))
+}
+
+// withRight lays a line out with its main text at the left and a second piece, the equivalent command, flush to the right edge. The
+// command is kept whole when it can be; the main text gives way first.
+func withRight(left, right string, width int) string {
+	if right == "" {
+		return fit(left, width)
+	}
+	right += " "
+	if lipgloss.Width(right)+4 > width {
+		return fit(strings.TrimSpace(right), width)
+	}
+	left = fit(left, width-lipgloss.Width(right)-2)
+	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
+	return left + strings.Repeat(" ", max(2, gap)) + right
 }
 
 // keyHints are the keys that work on the current tab, briefly and all of them: the help screen (?, shown at the right of the line above)
@@ -1142,7 +1171,7 @@ func (m *Model) messageLine() string {
 func (m *Model) keyHints() string {
 	switch m.tab {
 	case TabFocus:
-		return "s start · b baseline · f level · p pause/resume · +/- time · x stop · X stop all · Tab switch"
+		return "j/k select · Enter run it · or its key: s b f p + - x X · Tab switch"
 	case TabTrain:
 		return "j/k move · / filter · y/n right/wrong · t score · u undo · f flag · e read · o open · d dismiss"
 	}
@@ -1258,12 +1287,13 @@ var helpSections = []struct {
 		{"Esc", "Drops a number you have started typing, or closes a message you are reading, or clears the filter."},
 	}},
 	{"Focus tab", []helpTopic{
-		{"what you see", "The sessions in force, top first. ▶ marks the one in force; the others are what it falls back to as sessions end. Each shows its level and its time left (or that it runs until stopped), and a note if it has one."},
+		{"what you see", "The sessions in force, top first. ▶ marks the one in force; the others are what it falls back to as sessions end. Each shows its level and its time left (or that it runs until stopped), and a note if it has one. Below it is a menu of everything you can do."},
+		{"j / k, Enter", "Select a menu row and run it with Enter (a number first moves further, so 3j goes down three rows). Rows that do not apply right now are dimmed, with the reason; Enter on one explains instead of doing anything. Every row also has its own key, shown beside it, which works without selecting it. The line below the page shows, at its right, the equivalent shh command for the selected row, and after you run something it shows the exact command that would have done the same, such as $ shh 75% 25m writing docs. Changing the level and adding time have no command line equivalent yet, so they say TUI only."},
 		{"s", "Start a session on top of what is in force. Type a level, a length and a note in any order, the way the shh command takes them: 75% 25m writing docs, or deep 1h, or just 30%. Add then off (or then a level) at the end to choose what it falls back to. Nothing typed starts medium until stopped. If shh is not running, a worker is started for you."},
 		{"b", "Set the standing level that applies whenever no session does: a percentage, a tier, or off to clear it."},
 		{"f", "Change the level of the session in force, without starting a new one."},
 		{"p, Space", "Pause the countdown of a timed session, or start it again. Only the timer stops; the level stays."},
-		{"+ / -", "Add or take away five minutes from the time left. A number first repeats it: 3+ adds fifteen. Time cannot go below zero."},
+		{"+ / -", "Add or take away five minutes from the time left. A number first repeats it: 3+ adds fifteen, and 3 then Enter on the menu row does the same. Time cannot go below zero."},
 		{"x", "Stop the session in force; focus falls back to what is under it."},
 		{"X", "Turn focus off completely, baseline included. It asks first: y confirms, n or Esc keeps it."},
 	}},

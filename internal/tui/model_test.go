@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 
+	"github.com/charlesrobsampson/shh/internal/decide"
 	"github.com/charlesrobsampson/shh/internal/session"
 	"github.com/charlesrobsampson/shh/internal/store"
 )
@@ -924,7 +925,7 @@ func TestTheNewKeysDoNothingOnTheFocusTabOrAnEmptyList(t *testing.T) {
 	r.press("e", "o", "d", "x", "enter", "esc") // empty list
 	r.add("Ana", "x", 1)
 	r.refresh()
-	r.press("f1", "e", "o", "d", "x", "enter")
+	r.press("f1", "e", "o", "d", "x")
 	if len(r.opened) != 0 {
 		t.Errorf("opened %v from the Focus tab", r.opened)
 	}
@@ -1278,7 +1279,7 @@ func TestTrainingKeysDoNothingOnTheFocusTabOrAnEmptyList(t *testing.T) {
 	}
 	r.add("Ana", "x", 1)
 	r.refresh()
-	r.press("f1", "y", "n", "t", "u", "5", "enter")
+	r.press("f1", "y", "n", "t", "u", "5")
 	if len(r.trainer.requests) != 0 || r.trainer.undos != 0 || r.m.prompt != nil {
 		t.Errorf("requests %v undos %d prompt %v from the Focus tab", r.trainer.requests, r.trainer.undos, r.m.prompt)
 	}
@@ -1392,7 +1393,7 @@ func TestTheFooterHintsAreBriefButCoverEveryKeyOnThePage(t *testing.T) {
 	}{
 		{"f2", []string{"j/k move", "/ filter", "e read", "o open", "d dismiss", "f flag", "y/n right/wrong", "t score", "u undo"}},
 		{"f3", []string{"j/k move", "/ filter", "y/n right/wrong", "t score", "u undo", "f flag", "e read", "o open", "d dismiss"}},
-		{"f1", []string{"s start", "b baseline", "f level", "p pause/resume", "+/- time", "x stop", "X stop all", "Tab switch"}},
+		{"f1", []string{"j/k select", "Enter run it", "s b f p + - x X", "Tab switch"}},
 	} {
 		r.press(tt.tab)
 		hints := r.messageLine()
@@ -1575,7 +1576,7 @@ func TestTheFooterIsTwoLinesAndTheMessageLineCarriesAnythingToSay(t *testing.T) 
 		t.Errorf("the Train tab has its own hints: %q", got)
 	}
 	r.press("f1")
-	if got := r.messageLine(); !strings.Contains(got, "s start") || !strings.Contains(got, "Tab switch") {
+	if got := r.messageLine(); !strings.Contains(got, "j/k select") || !strings.Contains(got, "Tab switch") {
 		t.Errorf("the Focus tab has its own hints: %q", got)
 	}
 	r.press("f2", "o")
@@ -2151,13 +2152,13 @@ func intp(n int) *int { return &n }
 
 func TestTheFocusTabSaysWhatToDoWhenOffOrWhenNothingIsRunning(t *testing.T) {
 	r := onFocus(t, nil)
-	if got := r.view(); !strings.Contains(got, "shh is not running") || !strings.Contains(got, "Press s to start one") {
+	if got := r.view(); !strings.Contains(got, "shh is not running") || !strings.Contains(got, "What to do") || !strings.Contains(got, "Start a session…") {
 		t.Errorf("no worker:\n%s", got)
 	}
 	off := session.StatusView{}
 	r.worker.err, r.worker.view = nil, off
 	r.refresh()
-	if got := r.view(); !strings.Contains(got, "Focus is off") || !strings.Contains(got, "Press s") {
+	if got := r.view(); !strings.Contains(got, "Focus is off") || !strings.Contains(got, "What to do") {
 		t.Errorf("focus off:\n%s", got)
 	}
 }
@@ -2313,7 +2314,7 @@ func TestSettingABaselineUnderARunningSessionSaysWhichLevelStaysInForce(t *testi
 	r.press("b")
 	r.typeText("30%")
 	r.press("enter")
-	if got := r.messageLine(); !strings.Contains(got, "baseline set to 30%") || !strings.Contains(got, "keeps focus at 65% (medium) until it ends") {
+	if got := r.messageLine(); !strings.Contains(got, "baseline set to 30%") || !strings.Contains(got, "the 65% session in force keeps focus until it ends") {
 		t.Errorf("message line = %q", got)
 	}
 }
@@ -2698,6 +2699,514 @@ func TestEveryPromptsHintFitsAHundredColumnsWithoutBeingCut(t *testing.T) {
 		r.press("esc")
 		if r.m.prompt != nil {
 			r.press("n") // the yes or no question closes on n
+		}
+	}
+}
+
+// ---- the Focus tab's menu ----
+
+// menuLine finds the menu row for a label on the Focus page.
+func menuLine(r *rig, label string) string {
+	for _, l := range strings.Split(r.view(), "\n") {
+		if strings.Contains(l, label) {
+			return l
+		}
+	}
+	return ""
+}
+
+func TestTheFocusPageHasAMenuOfEverythingYouCanDoWithTheirKeysAndExplanations(t *testing.T) {
+	r := onFocus(t, &timedSession)
+	view := r.view()
+	for _, want := range []string{
+		"What to do", "Start a session…", "Set the baseline…", "Change the level…", "Pause", "Add 5 minutes", "Take away 5 minutes",
+		"Stop this session", "Turn focus off…",
+		"a level, a length and a note", "the standing level when no session is running", "freeze or restart the countdown",
+		"focus falls back to what is under it", "everything, baseline included (asks first)",
+	} {
+		if !strings.Contains(view, want) {
+			t.Errorf("the menu is missing %q:\n%s", want, view)
+		}
+	}
+	for _, label := range []string{"Start a session…", "Set the baseline…", "Change the level…", "Pause", "Add 5 minutes", "Take away 5 minutes", "Stop this session", "Turn focus off…"} {
+		if line := menuLine(r, label); !strings.Contains(line, " s ") && !strings.Contains(line, " b ") && !strings.Contains(line, " f ") &&
+			!strings.Contains(line, " p ") && !strings.Contains(line, " + ") && !strings.Contains(line, " - ") && !strings.Contains(line, " x ") && !strings.Contains(line, " X ") {
+			t.Errorf("%q has no key shown beside it: %q", label, line)
+		}
+	}
+}
+
+func TestJKSelectMenuRowsAndCountsAndGWork(t *testing.T) {
+	r := onFocus(t, &timedSession)
+	if line := menuLine(r, "Start a session…"); !strings.Contains(line, ">") {
+		t.Errorf("the first row should be selected to begin with: %q", line)
+	}
+	r.press("j")
+	if line := menuLine(r, "Set the baseline…"); !strings.Contains(line, ">") {
+		t.Errorf("j should select the second row: %q", line)
+	}
+	r.press("3", "j")
+	if line := menuLine(r, "Add 5 minutes"); !strings.Contains(line, ">") {
+		t.Errorf("3j should go down three rows to Add 5 minutes: %q", line)
+	}
+	r.press("k")
+	if line := menuLine(r, "Pause"); !strings.Contains(line, ">") {
+		t.Errorf("k should go back up: %q", line)
+	}
+	r.press("G")
+	if line := menuLine(r, "Turn focus off…"); !strings.Contains(line, ">") {
+		t.Errorf("G should select the last row: %q", line)
+	}
+	r.press("9", "j")
+	if r.m.focusCursor != len(r.m.focusItems())-1 {
+		t.Errorf("moving past the end should stop at the last row, cursor %d", r.m.focusCursor)
+	}
+	r.press("g")
+	if r.m.focusCursor != 0 {
+		t.Errorf("g should select the first row, cursor %d", r.m.focusCursor)
+	}
+	r.press("up", "k")
+	if r.m.focusCursor != 0 {
+		t.Errorf("moving past the top should stop at the first row, cursor %d", r.m.focusCursor)
+	}
+	r.press("down")
+	if r.m.focusCursor != 1 {
+		t.Errorf("the down arrow should move too, cursor %d", r.m.focusCursor)
+	}
+}
+
+func TestEnterRunsTheSelectedRowTheSameAsItsKey(t *testing.T) {
+	type step struct {
+		down  int
+		check func(r *rig)
+		name  string
+	}
+	steps := []step{
+		{0, func(r *rig) {
+			if r.m.prompt == nil || r.m.prompt.kind != promptStart {
+				t.Error("Start a session… should open the start prompt")
+			}
+		}, "start"},
+		{1, func(r *rig) {
+			if r.m.prompt == nil || r.m.prompt.kind != promptBaseline {
+				t.Error("Set the baseline… should open the baseline prompt")
+			}
+		}, "baseline"},
+		{2, func(r *rig) {
+			if r.m.prompt == nil || r.m.prompt.kind != promptLevel {
+				t.Error("Change the level… should open the level prompt")
+			}
+		}, "level"},
+		{3, func(r *rig) {
+			if got := r.lastCall(); got != "pause" {
+				t.Errorf("Pause sent %q", got)
+			}
+		}, "pause"},
+		{4, func(r *rig) {
+			if got := r.lastCall(); got != "adjust 5m0s" {
+				t.Errorf("Add 5 minutes sent %q", got)
+			}
+		}, "add"},
+		{5, func(r *rig) {
+			if got := r.lastCall(); got != "adjust -5m0s" {
+				t.Errorf("Take away 5 minutes sent %q", got)
+			}
+		}, "take away"},
+		{6, func(r *rig) {
+			if got := r.lastCall(); got != "stop all=false" {
+				t.Errorf("Stop this session sent %q", got)
+			}
+		}, "stop"},
+		{7, func(r *rig) {
+			if r.m.prompt == nil || r.m.prompt.kind != promptConfirmStopAll {
+				t.Error("Turn focus off… should ask first")
+			}
+		}, "stop all"},
+	}
+	for _, st := range steps {
+		t.Run(st.name, func(t *testing.T) {
+			r := onFocus(t, &timedSession)
+			r.press("g")
+			for i := 0; i < st.down; i++ {
+				r.press("j")
+			}
+			r.press("enter")
+			st.check(r)
+		})
+	}
+}
+
+func TestACountBeforeEnterRepeatsTheTimeRows(t *testing.T) {
+	r := onFocus(t, &timedSession)
+	r.press("4", "j") // Add 5 minutes
+	r.press("3", "enter")
+	if got := r.lastCall(); got != "adjust 15m0s" {
+		t.Errorf("3 then Enter on Add 5 minutes sent %q, want fifteen minutes", got)
+	}
+	r.press("j", "2", "enter")
+	if got := r.lastCall(); got != "adjust -10m0s" {
+		t.Errorf("2 then Enter on Take away sent %q, want ten minutes off", got)
+	}
+}
+
+func TestRowsThatDoNotApplyAreDimmedWithTheReasonAndEnterExplainsInsteadOfActing(t *testing.T) {
+	untimed := session.StatusView{Level: 65, Layers: []session.LayerView{{Kind: "escalation", Percent: 65}}}
+	baselineOnly := session.StatusView{Level: 30, Layers: []session.LayerView{{Kind: "baseline", Percent: 30}}}
+	tests := []struct {
+		name   string
+		status *session.StatusView
+		row    string
+		reason string
+	}{
+		{"no timer to pause", &untimed, "Pause", "the session in force has no timer"},
+		{"no timer to add to", &untimed, "Add 5 minutes", "the session in force has no timer"},
+		{"focus off: no level to change", &session.StatusView{}, "Change the level…", "focus is off"},
+		{"no worker: nothing to stop", nil, "Stop this session", "shh is not running"},
+		{"only a baseline: no session to stop", &baselineOnly, "Stop this session", "no session is running"},
+		{"no worker: nothing to turn off", nil, "Turn focus off…", "shh is not running"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := onFocus(t, tt.status)
+			if line := menuLine(r, tt.row); !strings.Contains(line, "not now: "+tt.reason) {
+				t.Errorf("%q should say why it is unavailable (%q): %q", tt.row, tt.reason, line)
+			}
+			// select it and press Enter
+			for i, it := range r.m.focusItems() {
+				if strings.HasPrefix(it.label, strings.TrimSuffix(tt.row, "…")) {
+					r.m.focusCursor = i
+				}
+			}
+			before := len(r.control.calls)
+			r.press("enter")
+			if len(r.control.calls) != before || r.m.prompt != nil {
+				t.Errorf("Enter on an unavailable row did something: calls %v prompt %v", r.control.calls, r.m.prompt)
+			}
+			if got := r.messageLine(); !strings.Contains(got, tt.reason) {
+				t.Errorf("Enter should explain: %q", got)
+			}
+		})
+	}
+}
+
+func TestTheRowsThatAlwaysApplyAreAvailableWithNoWorker(t *testing.T) {
+	r := onFocus(t, nil)
+	for _, label := range []string{"Start a session…", "Set the baseline…"} {
+		if line := menuLine(r, label); strings.Contains(line, "not now") {
+			t.Errorf("%q should work with no worker (one is started): %q", label, line)
+		}
+	}
+}
+
+func TestThePauseRowBecomesResumeWhileAtimerIsPaused(t *testing.T) {
+	r := onFocus(t, &timedSession)
+	if menuLine(r, "Pause") == "" || strings.Contains(r.view(), "Resume") {
+		t.Error("a running timer should offer Pause")
+	}
+	paused := timedSession
+	paused.Layers = []session.LayerView{timedSession.Layers[0], timedSession.Layers[1]}
+	paused.Layers[1].Paused = true
+	r.worker.view = paused
+	r.refresh()
+	if !strings.Contains(r.view(), "Resume") {
+		t.Errorf("a paused timer should offer Resume:\n%s", r.view())
+	}
+}
+
+func TestTheShortcutKeysStillWorkWithoutSelectingTheRow(t *testing.T) {
+	r := onFocus(t, &timedSession)
+	r.press("G", "+") // the cursor is far from Add 5 minutes
+	if got := r.lastCall(); got != "adjust 5m0s" {
+		t.Errorf("+ sent %q with another row selected", got)
+	}
+	if r.m.focusCursor != len(r.m.focusItems())-1 {
+		t.Error("using a shortcut should not move the selection")
+	}
+}
+
+func TestTheMenuKeepsTheSelectedRowInViewOnAShortTerminal(t *testing.T) {
+	r := onFocus(t, &timedSession)
+	r.m.Update(tea.WindowSizeMsg{Width: 100, Height: 14}) // the stack takes most of what there is
+	r.press("G")
+	view := r.view()
+	if !strings.Contains(view, "Turn focus off…") || !strings.Contains(view, ">") {
+		t.Errorf("the selected last row should be on screen:\n%s", view)
+	}
+	if h := lipgloss.Height(view); h != 14 {
+		t.Errorf("%d lines tall", h)
+	}
+	r.press("g")
+	if v := r.view(); !strings.Contains(v, "Start a session…") {
+		t.Errorf("the first row should come back into view:\n%s", v)
+	}
+}
+
+func TestTheFocusPageFitsEverySize(t *testing.T) {
+	for _, status := range []*session.StatusView{&timedSession, nil, {}} {
+		r := onFocus(t, status)
+		for _, size := range [][2]int{{120, 40}, {80, 24}, {60, 12}, {40, 9}} {
+			r.m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+			for _, key := range []string{"g", "G"} {
+				r.press(key)
+				view := r.view()
+				if h := lipgloss.Height(view); h != size[1] {
+					t.Errorf("%dx%d: %d lines tall", size[0], size[1], h)
+				}
+				for n, line := range strings.Split(view, "\n") {
+					if w := lipgloss.Width(line); w > size[0] {
+						t.Errorf("%dx%d: line %d is %d wide: %q", size[0], size[1], n, w, line)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestTheHelpExplainsTheMenu(t *testing.T) {
+	r := newRig(t)
+	r.m.Update(tea.WindowSizeMsg{Width: 100, Height: 80})
+	r.press("?")
+	got := helpText(r)
+	for _, want := range []string{"Select a menu row and run it with Enter", "dimmed, with the reason", "3 then Enter on the menu row does the same", "a menu of everything you can do"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the help never says %q", want)
+		}
+	}
+}
+
+// rightPart is what is flush against the right edge of the message line: the text after the last run of two spaces.
+func rightPart(line string) string {
+	line = strings.TrimRight(line, " ")
+	if i := strings.LastIndex(line, "  "); i >= 0 {
+		return strings.TrimSpace(line[i:])
+	}
+	return strings.TrimSpace(line)
+}
+
+func TestAfterAnActionTheMessageLineShowsTheEquivalentCommandAtTheRight(t *testing.T) {
+	tests := []struct {
+		name string
+		do   func(r *rig)
+		msg  string
+		cmd  string
+	}{
+		{"start", func(r *rig) { r.press("s"); r.typeText("75% 25m writing docs"); r.press("enter") }, "focus started at 75% for 25m", "$ shh 75% 25m writing docs"},
+		{"start with then", func(r *rig) { r.press("s"); r.typeText("40% 10m then off"); r.press("enter") }, "focus started at 40%", "$ shh focus 40% 10m --then off"},
+		{"start with nothing typed", func(r *rig) { r.press("s", "enter") }, "focus started at 65% (medium)", "$ shh 65%"},
+		{"a note that looks like a setting", func(r *rig) { r.press("s"); r.typeText("50% 50% done"); r.press("enter") }, "", ""},
+		{"baseline", func(r *rig) { r.press("b"); r.typeText("30%"); r.press("enter") }, "baseline set to 30%", "$ shh baseline 30%"},
+		{"baseline off", func(r *rig) { r.press("b"); r.typeText("off"); r.press("enter") }, "baseline cleared", "$ shh baseline off"},
+		{"pause", func(r *rig) { r.press("p") }, "paused", "$ shh pause"},
+		{"stop", func(r *rig) { r.press("x") }, "session stopped", "$ shh stop"},
+		{"stop all", func(r *rig) { r.press("X", "y") }, "focus is off", "$ shh stop --all"},
+		{"change level", func(r *rig) { r.press("f"); r.typeText("deep"); r.press("enter") }, "level changed to 90% (deep)", "no shh command · TUI only"},
+		{"add time", func(r *rig) { r.press("+") }, "time left +5m", "no shh command · TUI only"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := onFocus(t, &timedSession)
+			tt.do(r)
+			line := r.messageLine()
+			if tt.msg == "" {
+				return // exercised by TestAStartNoteThatLooksLikeASettingIsQuoted
+			}
+			if !strings.Contains(line, tt.msg) {
+				t.Errorf("message line %q should say %q", line, tt.msg)
+			}
+			if got := rightPart(line); got != tt.cmd {
+				t.Errorf("right part = %q, want %q (line %q)", got, tt.cmd, line)
+			}
+			if i, j := strings.Index(line, tt.msg), strings.Index(line, tt.cmd); i < 0 || j < i {
+				t.Errorf("the command should come after the message, at the right: %q", line)
+			}
+			if lipgloss.Width(line) > 100 {
+				t.Errorf("the line is %d wide: %q", lipgloss.Width(line), line)
+			}
+		})
+	}
+}
+
+func TestStartCommandsAreTheOnesTheCommandLineWouldTake(t *testing.T) {
+	then := func(n int) *int { return &n }
+	tests := []struct {
+		level  int
+		length time.Duration
+		then   *int
+		note   string
+		want   string
+	}{
+		{65, 0, nil, "", "shh 65%"},
+		{75, 25 * time.Minute, nil, "", "shh 75% 25m"},
+		{75, 90 * time.Minute, nil, "writing docs", "shh 75% 1h30m writing docs"},
+		{30, 90 * time.Second, nil, "", "shh 30% 1m30s"},
+		{40, 10 * time.Minute, then(0), "", "shh focus 40% 10m --then off"},
+		{40, 0, then(30), "x y", "shh focus 40% --then 30% x y"},
+		{0, 25 * time.Minute, nil, "", "shh focus off 25m"},
+		{75, 0, nil, "50% done", `shh 75% -m "50% done"`},
+		{75, 0, nil, "deep work", "shh 75% deep work"},
+		{75, 0, nil, "25m break", `shh 75% -m "25m break"`},
+	}
+	for _, tt := range tests {
+		if got := startCommand(tt.level, tt.length, tt.then, tt.note); got != tt.want {
+			t.Errorf("startCommand(%d, %v, %v, %q) = %q, want %q", tt.level, tt.length, tt.then, tt.note, got, tt.want)
+		}
+	}
+}
+
+func TestTheSelectedMenuRowShowsItsCommandAtTheRightBeforeAnythingIsRun(t *testing.T) {
+	r := onFocus(t, &timedSession)
+	want := map[string]string{
+		"Start a session…": "$ shh 75% 25m writing docs", "Set the baseline…": "$ shh baseline 30%", "Change the level…": "no shh command · TUI only",
+		"Pause": "$ shh pause", "Add 5 minutes": "no shh command · TUI only", "Take away 5 minutes": "no shh command · TUI only",
+		"Stop this session": "$ shh stop", "Turn focus off…": "$ shh stop --all",
+	}
+	r.press("g")
+	for _, it := range r.m.focusItems() {
+		line := r.messageLine()
+		if got := rightPart(line); got != want[it.label] {
+			t.Errorf("%q selected: right part = %q, want %q (line %q)", it.label, got, want[it.label], line)
+		}
+		if !strings.Contains(line, "j/k select") {
+			t.Errorf("%q selected: the hints should stay at the left: %q", it.label, line)
+		}
+		r.press("j")
+	}
+}
+
+func TestPausedRowOffersTheResumeCommand(t *testing.T) {
+	paused := timedSession
+	paused.Layers = []session.LayerView{timedSession.Layers[0], timedSession.Layers[1]}
+	paused.Layers[1].Paused = true
+	r := onFocus(t, &paused)
+	r.m.focusCursor = 3
+	if got := rightPart(r.messageLine()); got != "$ shh resume" {
+		t.Errorf("right part = %q, want the resume command while paused", got)
+	}
+}
+
+func TestACommandIsNotShownForActionsThatAreNotFocusCommands(t *testing.T) {
+	r := newRig(t)
+	r.add("Ana", "x", 1)
+	r.refresh()
+	r.press("f3", "y")
+	if got := r.messageLine(); strings.Contains(got, "$ shh") || strings.Contains(got, "TUI only") {
+		t.Errorf("training is not a shh focus command and should show none: %q", got)
+	}
+	r.press("f1")
+	r.press("f2", "o")
+	if got := r.messageLine(); strings.Contains(got, "$ shh") {
+		t.Errorf("opening an app should show no command: %q", got)
+	}
+}
+
+func TestTheCommandStaysWholeOnANarrowTerminalAndTheMessageGivesWay(t *testing.T) {
+	r := onFocus(t, &timedSession)
+	r.m.Update(tea.WindowSizeMsg{Width: 60, Height: 14})
+	r.press("p")
+	line := r.messageLine()
+	if lipgloss.Width(line) > 60 || !strings.Contains(line, "$ shh pause") {
+		t.Errorf("on 60 columns the command should stay whole: %q", line)
+	}
+	r.m.Update(tea.WindowSizeMsg{Width: 24, Height: 14})
+	r.press("x")
+	if line := r.messageLine(); lipgloss.Width(line) > 24 {
+		t.Errorf("on 24 columns the line must still fit: %q", line)
+	}
+}
+
+func TestTheHelpMentionsTheCommandsShownAtTheRight(t *testing.T) {
+	r := newRig(t)
+	r.m.Update(tea.WindowSizeMsg{Width: 100, Height: 80})
+	r.press("?")
+	got := helpText(r)
+	for _, want := range []string{"equivalent shh command", "at its right", "TUI only"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the help never says %q", want)
+		}
+	}
+}
+
+// readBack interprets a shown start command the way the shh command line does: the flags it has, then the shorthand rules.
+func readBack(t *testing.T, cmd string) (level int, length time.Duration, then *int, note string) {
+	t.Helper()
+	words := strings.Fields(cmd)
+	if len(words) < 2 || words[0] != "shh" {
+		t.Fatalf("%q does not start with shh", cmd)
+	}
+	words = words[1:]
+	if words[0] == "focus" {
+		words = words[1:]
+	}
+	var flagNote string
+	var rest []string
+	for i := 0; i < len(words); i++ {
+		switch words[i] {
+		case "--then":
+			v, err := decide.ParseThreshold(words[i+1])
+			if err != nil {
+				t.Fatalf("%q: --then %s: %v", cmd, words[i+1], err)
+			}
+			then = &v
+			i++
+		case "-m":
+			// the rest of the line is the quoted note
+			flagNote = strings.Trim(strings.Join(words[i+1:], " "), `"`)
+			i = len(words)
+		default:
+			rest = append(rest, words[i])
+		}
+	}
+	levelText, lengthText, remaining, err := decide.SplitFocusWords("", "", rest)
+	if err != nil {
+		t.Fatalf("%q: %v", cmd, err)
+	}
+	if levelText == "" {
+		levelText = "medium"
+	}
+	if lengthText == "" {
+		lengthText = "0"
+	}
+	if level, err = decide.ParseThreshold(levelText); err != nil {
+		t.Fatalf("%q: %v", cmd, err)
+	}
+	if length, err = decide.ParseDuration(lengthText); err != nil {
+		t.Fatalf("%q: %v", cmd, err)
+	}
+	note = strings.Join(remaining, " ")
+	if flagNote != "" {
+		note = flagNote
+	}
+	return level, length, then, note
+}
+
+func TestEveryShownStartCommandMeansWhatWasStarted(t *testing.T) {
+	for _, text := range []string{
+		"", "30%", "25m", "deep 5m", "5m deep reading", "deep work", "75% 25m writing docs then off", "light 1h30m then 40%",
+		"60% 10m spaced out", "off 15m", "99% 90s",
+	} {
+		level, length, then, note, err := parseStart(text)
+		if err != nil {
+			t.Errorf("%q: %v", text, err)
+			continue
+		}
+		gotLevel, gotLength, gotThen, gotNote := readBack(t, startCommand(level, length, then, note))
+		thenText := func(p *int) string {
+			if p == nil {
+				return "-"
+			}
+			return fmt.Sprint(*p)
+		}
+		if gotLevel != level || gotLength != length || thenText(gotThen) != thenText(then) || gotNote != note {
+			t.Errorf("%q: shown as %q, which reads back as level %d length %v then %s note %q; started level %d length %v then %s note %q",
+				text, startCommand(level, length, then, note), gotLevel, gotLength, thenText(gotThen), gotNote, level, length, thenText(then), note)
+		}
+	}
+}
+
+func TestANoteThatStartsLikeASettingIsRejectedByTheStartPromptSinceTheCommandLineWouldReadItAsOne(t *testing.T) {
+	for _, text := range []string{"75% 25m 50% done", "40% 10m 25m break"} {
+		if _, _, _, _, err := parseStart(text); err == nil {
+			t.Errorf("%q should be rejected: a second level or length is not a note", text)
 		}
 	}
 }

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"github.com/charlesrobsampson/shh/internal/decide"
 	"github.com/charlesrobsampson/shh/internal/session"
 )
@@ -48,10 +50,84 @@ func (m *Model) focusKey(key string, steps int) bool {
 		m.stop(false)
 	case "X":
 		m.openAsk(promptConfirmStopAll, "")
+	case "enter":
+		m.runFocusItem(steps)
 	default:
 		return false
 	}
 	return true
+}
+
+// focusItem is one row of the Focus tab's menu.
+type focusItem struct {
+	key   string // the shortcut shown beside it
+	label string
+	desc  string
+	// cmd is the shh command that does the same from a terminal, as an example; empty when there is none (the TUI and menu bar only).
+	cmd string
+	// why is empty when the row can be used now, and otherwise says why not.
+	why string
+	run func(steps int)
+}
+
+// focusItems is the menu, with each row's state worked out from what the worker last reported.
+func (m *Model) focusItems() []focusItem {
+	top, haveTop := m.topLayer()
+	timed := haveTop && top.Timed
+	notRunning := ""
+	if !m.haveStatus {
+		notRunning = "shh is not running"
+	}
+	needsSession := notRunning
+	if needsSession == "" && !haveTop {
+		needsSession = "focus is off"
+	}
+	needsTimer := needsSession
+	if needsTimer == "" && !timed {
+		needsTimer = "the session in force has no timer"
+	}
+	hasEscalation := false
+	for _, l := range m.status.Layers {
+		if l.Kind != "baseline" {
+			hasEscalation = true
+		}
+	}
+	needsEscalation := notRunning
+	if needsEscalation == "" && !hasEscalation {
+		needsEscalation = "no session is running (X turns off the baseline)"
+	}
+	pauseLabel := "Pause"
+	if haveTop && top.Paused {
+		pauseLabel = "Resume"
+	}
+	pauseCmd := "shh pause"
+	if haveTop && top.Paused {
+		pauseCmd = "shh resume"
+	}
+	return []focusItem{
+		{"s", "Start a session…", "a level, a length and a note: 75% 25m writing docs", "shh 75% 25m writing docs", "", func(int) { m.openAsk(promptStart, "") }},
+		{"b", "Set the baseline…", "the standing level when no session is running; off clears it", "shh baseline 30%", "", func(int) { m.openAsk(promptBaseline, "") }},
+		{"f", "Change the level…", "of the session in force, without starting another", "", needsSession, func(int) { m.openAsk(promptLevel, "") }},
+		{"p", pauseLabel, "freeze or restart the countdown of a timed session", pauseCmd, needsTimer, func(int) { m.togglePause() }},
+		{"+", "Add 5 minutes", "to the time left (3 then Enter adds 15)", "", needsTimer, func(n int) { m.adjust(time.Duration(n) * adjustStep) }},
+		{"-", "Take away 5 minutes", "from the time left", "", needsTimer, func(n int) { m.adjust(-time.Duration(n) * adjustStep) }},
+		{"x", "Stop this session", "focus falls back to what is under it", "shh stop", needsEscalation, func(int) { m.stop(false) }},
+		{"X", "Turn focus off…", "everything, baseline included (asks first)", "shh stop --all", needsSession, func(int) { m.openAsk(promptConfirmStopAll, "") }},
+	}
+}
+
+// runFocusItem does the selected menu row, or says why it cannot be done now. steps is a number typed first, for the rows that repeat.
+func (m *Model) runFocusItem(steps int) {
+	items := m.focusItems()
+	if m.focusCursor >= len(items) {
+		return
+	}
+	item := items[m.focusCursor]
+	if item.why != "" {
+		m.notice = fmt.Sprintf("%s: %s", strings.TrimSuffix(item.label, "…"), item.why)
+		return
+	}
+	item.run(steps)
 }
 
 // inForce says whether the worker reported a level in force at its last answer.
@@ -67,7 +143,7 @@ func (m *Model) topLayer() (session.LayerView, bool) {
 
 // run sends one command to the worker and takes its answer as the new status, so the page is right at once and not a second later.
 // Starting something needs a worker, so one is started if none is running; the other commands only make sense for one that is.
-func (m *Model) run(needsWorker bool, do func(Control) (session.StatusView, error), done func(session.StatusView) string) bool {
+func (m *Model) run(needsWorker bool, cmd string, do func(Control) (session.StatusView, error), done func(session.StatusView) string) bool {
 	if m.cfg.Control == nil {
 		m.notice = "focus control is not available here"
 		return false
@@ -87,7 +163,7 @@ func (m *Model) run(needsWorker bool, do func(Control) (session.StatusView, erro
 		return false
 	}
 	m.status, m.haveStatus = view, true
-	m.notice = done(view)
+	m.notice, m.noticeCmd, m.noticeHasCmd = done(view), cmd, true // the command goes at the right of the message: the same thing, typed in a terminal
 	return true
 }
 
@@ -116,7 +192,7 @@ func (m *Model) startFocus(p *prompt) {
 		return
 	}
 	m.prompt = nil
-	m.run(true, func(c Control) (session.StatusView, error) { return c.Focus(level, length, then, note) },
+	m.run(true, startCommand(level, length, then, note), func(c Control) (session.StatusView, error) { return c.Focus(level, length, then, note) },
 		func(session.StatusView) string {
 			text := "focus started at " + decide.FormatLevel(level)
 			if length > 0 {
@@ -173,14 +249,14 @@ func (m *Model) setBaseline(p *prompt) {
 		return
 	}
 	m.prompt = nil
-	m.run(true, func(c Control) (session.StatusView, error) { return c.Baseline(level) },
+	m.run(true, "shh baseline "+levelWord(level), func(c Control) (session.StatusView, error) { return c.Baseline(level) },
 		func(view session.StatusView) string {
 			if level == 0 {
 				return "baseline cleared"
 			}
 			text := "baseline set to " + decide.FormatLevel(level)
 			if view.Level != level && len(view.Layers) > 0 {
-				text += fmt.Sprintf("; the session in force keeps focus at %s until it ends", decide.FormatLevel(view.Level))
+				text += fmt.Sprintf("; the %d%% session in force keeps focus until it ends", view.Level)
 			}
 			return text
 		})
@@ -194,13 +270,17 @@ func (m *Model) changeLevel(p *prompt) {
 		return
 	}
 	m.prompt = nil
-	m.run(false, func(c Control) (session.StatusView, error) { return c.SetLevel(level) },
+	m.run(false, "", func(c Control) (session.StatusView, error) { return c.SetLevel(level) },
 		func(session.StatusView) string { return "level changed to " + decide.FormatLevel(level) })
 }
 
 // stop ends the session in force (all: and the baseline too).
 func (m *Model) stop(all bool) {
-	m.run(false, func(c Control) (session.StatusView, error) { return c.Stop(all) },
+	stopCmd := "shh stop"
+	if all {
+		stopCmd += " --all"
+	}
+	m.run(false, stopCmd, func(c Control) (session.StatusView, error) { return c.Stop(all) },
 		func(view session.StatusView) string {
 			switch {
 			case all:
@@ -220,10 +300,10 @@ func (m *Model) togglePause() {
 		return
 	}
 	if top.Paused {
-		m.run(false, func(c Control) (session.StatusView, error) { return c.Resume() }, func(session.StatusView) string { return "resumed" })
+		m.run(false, "shh resume", func(c Control) (session.StatusView, error) { return c.Resume() }, func(session.StatusView) string { return "resumed" })
 		return
 	}
-	m.run(false, func(c Control) (session.StatusView, error) { return c.Pause() }, func(session.StatusView) string { return "paused" })
+	m.run(false, "shh pause", func(c Control) (session.StatusView, error) { return c.Pause() }, func(session.StatusView) string { return "paused" })
 }
 
 // adjust adds time to the session in force, or takes it away (the worker will not go below zero).
@@ -233,7 +313,7 @@ func (m *Model) adjust(delta time.Duration) {
 		m.notice = "nothing to adjust: the session in force has no timer"
 		return
 	}
-	m.run(false, func(c Control) (session.StatusView, error) { return c.Adjust(delta) },
+	m.run(false, "", func(c Control) (session.StatusView, error) { return c.Adjust(delta) },
 		func(session.StatusView) string {
 			sign := "+"
 			if delta < 0 {
@@ -243,28 +323,22 @@ func (m *Model) adjust(delta time.Duration) {
 		})
 }
 
-// focusView is the Focus tab: what is in force and what lies beneath it, top first, with the time left.
+// focusView is the Focus tab: what is in force and what lies beneath it, top first, with the time left, and under it the menu of
+// everything that can be done.
 func (m *Model) focusView() string {
 	lines := []string{""}
 	switch {
 	case !m.haveStatus:
-		lines = append(lines,
-			"  "+bold.Render("shh is not running"),
-			"",
-			"  so no focus session is active. Press s to start one (a worker is started for you), or b to set a baseline.")
+		lines = append(lines, "  "+bold.Render("shh is not running")+dim.Render(" · so no focus session is active"))
 	case len(m.status.Layers) == 0:
-		lines = append(lines,
-			"  "+bold.Render("Focus is off"),
-			"",
-			"  Nothing is held back: notifications reach you as usual. Press s to start a session or b to set a standing level.")
+		lines = append(lines, "  "+bold.Render("Focus is off")+dim.Render(" · nothing is held back; notifications reach you as usual"))
 	default:
 		top := m.status.Layers[len(m.status.Layers)-1]
 		headline := "Focus is on at " + decide.FormatLevel(m.status.Level)
 		if top.Paused {
 			headline += " (paused)"
 		}
-		lines = append(lines, "  "+bold.Render(headline),
-			"  "+dim.Render(fmt.Sprintf("held back %d · let through %d since this session started", top.Blocked, top.Allowed)), "")
+		lines = append(lines, "  "+bold.Render(headline)+dim.Render(fmt.Sprintf(" · held back %d, let through %d since this session started", top.Blocked, top.Allowed)), "")
 		for i := len(m.status.Layers) - 1; i >= 0; i-- {
 			l := m.status.Layers[i]
 			pointer, style := "  ", dim
@@ -276,9 +350,44 @@ func (m *Model) focusView() string {
 				lines = append(lines, "      "+dim.Render(fmt.Sprintf("%q", oneLine(l.Note))))
 			}
 		}
-		lines = append(lines, "", "  "+dim.Render("▶ is what is in force; the rest is what it falls back to as sessions end."))
+	}
+	lines = append(lines, "", "  "+bold.Underline(true).Render("What to do")+dim.Render("  (j/k to select, Enter to do it, or press the key)"))
+
+	// The menu gets whatever room is left; on a short terminal it scrolls to keep the selected row in view.
+	items := m.focusItems()
+	room := max(1, m.bodyHeight()-len(lines))
+	first := 0
+	if m.focusCursor >= room {
+		first = m.focusCursor - room + 1
+	}
+	for i := first; i < min(len(items), first+room); i++ {
+		lines = append(lines, m.menuRow(items[i], i == m.focusCursor))
 	}
 	return pad(lines, m.bodyHeight(), m.width)
+}
+
+// menuRow is one menu row: the cursor, its key, what it does and what it means. A row that cannot be used now is faint and says why
+// where its explanation would be. The selected row is drawn in reverse video, piece by piece so no style is nested in another.
+func (m *Model) menuRow(it focusItem, selected bool) string {
+	cell := func(style lipgloss.Style, text string) string { return style.Reverse(selected).Render(text) }
+	cursor := " "
+	if selected {
+		cursor = ">"
+	}
+	label, desc, keyStyle := bold, dim, bold
+	text := it.desc
+	if it.why != "" {
+		label, keyStyle, desc = dim, dim, dim
+		text = "not now: " + it.why
+	}
+	if selected {
+		desc = lipgloss.NewStyle()
+	}
+	row := cell(bold, " "+cursor+" ") + cell(keyStyle, fmt.Sprintf("%-3s", it.key)) + cell(label, fmt.Sprintf("%-22s", it.label)) + cell(desc, " "+text)
+	if gap := m.width - lipgloss.Width(row); selected && gap > 0 {
+		row += cell(lipgloss.NewStyle(), strings.Repeat(" ", gap)) // the highlight runs the width of the screen, as in the lists
+	}
+	return row
 }
 
 // layerRow is one layer of the stack on one line: kind, level, and its time left or that it has none; below is the layers under it.
@@ -304,4 +413,62 @@ func layerRow(l session.LayerView, below []session.LayerView) string {
 		}
 	}
 	return text
+}
+
+// startCommand is the shh command that starts the same session: the shorthand (shh 75% 25m writing docs) where it applies, and the
+// full command (shh focus ... --then off) where the shorthand has no place for something, such as a level of off or a then level.
+func startCommand(level int, length time.Duration, then *int, note string) string {
+	parts := []string{"shh"}
+	if then != nil || level == 0 {
+		parts = append(parts, "focus")
+	}
+	parts = append(parts, levelWord(level))
+	if length > 0 {
+		parts = append(parts, durationWord(length))
+	}
+	if then != nil {
+		parts = append(parts, "--then", levelWord(*then))
+	}
+	if note != "" {
+		// The level always comes first, so a tier word after it is just a word of the note; a percentage or a length is not (it would be read
+		// as a second setting), so a note starting with one is given with -m.
+		if words := strings.Fields(note); decide.IsPercentWord(words[0]) || decide.IsDurationWord(words[0]) {
+			parts = append(parts, "-m", fmt.Sprintf("%q", note))
+		} else {
+			parts = append(parts, note)
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+// levelWord writes a level the way it is typed: 75%, or off for none.
+func levelWord(level int) string {
+	if level == 0 {
+		return "off"
+	}
+	return fmt.Sprintf("%d%%", level)
+}
+
+// durationWord writes a length the way it is typed: 25m, 1h30m, 90s.
+func durationWord(d time.Duration) string {
+	var out string
+	if h := d / time.Hour; h > 0 {
+		out += fmt.Sprintf("%dh", h)
+	}
+	if m := d % time.Hour / time.Minute; m > 0 {
+		out += fmt.Sprintf("%dm", m)
+	}
+	if sec := d % time.Minute / time.Second; sec > 0 {
+		out += fmt.Sprintf("%ds", sec)
+	}
+	return out
+}
+
+// commandText is how the equivalent command is shown at the right of the message line: "$ shh pause", or, where the command line has
+// nothing like it, a note saying so.
+func commandText(cmd string) string {
+	if cmd == "" {
+		return "no shh command · TUI only"
+	}
+	return "$ " + cmd
 }
