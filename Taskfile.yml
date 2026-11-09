@@ -48,6 +48,11 @@ tasks:
     cmds:
       - python3 tools/capture.py --once
 
+  watch:invites:
+    desc: Watch for meeting invites and record only their structure to private/captures/invites.jsonl; says ENOUGH after 5 (task 47)
+    cmds:
+      - python3 tools/watch_invites.py {{.CLI_ARGS}}
+
   spike:suppress:
     desc: "Spike 02: run the banner suppressor for 45 s (hides banners except titles starting with [shh])"
     cmds:

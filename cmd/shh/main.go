@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -31,11 +34,30 @@ import (
 var version = "dev"
 
 func main() {
+	session.BuildID = buildID()
 	os.Exit(cli.Run(os.Args[1:], realEnv()))
 }
 
+// buildID identifies this executable by a hash of its contents, so two builds of the same version still tell apart.
+func buildID() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	f, err := os.Open(exe)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(h.Sum(nil))[:12]
+}
+
 func realEnv() cli.Env {
-	env := cli.Env{Stdout: os.Stdout, Stderr: os.Stderr, Version: version, Label: "shh", IsTerminal: isTerminal(os.Stdout)}
+	env := cli.Env{Stdout: os.Stdout, Stderr: os.Stderr, Version: version, Build: session.BuildID, Label: "shh", IsTerminal: isTerminal(os.Stdout)}
 	cfg, err := loadConfig()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "shh: cannot read the configuration:", err)

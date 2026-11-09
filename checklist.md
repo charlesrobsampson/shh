@@ -510,6 +510,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 ### 47 · Meeting invites: alert only when they are urgent
 - [ ] Done
 - Session: _(fill on start)_
+- **Pinned until invites arrive (2026-11-09):** no real invites have come through yet (none in the last 14 days; Teams meeting-chat messages are not invites). `task watch:invites` (`tools/watch_invites.py`) watches the notification database read-only and records only the structure of each invite (app, category, text lengths, Teams thread kind, and a masked shape of the text that keeps weekday, month, number, clock-time and a few invite words) to `private/captures/invites.jsonl`; it prints `ENOUGH` after 5 and exits. Start the task when it has.
 - Branch: `task/47-invite-urgency` · Depends: 43
 - Context: a calendar invite should only get through a focus level when it is urgent, which for an invite means the meeting is new or changed and starts soon. An invite for next week should not show up at a 50% filter; one for ten minutes from now probably should. The user suggested a base score for invites with a multiplier that grows the closer the event is. Teams meeting chats are already identifiable (task 43), and Outlook reminders for events already on the calendar go through the calendar path (task 17 and 18), so this is about the invite itself.
 - Read: `internal/calendar`, `internal/classify/boost.go`, `internal/rules`, a captured Outlook invite and a Teams meeting invite (structure only, never message text in notes)
