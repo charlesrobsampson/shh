@@ -494,7 +494,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Manual check: rate a real alert from the banner, then see the label in the Train tab history and the score change in `shh replay`.
 
 ### 46 · Banner layout: stacks that follow Preview and Dismiss
-- [ ] Done
+- [x] Done
 - Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/46-banner-layout` · Depends: 44
 - Context: first manual run of task 44 found that Preview covered the banner below it, and that dismissing a banner in the middle left a gap while the ones above and below stayed where they were (each banner was placed once, when it started). The user asked for banners to be re-laid out after any button click, with the layout tracked as state so new alerts do not collide with what is on screen, and for Preview to have a Collapse button whose label is configurable.
