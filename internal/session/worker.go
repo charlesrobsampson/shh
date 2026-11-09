@@ -216,7 +216,7 @@ func (w *Worker) handle(e ingest.Event) error {
 	top := st.Layers[len(st.Layers)-1]
 
 	in := classify.Input{
-		Source: e.Source, BundleID: e.BundleID, Sender: e.Title, Title: e.Title, Subtitle: e.Subtitle, Body: e.Body, Category: e.Category,
+		Source: e.Source, BundleID: e.BundleID, Sender: e.Title, Title: e.Title, Subtitle: e.Subtitle, Body: e.Body, Category: e.Category, Thread: string(e.Thread),
 	}
 	score, err := w.classifier.Score(in, e.Delivered)
 	if err != nil {
@@ -233,7 +233,7 @@ func (w *Worker) handle(e ingest.Event) error {
 	n := store.Notification{
 		Source: e.Source, Sender: e.Title, Title: titleWithSubtitle(e), Body: e.Body, Timestamp: e.Delivered, Status: status,
 		Score: score.Base, Boost: score.Boost, Reason: score.Reason, BundleID: e.BundleID, SourceRecID: e.RecID,
-		ThresholdAtDecision: &level, SessionID: top.ID,
+		ThresholdAtDecision: &level, SessionID: top.ID, Thread: string(e.Thread),
 	}
 	id, inserted, err := w.cfg.Store.InsertNotification(n)
 	if err != nil || !inserted {

@@ -296,3 +296,69 @@ func TestVersionChangesWithTheFeatureConfiguration(t *testing.T) {
 		}
 	})
 }
+
+func TestTheAppsOwnThreadKindWinsOverGuessingFromTheText(t *testing.T) {
+	f := extractor(t, defaultRules(t))
+	tests := []struct {
+		name    string
+		in      classify.Input
+		want    []string
+		wantNot []string
+	}{
+		{"a direct chat whose sender name looks like a channel", classify.Input{Title: "Ana in General", Body: "x", Thread: "direct"},
+			[]string{"direct message"}, []string{"channel message", "group chat", "meeting chat"}},
+		{"a channel whose title looks like a person", classify.Input{Title: "Ana", Body: "x", Thread: "channel"},
+			[]string{"channel message"}, []string{"direct message"}},
+		{"a group chat", classify.Input{Title: "Ana", Body: "x", Thread: "group"},
+			[]string{"group chat"}, []string{"direct message", "channel message", "meeting chat"}},
+		{"a meeting chat", classify.Input{Title: "Weekly sync", Body: "x", Thread: "meeting"},
+			[]string{"meeting chat"}, []string{"direct message", "channel message", "group chat"}},
+		{"no thread kind falls back to the text", classify.Input{Title: "Ana in General", Body: "x"},
+			[]string{"channel message"}, []string{"direct message", "group chat", "meeting chat"}},
+		{"an unrecognised kind also falls back", classify.Input{Title: "Ana", Body: "x", Thread: "carrier pigeon"},
+			[]string{"direct message"}, []string{"channel message"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v := f.Extract(tt.in)
+			for _, label := range tt.want {
+				if !has(v, label) {
+					t.Errorf("missing %q; have %v", label, v.Labels)
+				}
+			}
+			for _, label := range tt.wantNot {
+				if has(v, label) {
+					t.Errorf("unexpected %q", label)
+				}
+			}
+		})
+	}
+}
+
+func TestThreadKindsOnlyUseNewSlotsSoTrainedWeightsStayValid(t *testing.T) {
+	f := extractor(t, defaultRules(t))
+	slot := func(in classify.Input, label string) int {
+		v := f.Extract(in)
+		for i, l := range v.Labels {
+			if l == label {
+				return v.Indices[i]
+			}
+		}
+		t.Fatalf("no %q in %v", label, v.Labels)
+		return -1
+	}
+	// The direct and channel flags keep the slots they always had, whether they come from the text or from the app.
+	if a, b := slot(classify.Input{Title: "Ana", Body: "x"}, "direct message"), slot(classify.Input{Title: "Ana", Body: "x", Thread: "direct"}, "direct message"); a != b {
+		t.Errorf("direct message moved from slot %d to %d", a, b)
+	}
+	if a, b := slot(classify.Input{Title: "Ana #x", Body: "x"}, "channel message"), slot(classify.Input{Title: "Ana", Body: "x", Thread: "channel"}, "channel message"); a != b {
+		t.Errorf("channel message moved from slot %d to %d", a, b)
+	}
+	// The new ones sit after every earlier slot and inside the reserved block.
+	for _, kind := range []string{"group", "meeting"} {
+		label := map[string]string{"group": "group chat", "meeting": "meeting chat"}[kind]
+		if got := slot(classify.Input{Title: "Ana", Body: "x", Thread: kind}, label); got < 8 || got >= classify.L0Slots {
+			t.Errorf("%s uses slot %d, want one of the spare slots 8 to %d", label, got, classify.L0Slots-1)
+		}
+	}
+}

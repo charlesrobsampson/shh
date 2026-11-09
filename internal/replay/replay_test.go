@@ -163,3 +163,20 @@ func TestInvalidThresholdsAreRejected(t *testing.T) {
 		}
 	}
 }
+
+func TestAThreadKindInTheInputChangesTheDecisionInputs(t *testing.T) {
+	line := func(thread string) string {
+		extra := ""
+		if thread != "" {
+			extra = `, "thread": "` + thread + `"`
+		}
+		return `{"source": "Teams", "sender": "Ana", "title": "Ana", "body": "can you look at this?"` + extra + `}` + "\n"
+	}
+	direct, channel, none := run(t, line("direct"), 65), run(t, line("channel"), 65), run(t, line(""), 65)
+	if direct == channel {
+		t.Errorf("a channel and a direct thread scored the same:\n%s", direct)
+	}
+	if none != direct {
+		t.Errorf("with no thread the text guess (a plain title is a direct message) should score like a direct thread:\n%s\nvs\n%s", none, direct)
+	}
+}

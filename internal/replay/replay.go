@@ -36,8 +36,10 @@ type line struct {
 	Subtitle string `json:"subtitle"`
 	Body     string `json:"body"`
 	Category string `json:"category"`
-	At       string `json:"at"`
-	Label    *int   `json:"label"`
+	// Thread is optional: direct, group, meeting or channel, as the app's metadata would say.
+	Thread string `json:"thread"`
+	At     string `json:"at"`
+	Label  *int   `json:"label"`
 }
 
 // Run reads JSON lines (source, sender, title, subtitle, body, category, and optionally at as RFC 3339 and label as 0-100) and
@@ -76,7 +78,7 @@ func Run(in io.Reader, out io.Writer, opt Options) error {
 				return fmt.Errorf("line %d: bad time %q: %w", lineNumber, row.At, err)
 			}
 		}
-		input := classify.Input{Source: row.Source, Sender: row.Sender, Title: row.Title, Subtitle: row.Subtitle, Body: row.Body, Category: row.Category}
+		input := classify.Input{Source: row.Source, Sender: row.Sender, Title: row.Title, Subtitle: row.Subtitle, Body: row.Body, Category: row.Category, Thread: row.Thread}
 		score, err := classifier.Score(input, at)
 		if err != nil {
 			return err
@@ -90,7 +92,7 @@ func Run(in io.Reader, out io.Writer, opt Options) error {
 		threshold := opt.Threshold
 		if _, _, err := s.InsertNotification(store.Notification{
 			Source: row.Source, Sender: row.Sender, Title: row.Title, Body: row.Body, Timestamp: at,
-			Status: status, Score: score.Base, Boost: score.Boost, ThresholdAtDecision: &threshold,
+			Status: status, Score: score.Base, Boost: score.Boost, ThresholdAtDecision: &threshold, Thread: row.Thread,
 		}); err != nil {
 			return fmt.Errorf("line %d: %w", lineNumber, err)
 		}

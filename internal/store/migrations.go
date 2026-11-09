@@ -111,4 +111,10 @@ CREATE TABLE ingest_seen (
 );
 CREATE INDEX ingest_seen_delivered ON ingest_seen (delivered);
 `,
+
+	// The kind of conversation (direct, group, meeting, channel) when the app's own metadata says, so that features can be worked out
+	// again from a stored row exactly as they were when it was decided.
+	`
+ALTER TABLE notifications ADD COLUMN thread TEXT;
+`,
 }

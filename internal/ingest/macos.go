@@ -103,6 +103,7 @@ type payload struct {
 		Body       string `plist:"body"`
 		Category   string `plist:"cate"`
 		Identifier string `plist:"iden"`
+		UserInfo   []byte `plist:"usda"`
 	} `plist:"req"`
 }
 
@@ -116,6 +117,7 @@ func decode(data []byte) (Notification, error) {
 	}
 	return Notification{
 		Title: p.Req.Title, Subtitle: p.Req.Subtitle, Body: p.Req.Body, Category: p.Req.Category, Identifier: p.Req.Identifier,
+		Thread: threadOf(p.Req.UserInfo),
 	}, nil
 }
 

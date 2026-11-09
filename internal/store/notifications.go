@@ -37,6 +37,8 @@ type Notification struct {
 	ThresholdAtDecision *int
 	SessionID           int64
 	Summary             string
+	// Thread is the kind of conversation (direct, group, meeting, channel) when the app said; empty when unknown.
+	Thread string
 
 	IsRead           bool
 	IsDismissedInbox bool
@@ -74,7 +76,7 @@ type Training struct {
 
 const notificationColumns = `id, source, sender, title, body, CAST(timestamp AS TEXT), status, predicted_score, time_sensitivity_boost,
 	reason, bundle_id, source_rec_id, threshold_at_decision, session_id, summary,
-	is_read, is_dismissed_inbox, is_trained, user_feedback, user_label`
+	is_read, is_dismissed_inbox, is_trained, user_feedback, user_label, thread`
 
 // InsertNotification stores n and reports whether it was new. A row with the same macOS record id and delivery time is ignored.
 func (s *Store) InsertNotification(n Notification) (id int64, inserted bool, err error) {
@@ -83,11 +85,11 @@ func (s *Store) InsertNotification(n Notification) (id int64, inserted bool, err
 	}
 	res, err := s.db.Exec(`INSERT INTO notifications
 		(source, sender, title, body, timestamp, status, predicted_score, time_sensitivity_boost,
-		 reason, bundle_id, source_rec_id, threshold_at_decision, session_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 reason, bundle_id, source_rec_id, threshold_at_decision, session_id, thread)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT DO NOTHING`,
 		n.Source, n.Sender, nullString(n.Title), n.Body, formatTime(n.Timestamp), string(n.Status), n.Score, n.Boost,
-		nullString(n.Reason), nullString(n.BundleID), nullID(n.SourceRecID), *n.ThresholdAtDecision, nullID(n.SessionID))
+		nullString(n.Reason), nullString(n.BundleID), nullID(n.SourceRecID), *n.ThresholdAtDecision, nullID(n.SessionID), nullString(n.Thread))
 	if err != nil {
 		return 0, false, err
 	}
@@ -210,14 +212,14 @@ type scanner interface{ Scan(dest ...any) error }
 
 func scanNotification(row scanner) (Notification, error) {
 	var (
-		n                                        Notification
-		status, stamp                            string
-		title, reason, bundle, summary, feedback sql.NullString
-		recID, threshold, session, label         sql.NullInt64
+		n                                                Notification
+		status, stamp                                    string
+		title, reason, bundle, summary, feedback, thread sql.NullString
+		recID, threshold, session, label                 sql.NullInt64
 	)
 	err := row.Scan(&n.ID, &n.Source, &n.Sender, &title, &n.Body, &stamp, &status, &n.Score, &n.Boost,
 		&reason, &bundle, &recID, &threshold, &session, &summary,
-		&n.IsRead, &n.IsDismissedInbox, &n.IsTrained, &feedback, &label)
+		&n.IsRead, &n.IsDismissedInbox, &n.IsTrained, &feedback, &label, &thread)
 	if err != nil {
 		return Notification{}, err
 	}
@@ -226,6 +228,7 @@ func scanNotification(row scanner) (Notification, error) {
 	}
 	n.Status = Status(status)
 	n.Title, n.Reason, n.BundleID, n.Summary, n.UserFeedback = title.String, reason.String, bundle.String, summary.String, feedback.String
+	n.Thread = thread.String
 	n.SourceRecID, n.SessionID = recID.Int64, session.Int64
 	if threshold.Valid {
 		v := int(threshold.Int64)
