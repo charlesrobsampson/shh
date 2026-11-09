@@ -25,6 +25,7 @@ import (
 	"github.com/charlesrobsampson/shh/internal/config"
 	"github.com/charlesrobsampson/shh/internal/ingest"
 	"github.com/charlesrobsampson/shh/internal/menubar"
+	"github.com/charlesrobsampson/shh/internal/routine"
 	"github.com/charlesrobsampson/shh/internal/rules"
 	"github.com/charlesrobsampson/shh/internal/session"
 	"github.com/charlesrobsampson/shh/internal/store"
@@ -65,6 +66,7 @@ func realEnv() cli.Env {
 		os.Exit(1)
 	}
 	env.SocketPath, env.ConfigDir, env.Label = cfg.Paths.Socket, cfg.Paths.Dir, cfg.Menubar.Label
+	env.RoutinesPath, env.Stdin = routine.DefaultPath(cfg.Paths.Dir), os.Stdin
 	env.Spawn = func() error { return spawnDaemon(cfg) }
 	env.PersistedFocus = func() bool { return persistedFocus(cfg.Paths.DB) }
 	env.Daemon = func(context.Context) error { return runDaemon(cfg) }
@@ -203,7 +205,8 @@ func runDaemon(cfg config.Config) error {
 		Worker: worker, Clock: clock.Real{}, SocketPath: cfg.Paths.Socket,
 		LockPath: filepath.Join(cfg.Paths.Dir, "shh.lock"), PIDPath: cfg.Paths.PID, OnError: onError,
 		// Banners stay until dismissed, and only this process can lay them out, so do not leave while any are up.
-		Busy: func() bool { return overlay.Active() > 0 },
+		// A routine waiting for the user may have nothing in force, but it still needs this process to carry on.
+		Busy: func() bool { return overlay.Active() > 0 || worker.RoutineActive() },
 	})
 }
 

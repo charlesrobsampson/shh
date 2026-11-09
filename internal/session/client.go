@@ -121,6 +121,33 @@ func (c *Client) call(req Request) (Response, error) {
 	return readResponse(scanner)
 }
 
+// RoutineRun starts a saved routine.
+func (c *Client) RoutineRun(name string) (RoutineInfo, error) {
+	return c.routine(Request{Cmd: "routine_run", Name: name})
+}
+
+// RoutineNext starts the step a waiting routine is waiting on, or skips to the next step of a running one.
+func (c *Client) RoutineNext() (RoutineInfo, error) { return c.routine(Request{Cmd: "routine_next"}) }
+
+// RoutineBack restarts the step before the one in focus.
+func (c *Client) RoutineBack() (RoutineInfo, error) { return c.routine(Request{Cmd: "routine_back"}) }
+
+// RoutineStop ends the routine run.
+func (c *Client) RoutineStop() (RoutineInfo, error) { return c.routine(Request{Cmd: "routine_stop"}) }
+
+// RoutineStatus is the routine run in progress and the last one that ended.
+func (c *Client) RoutineStatus() (RoutineInfo, error) {
+	return c.routine(Request{Cmd: "routine_status"})
+}
+
+func (c *Client) routine(req Request) (RoutineInfo, error) {
+	resp, err := c.call(req)
+	if err != nil || resp.Routine == nil {
+		return RoutineInfo{}, err
+	}
+	return *resp.Routine, nil
+}
+
 // Train labels a stored notification, teaching the worker's model, and says how its score moved.
 func (c *Client) Train(req TrainRequest) (TrainView, error) {
 	resp, err := c.call(Request{Cmd: "train", NotificationID: req.NotificationID, Label: req.Label, Feedback: req.Feedback})

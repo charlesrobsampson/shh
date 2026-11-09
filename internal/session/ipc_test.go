@@ -15,6 +15,7 @@ import (
 
 	"github.com/charlesrobsampson/shh/internal/alert"
 	"github.com/charlesrobsampson/shh/internal/config"
+	"github.com/charlesrobsampson/shh/internal/routine"
 	"github.com/charlesrobsampson/shh/internal/session"
 )
 
@@ -53,9 +54,9 @@ func (r *ipcRig) shutdown() error {
 	return r.result
 }
 
-func newIPCRig(t *testing.T) *ipcRig {
+func newIPCRig(t *testing.T, tweak ...func(*session.Config)) *ipcRig {
 	t.Helper()
-	r := &ipcRig{workerRig: newWorkerRig(t), path: shortSocketPath(t)}
+	r := &ipcRig{workerRig: newWorkerRig(t, tweak...), path: shortSocketPath(t)}
 	r.client = session.NewClient(r.path)
 	ctx, cancel := context.WithCancel(context.Background())
 	r.stop = cancel
@@ -496,5 +497,83 @@ func TestAnAlertSentToTheWorkerKeepsItsNotificationId(t *testing.T) {
 	}
 	if got := r.alerter.Shown(); len(got) != 1 || got[0].NotificationID != -1 {
 		t.Errorf("worker showed %+v, want the demo notification id kept", got)
+	}
+}
+
+func newRoutineIPCRig(t *testing.T, text string) *ipcRig {
+	t.Helper()
+	return newIPCRig(t, func(c *session.Config) {
+		c.Routines = func() ([]routine.Routine, error) { return routine.Parse("routines.json", []byte(text)) }
+	})
+}
+
+func TestAClientCanRunAndControlARoutineThroughTheWorker(t *testing.T) {
+	r := newRoutineIPCRig(t, askRoutine("stay"))
+	info, err := r.client.RoutineRun("ask")
+	if err != nil || info.Active == nil || info.Active.Step != "work" || info.Active.Total != 2 || info.Active.Waiting {
+		t.Fatalf("RoutineRun = %+v, %v", info, err)
+	}
+	st, err := r.client.Status()
+	if err != nil || st.Routine == nil || st.Routine.Name != "ask" || st.Level != 75 {
+		t.Fatalf("the focus status should carry the routine: %+v, %v", st.Routine, err)
+	}
+	r.clock.Advance(25 * time.Minute)
+	r.tick()
+	if info, err = r.client.RoutineStatus(); err != nil || info.Active == nil || !info.Active.Waiting || info.Active.Previous != "work" {
+		t.Fatalf("RoutineStatus while waiting = %+v, %v", info.Active, err)
+	}
+	if info, err = r.client.RoutineBack(); err != nil || info.Active.Step != "work" || info.Active.Waiting {
+		t.Fatalf("RoutineBack = %+v, %v", info.Active, err)
+	}
+	if info, err = r.client.RoutineNext(); err != nil || info.Active == nil || info.Active.Step != "break" {
+		t.Fatalf("RoutineNext = %+v, %v", info.Active, err)
+	}
+	if info, err = r.client.RoutineStop(); err != nil || info.Active != nil || info.Last == nil || info.Last.Reason != "stopped" || info.Last.Steps != 2 {
+		t.Fatalf("RoutineStop = %+v, %v", info, err)
+	}
+	if st, _ := r.client.Status(); st.Routine != nil {
+		t.Errorf("the status should no longer carry a routine: %+v", st.Routine)
+	}
+}
+
+func TestRoutineErrorsKeepTheirKindAcrossTheSocket(t *testing.T) {
+	r := newRoutineIPCRig(t, askRoutine("stay"))
+	if _, err := r.client.RoutineNext(); !errors.Is(err, session.ErrNoRoutine) {
+		t.Errorf("next with no run: %v", err)
+	}
+	if _, err := r.client.RoutineRun("nope"); !errors.Is(err, session.ErrUnknownRoutine) {
+		t.Errorf("unknown routine: %v", err)
+	}
+	if _, err := r.client.RoutineRun("ask"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.client.RoutineRun("ask"); !errors.Is(err, session.ErrRoutineRunning) {
+		t.Errorf("a second run: %v", err)
+	}
+	lvl := 90
+	if _, err := r.client.Focus(lvl, 0, nil, ""); !errors.Is(err, session.ErrRoutineRunning) {
+		t.Errorf("a manual session during a routine: %v, want ErrRoutineRunning across the socket", err)
+	}
+	if _, err := r.client.Stop(false); !errors.Is(err, session.ErrRoutineRunning) {
+		t.Errorf("stop during a routine: %v", err)
+	}
+	if _, err := r.client.Stop(true); !errors.Is(err, session.ErrRoutineRunning) {
+		t.Errorf("stop --all during a routine: %v", err)
+	}
+	if st, _ := r.client.Status(); st.Level != 75 {
+		t.Errorf("refusals changed the level to %d", st.Level)
+	}
+}
+
+func TestTheStatusOfALastRunSurvivesWithNothingActive(t *testing.T) {
+	r := newRoutineIPCRig(t, `{"routines": [{"name": "r", "steps": [{"name": "a", "length": "5m"}]}]}`)
+	if _, err := r.client.RoutineRun("r"); err != nil {
+		t.Fatal(err)
+	}
+	r.clock.Advance(5 * time.Minute)
+	r.tick()
+	info, err := r.client.RoutineStatus()
+	if err != nil || info.Active != nil || info.Last == nil || info.Last.Reason != "finished" || info.Last.Name != "r" {
+		t.Errorf("info = %+v, %v", info, err)
 	}
 }

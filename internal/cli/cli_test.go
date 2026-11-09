@@ -15,6 +15,7 @@ import (
 	"github.com/charlesrobsampson/shh/internal/cli"
 	"github.com/charlesrobsampson/shh/internal/config"
 	"github.com/charlesrobsampson/shh/internal/decide"
+	"github.com/charlesrobsampson/shh/internal/routine"
 	"github.com/charlesrobsampson/shh/internal/rules"
 	"github.com/charlesrobsampson/shh/internal/session"
 	"github.com/charlesrobsampson/shh/internal/store"
@@ -36,6 +37,7 @@ type rig struct {
 	stop       context.CancelFunc
 	served     chan struct{}
 	spawns     int
+	routines   string // the path of routines.json
 }
 
 func shortSocketPath(t *testing.T) string {
@@ -61,13 +63,16 @@ func newRig(t *testing.T, serve bool) *rig {
 	if err != nil {
 		t.Fatal(err)
 	}
+	configDir := t.TempDir()
+	r.routines = filepath.Join(configDir, "routines.json")
 	r.worker, err = session.NewWorker(session.Config{
 		Store: s, Source: testkit.NewFakeSource(), Clock: r.clock, Rules: rl, Alerter: r.alerter, Suppressor: r.suppressor, Location: time.UTC,
+		Routines: func() ([]routine.Routine, error) { return routine.Load(r.routines) },
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.env = cli.Env{Stdout: &r.out, Stderr: &r.err, SocketPath: r.socket, ConfigDir: t.TempDir(), Version: "test", Label: "shh", SpawnWait: 500 * time.Millisecond}
+	r.env = cli.Env{Stdout: &r.out, Stderr: &r.err, SocketPath: r.socket, ConfigDir: configDir, RoutinesPath: r.routines, Version: "test", Label: "shh", SpawnWait: 500 * time.Millisecond}
 	if serve {
 		r.serve()
 	}

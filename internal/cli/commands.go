@@ -19,11 +19,12 @@ import (
 )
 
 type focusCmd struct {
-	Timer string   `short:"t" help:"Session length such as 25m or 1h30m; 0 means until stopped (the default)."`
-	Focus string   `short:"f" help:"Threshold: a percentage like 75% or a tier: off (0), light (35%), medium (65%), deep (90%), lockdown (99%). Default: medium."`
-	Note  string   `short:"m" help:"A note about what you are doing."`
-	Then  string   `aliases:"clear" help:"What to fall back to when the timer ends: a percentage or a tier (see -f). Default: the layer beneath."`
-	Words []string `arg:"" optional:"" name:"note" help:"The note, as plain words (same as -m). A leading level or length is read as one, so \"shh focus deep 25m writing\" works; tiers: off (0), light (35%), medium (65%), deep (90%), lockdown (99%)."`
+	Timer      string   `short:"t" help:"Session length such as 25m or 1h30m; 0 means until stopped (the default)."`
+	Focus      string   `short:"f" help:"Threshold: a percentage like 75% or a tier: off (0), light (35%), medium (65%), deep (90%), lockdown (99%). Default: medium."`
+	Note       string   `short:"m" help:"A note about what you are doing."`
+	Then       string   `aliases:"clear" help:"What to fall back to when the timer ends: a percentage or a tier (see -f). Default: the layer beneath."`
+	EndRoutine bool     `name:"end-routine" help:"If a routine is running, end it and start this session (without it you are asked)."`
+	Words      []string `arg:"" optional:"" name:"note" help:"The note, as plain words (same as -m). A leading level or length is read as one, so \"shh focus deep 25m writing\" works; tiers: off (0), light (35%), medium (65%), deep (90%), lockdown (99%)."`
 }
 
 func (c *focusCmd) Run(env *Env) error {
@@ -64,6 +65,13 @@ func (c *focusCmd) Run(env *Env) error {
 		return err
 	}
 	view, err := env.client().Focus(level, duration, then, note)
+	if errors.Is(err, session.ErrRoutineRunning) {
+		ended, askErr := env.endRoutineFirst(err, c.EndRoutine, "start this session")
+		if askErr != nil || !ended {
+			return askErr
+		}
+		view, err = env.client().Focus(level, duration, then, note)
+	}
 	if err != nil {
 		return err
 	}
@@ -72,7 +80,8 @@ func (c *focusCmd) Run(env *Env) error {
 }
 
 type stopCmd struct {
-	All bool `help:"Also clear the baseline, ending all focus."`
+	All        bool `help:"Also clear the baseline, ending all focus."`
+	EndRoutine bool `name:"end-routine" help:"If a routine is running, end it too (without it you are asked)."`
 }
 
 func (c *stopCmd) Run(env *Env) error {
@@ -80,6 +89,18 @@ func (c *stopCmd) Run(env *Env) error {
 	if errors.Is(err, session.ErrNotRunning) {
 		fmt.Fprintln(env.Stdout, "shh is not running; nothing to stop")
 		return nil
+	}
+	if errors.Is(err, session.ErrRoutineRunning) {
+		ended, askErr := env.endRoutineFirst(err, c.EndRoutine, "stop")
+		if askErr != nil || !ended {
+			return askErr
+		}
+		// Ending the routine closed the session it was running, which is what stop asked for; only --all has more (the baseline) to do.
+		if c.All {
+			view, err = env.client().Stop(true)
+		} else {
+			view, err = env.client().Status()
+		}
 	}
 	if err != nil {
 		return err

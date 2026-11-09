@@ -29,6 +29,10 @@ type Env struct {
 	Label string
 	// IsTerminal says whether stdout is a terminal; bare `shh` opens the UI only then.
 	IsTerminal bool
+	// Stdin is where questions are answered from; nil means they cannot be asked.
+	Stdin io.Reader
+	// RoutinesPath is the saved routines file, which the list and example commands read without a worker.
+	RoutinesPath string
 	// TUI opens the terminal UI. Nil when it is not available.
 	TUI func() error
 	// Spawn starts a worker in the background when none is running. Nil when that is not possible.
@@ -57,6 +61,7 @@ type cli struct {
 	Status   statusCmd   `cmd:"" help:"Show the focus levels in force and the time left."`
 	Pause    pauseCmd    `cmd:"" help:"Pause the countdown of the current timed session."`
 	Resume   resumeCmd   `cmd:"" help:"Resume a paused countdown."`
+	Routine  routineCmd  `cmd:"" help:"Saved sequences of focus sessions, such as a pomodoro."`
 	Alert    alertCmd    `cmd:"" help:"Alert tools."`
 	Replay   replayCmd   `cmd:"" help:"Run the classifier over a file of notifications and print each decision."`
 	Daemon   daemonCmd   `cmd:"" hidden:"" help:"Run the background worker (started by shh itself)."`

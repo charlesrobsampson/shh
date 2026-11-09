@@ -41,6 +41,8 @@ type Config struct {
 	OnError func(error)
 	// OnDecision is told about every notification that was decided. Optional.
 	OnDecision func(Decision)
+	// Routines loads the saved routines (routines.json). Nil means there are none.
+	Routines RoutineLoader
 }
 
 // Decision is the outcome for one notification.
@@ -58,6 +60,7 @@ type Worker struct {
 	stack      *Stack
 	classifier *classify.Classifier
 	parser     *calendar.Parser
+	routines   *routineRunner
 	scheduler  *calendar.Scheduler
 	tailer     *ingest.Tailer
 
@@ -83,6 +86,7 @@ func NewWorker(cfg Config) (*Worker, error) {
 			Clock: cfg.Clock, Store: cfg.Store, Alerter: cfg.Alerter, Location: cfg.Location, OnError: cfg.OnError,
 		}),
 	}
+	w.routines = newRoutineRunner(w)
 	w.tailer = ingest.NewTailer(ingest.Config{
 		Source: cfg.Source, Store: cfg.Store, Clock: cfg.Clock, Sources: cfg.Rules.Sources, OwnBundles: cfg.OwnBundles,
 		Interval: cfg.Interval, Handle: w.handle, OnError: cfg.OnError,
@@ -97,14 +101,28 @@ func (w *Worker) SetBaseline(level int) error {
 }
 
 func (w *Worker) Escalate(e Escalation) (int64, error) {
+	if w.routines.Active() {
+		return 0, ErrRoutineRunning
+	}
 	id, err := w.stack.Escalate(e)
 	return id, w.then(err)
 }
 
-func (w *Worker) Stop() error    { return w.then(w.stack.Stop()) }
-func (w *Worker) StopAll() error { return w.then(w.stack.StopAll()) }
-func (w *Worker) Pause() error   { return w.then(w.stack.Pause()) }
-func (w *Worker) Resume() error  { return w.then(w.stack.Resume()) }
+func (w *Worker) Stop() error {
+	if w.routines.Active() {
+		return ErrRoutineRunning
+	}
+	return w.then(w.stack.Stop())
+}
+
+func (w *Worker) StopAll() error {
+	if w.routines.Active() {
+		return ErrRoutineRunning
+	}
+	return w.then(w.stack.StopAll())
+}
+func (w *Worker) Pause() error  { return w.then(w.stack.Pause()) }
+func (w *Worker) Resume() error { return w.then(w.stack.Resume()) }
 
 func (w *Worker) Adjust(delta time.Duration) error { return w.then(w.stack.Adjust(delta)) }
 func (w *Worker) SetLevel(level int) error         { return w.then(w.stack.SetLevel(level)) }
@@ -160,6 +178,9 @@ func (w *Worker) Init(backfillSince time.Time) error {
 // Tick runs one cycle: bring the suppressor in line with the effective level (a timed layer may have ended), then poll for
 // new notifications.
 func (w *Worker) Tick() error {
+	if err := w.routines.Tick(); err != nil && w.cfg.OnError != nil {
+		w.cfg.OnError(fmt.Errorf("routine: %w", err))
+	}
 	if err := w.syncSuppressor(); err != nil {
 		return err
 	}
@@ -341,3 +362,21 @@ func (w *Worker) showAlert(msg *AlertMsg) error {
 	}
 	return w.cfg.Alerter.Show(alert.Alert{Kind: kind, Source: msg.Source, BundleID: msg.BundleID, NotificationID: msg.NotificationID, Title: msg.Title, Body: msg.Body})
 }
+
+// RoutineStart begins a saved routine at its first step.
+func (w *Worker) RoutineStart(name string) error { return w.routines.Start(name) }
+
+// RoutineNext starts the step a waiting routine is waiting on, or skips to the next step of a running one.
+func (w *Worker) RoutineNext() error { return w.routines.Next() }
+
+// RoutineBack restarts the step before the one in focus.
+func (w *Worker) RoutineBack() error { return w.routines.Back() }
+
+// RoutineStop ends the routine run, closing its focus level.
+func (w *Worker) RoutineStop() error { return w.routines.Stop() }
+
+// RoutineActive says whether a routine run is in progress. The worker must stay up while one is, even with nothing in force.
+func (w *Worker) RoutineActive() bool { return w.routines.Active() }
+
+// RoutineInfo is the routine run in progress and the last one that ended.
+func (w *Worker) RoutineInfo() (RoutineInfo, error) { return w.routines.Info() }

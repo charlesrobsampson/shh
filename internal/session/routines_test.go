@@ -1,0 +1,604 @@
+package session_test
+
+import (
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/charlesrobsampson/shh/internal/routine"
+	"github.com/charlesrobsampson/shh/internal/session"
+)
+
+// pomodoroLite is a short routine: two rounds of work then break, and a long break at the end.
+const pomodoroLite = `{"routines": [{
+  "name": "pomo", "repeat": 2,
+  "steps": [
+    {"name": "work", "level": "75%", "length": "25m", "note": "focus", "alert": "banner"},
+    {"name": "break", "level": "off", "length": "5m", "alert": "banner"}
+  ],
+  "finish": [{"name": "long break", "level": "off", "length": "15m"}]
+}]}`
+
+// routineRig is a worker rig whose routines come from a text that tests can change.
+type routineRig struct {
+	*workerRig
+	text *string
+}
+
+func newRoutineRig(t *testing.T, text string) *routineRig {
+	t.Helper()
+	rr := &routineRig{text: &text}
+	rr.workerRig = newWorkerRig(t, func(c *session.Config) {
+		c.Routines = func() ([]routine.Routine, error) { return routine.Parse("routines.json", []byte(*rr.text)) }
+	})
+	return rr
+}
+
+// restart builds a second worker over the same store, clock and fakes, as a worker restarting would.
+func (r *routineRig) restart() {
+	r.t.Helper()
+	r.worker = r.build(func(c *session.Config) {
+		c.Routines = func() ([]routine.Routine, error) { return routine.Parse("routines.json", []byte(*r.text)) }
+	})
+}
+
+func (r *routineRig) start(name string) {
+	r.t.Helper()
+	if err := r.worker.RoutineStart(name); err != nil {
+		r.t.Fatalf("RoutineStart(%q): %v", name, err)
+	}
+}
+
+// pass moves the clock on and lets the worker notice, as its regular tick does.
+func (r *routineRig) pass(d time.Duration) {
+	r.t.Helper()
+	r.clock.Advance(d)
+	r.tick()
+}
+
+func (r *routineRig) status() session.Status {
+	r.t.Helper()
+	st, err := r.worker.Status()
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	return st
+}
+
+func (r *routineRig) top() session.Layer {
+	r.t.Helper()
+	st := r.status()
+	if len(st.Layers) == 0 {
+		r.t.Fatal("nothing is in force")
+	}
+	return st.Layers[len(st.Layers)-1]
+}
+
+func (r *routineRig) info() session.RoutineInfo {
+	r.t.Helper()
+	info, err := r.worker.RoutineInfo()
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	return info
+}
+
+func (r *routineRig) shown() []string {
+	var titles []string
+	for _, a := range r.alerter.Shown() {
+		titles = append(titles, a.Title+" | "+a.Body)
+	}
+	return titles
+}
+
+func TestStartingARoutineBeginsItsFirstStepAsATimedSession(t *testing.T) {
+	r := newRoutineRig(t, pomodoroLite)
+	r.start("POMO") // names are found ignoring case
+	top := r.top()
+	if top.Percent != 75 || !top.Timed || top.Remaining != 25*time.Minute {
+		t.Errorf("top = %+v, want a 25 minute session at 75%%", top)
+	}
+	if want := "pomo · work (1/2) · focus"; top.Note != want {
+		t.Errorf("note = %q, want %q", top.Note, want)
+	}
+	v := r.info().Active
+	if v == nil || v.Name != "pomo" || v.Position != 0 || v.Total != 5 || v.Step != "work (1/2)" || v.Next != "break (1/2)" || v.Waiting || v.Level != 75 || v.LengthSecs != 1500 {
+		t.Errorf("view = %+v", v)
+	}
+	if !r.suppressor.Running() {
+		t.Error("the banner suppressor should run while a step with focus is in force")
+	}
+}
+
+func TestARoutineGoesThroughEveryStepFinishingOnTheLongBreak(t *testing.T) {
+	r := newRoutineRig(t, pomodoroLite)
+	r.start("pomo")
+	type want struct {
+		step  string
+		level int
+		left  time.Duration
+		after time.Duration // how long this step lasts before the next begins
+	}
+	for _, w := range []want{
+		{"work (1/2)", 75, 25 * time.Minute, 25 * time.Minute},
+		{"break (1/2)", 0, 5 * time.Minute, 5 * time.Minute},
+		{"work (2/2)", 75, 25 * time.Minute, 25 * time.Minute},
+		{"break (2/2)", 0, 5 * time.Minute, 5 * time.Minute},
+		{"long break", 0, 15 * time.Minute, 15 * time.Minute},
+	} {
+		v := r.info().Active
+		if v == nil || v.Step != w.step {
+			t.Fatalf("expected to be at %q, got %+v", w.step, v)
+		}
+		top := r.top()
+		if top.Percent != w.level || top.Remaining != w.left {
+			t.Errorf("%s: level %d with %v left, want %d with %v", w.step, top.Percent, top.Remaining, w.level, w.left)
+		}
+		r.pass(w.after)
+	}
+	if r.info().Active != nil {
+		t.Error("the run should have finished")
+	}
+	if len(r.status().Layers) != 0 {
+		t.Errorf("nothing should be in force after the last step: %+v", r.status().Layers)
+	}
+	if r.suppressor.Running() {
+		t.Error("the suppressor should stop when the routine is over")
+	}
+}
+
+func TestStepAlertsAnnounceWhatComesNext(t *testing.T) {
+	r := newRoutineRig(t, pomodoroLite)
+	r.start("pomo")
+	r.pass(25 * time.Minute)
+	shown := r.shown()
+	if len(shown) != 1 || !strings.HasPrefix(shown[0], "work is over | Next: break (1/2), 5m at off") {
+		t.Fatalf("alerts after work = %v", shown)
+	}
+	if a := r.alerter.Shown()[0]; a.Source != "Routine" {
+		t.Errorf("source = %q, want Routine so the banner header says where it came from", a.Source)
+	}
+	r.pass(5 * time.Minute)
+	if got := r.shown(); len(got) != 2 || !strings.HasPrefix(got[1], "break is over | Next: work (2/2), 25m at 75%") {
+		t.Errorf("alerts after break = %v", got)
+	}
+}
+
+func TestOnlyStepsThatAskForABannerAnnounceTheirEnd(t *testing.T) {
+	r := newRoutineRig(t, pomodoroLite)
+	r.start("pomo")
+	r.pass(25 * time.Minute) // work: banner
+	r.pass(5 * time.Minute)  // break: banner
+	r.pass(25 * time.Minute) // work again
+	r.pass(5 * time.Minute)  // break again
+	before := len(r.alerter.Shown())
+	r.pass(15 * time.Minute) // the long break has no alert, and it is the last step
+	for _, a := range r.alerter.Shown()[before:] {
+		if strings.Contains(a.Title, "long break") {
+			t.Errorf("the long break has no alert but showed %q", a.Title)
+		}
+	}
+}
+
+func TestAFinishedRoutineShowsASummaryOfWhatItHeldBack(t *testing.T) {
+	r := newRoutineRig(t, `{"routines": [{"name": "r", "steps": [{"name": "work", "level": "75%", "length": "10m"}]}]}`)
+	r.start("r")
+	r.postAndTick(teams, "Ana", "lunch menu for friday")     // held back
+	r.postAndTick(teams, "Ops", "prod outage, need you now") // let through
+	r.pass(10 * time.Minute)
+	info := r.info()
+	if info.Active != nil || info.Last == nil {
+		t.Fatalf("info = %+v", info)
+	}
+	l := info.Last
+	if l.Name != "r" || l.Reason != "finished" || l.Steps != 1 || l.Total != 1 || l.Held != 1 || l.Let != 1 || l.ElapsedSecs < 600 {
+		t.Errorf("summary = %+v", l)
+	}
+	shown := r.shown()
+	if got := shown[len(shown)-1]; !strings.HasPrefix(got, "r finished | 1 steps in 10m. Held back 1 notification, let through 1.") {
+		t.Errorf("summary banner = %q", got)
+	}
+}
+
+func TestTheSummaryBannerFollowsTheRoutinesSummarySetting(t *testing.T) {
+	r := newRoutineRig(t, `{"routines": [{"name": "quiet", "summary": ["ui"], "steps": [{"name": "work", "length": "10m"}]}]}`)
+	r.start("quiet")
+	r.pass(10 * time.Minute)
+	if got := r.shown(); len(got) != 0 {
+		t.Errorf("a routine whose summary is ui only showed a banner: %v", got)
+	}
+	if r.info().Last == nil {
+		t.Error("the summary should still be recorded for the UI")
+	}
+}
+
+func TestStartingNeedsAKnownRoutineAndOnlyOneRunsAtATime(t *testing.T) {
+	r := newRoutineRig(t, pomodoroLite)
+	if err := r.worker.RoutineStart("nope"); !errors.Is(err, session.ErrUnknownRoutine) {
+		t.Errorf("unknown routine: err = %v", err)
+	}
+	r.start("pomo")
+	if err := r.worker.RoutineStart("pomo"); !errors.Is(err, session.ErrRoutineRunning) {
+		t.Errorf("a second start: err = %v, want ErrRoutineRunning", err)
+	}
+}
+
+func TestRoutineCommandsWithNoRunSayNoRoutineIsRunning(t *testing.T) {
+	r := newRoutineRig(t, pomodoroLite)
+	for name, do := range map[string]func() error{"next": r.worker.RoutineNext, "back": r.worker.RoutineBack, "stop": r.worker.RoutineStop} {
+		if err := do(); !errors.Is(err, session.ErrNoRoutine) {
+			t.Errorf("%s with no run: err = %v, want ErrNoRoutine", name, err)
+		}
+	}
+	if r.info().Active != nil || r.info().Last != nil {
+		t.Errorf("info = %+v, want nothing", r.info())
+	}
+}
+
+func TestARoutineWithNoLoaderOrABrokenFileCannotStart(t *testing.T) {
+	r := newWorkerRig(t)
+	if err := r.worker.RoutineStart("pomo"); !errors.Is(err, session.ErrUnknownRoutine) {
+		t.Errorf("no loader: err = %v", err)
+	}
+	rr := newRoutineRig(t, `{"routines": [{"name": "x", "steps": []}]}`)
+	if err := rr.worker.RoutineStart("x"); err == nil || !strings.Contains(err.Error(), "routines[0].steps") {
+		t.Errorf("a broken file: err = %v, want the file's problem", err)
+	}
+}
+
+// askRoutine has a work step that waits for the user before the break, in the given waiting mode.
+func askRoutine(waiting string) string {
+	return `{"routines": [{"name": "ask", "waiting": "` + waiting + `",
+	  "steps": [
+	    {"name": "work", "level": "75%", "length": "25m", "advance": "ask", "alert": "banner"},
+	    {"name": "break", "level": "30%", "length": "5m"}
+	  ]}]}`
+}
+
+func TestAStepThatAsksWaitsForTheUserAndStayKeepsTheLevelUntimed(t *testing.T) {
+	r := newRoutineRig(t, askRoutine("stay"))
+	r.start("ask")
+	r.pass(25 * time.Minute)
+	v := r.info().Active
+	if v == nil || !v.Waiting || v.Step != "break" || v.Previous != "work" || v.Position != 1 {
+		t.Fatalf("after work the run should be waiting to start the break: %+v", v)
+	}
+	top := r.top()
+	if top.Percent != 75 || top.Timed {
+		t.Errorf("top = %+v, want the work level held at 75%% with no timer", top)
+	}
+	if !strings.Contains(top.Note, "waiting to start break") {
+		t.Errorf("note = %q", top.Note)
+	}
+	r.pass(2 * time.Hour) // however long the user takes, focus does not drop and nothing starts
+	if v := r.info().Active; v == nil || !v.Waiting || r.top().Percent != 75 {
+		t.Errorf("a long wait changed something: %+v, level %d", v, r.top().Percent)
+	}
+	if !r.suppressor.Running() {
+		t.Error("notifications must stay held back while waiting in stay mode")
+	}
+	if got := r.shown(); len(got) != 1 || !strings.Contains(got[0], "shh routine next") {
+		t.Errorf("the banner should say how to carry on: %v", got)
+	}
+	if err := r.worker.RoutineNext(); err != nil {
+		t.Fatal(err)
+	}
+	top = r.top()
+	if top.Percent != 30 || !top.Timed || top.Remaining != 5*time.Minute || len(r.status().Layers) != 1 {
+		t.Errorf("after next: %+v, layers %d; want only the 5 minute break at 30%%", top, len(r.status().Layers))
+	}
+	if v := r.info().Active; v.Waiting || v.Step != "break" {
+		t.Errorf("view = %+v", v)
+	}
+}
+
+func TestWaitingInNextModePutsTheNextLevelInForceWithItsTimerHeld(t *testing.T) {
+	r := newRoutineRig(t, askRoutine("next"))
+	r.start("ask")
+	r.pass(25 * time.Minute)
+	top := r.top()
+	if top.Percent != 30 || !top.Paused || top.Remaining != 5*time.Minute {
+		t.Fatalf("top = %+v, want the break's level in force with its 5 minutes held", top)
+	}
+	r.pass(time.Hour)
+	if top := r.top(); !top.Paused || top.Remaining != 5*time.Minute {
+		t.Errorf("a held timer ran: %+v", top)
+	}
+	must(t, r.worker.RoutineNext())
+	top = r.top()
+	if top.Paused || top.Percent != 30 || top.Remaining != 5*time.Minute || len(r.status().Layers) != 1 {
+		t.Errorf("after next: %+v, layers %d; want the same break session running", top, len(r.status().Layers))
+	}
+	r.pass(5 * time.Minute)
+	if r.info().Active != nil {
+		t.Error("the break was the last step, so the run should be over")
+	}
+}
+
+func TestWaitingInBaselineModeFallsBackToWhatIsBeneath(t *testing.T) {
+	r := newRoutineRig(t, askRoutine("baseline"))
+	must(t, r.worker.SetBaseline(20))
+	r.start("ask")
+	r.pass(25 * time.Minute)
+	if top := r.top(); top.Percent != 20 || top.Kind != "baseline" {
+		t.Errorf("top = %+v, want the baseline", top.Level)
+	}
+	v := r.info().Active
+	if v == nil || !v.Waiting {
+		t.Fatalf("view = %+v", v)
+	}
+	r.pass(time.Hour)
+	must(t, r.worker.RoutineNext())
+	if top := r.top(); top.Percent != 30 || !top.Timed {
+		t.Errorf("after next: %+v", top)
+	}
+}
+
+func TestWaitingInBaselineModeWithNothingInForceKeepsTheWorkerAlive(t *testing.T) {
+	r := newRoutineRig(t, askRoutine("baseline"))
+	r.start("ask")
+	r.pass(25 * time.Minute)
+	if len(r.status().Layers) != 0 {
+		t.Fatalf("layers = %+v, want nothing in force", r.status().Layers)
+	}
+	if !r.worker.RoutineActive() {
+		t.Error("a waiting routine must count as active, or an idle worker would exit and lose it")
+	}
+	must(t, r.worker.RoutineStop())
+	if r.worker.RoutineActive() {
+		t.Error("a stopped routine is not active")
+	}
+}
+
+func TestWaitingDefaultsToStay(t *testing.T) {
+	r := newRoutineRig(t, `{"routines": [{"name": "d", "steps": [{"name": "a", "level": "60%", "length": "5m", "advance": "ask"}, {"name": "b", "length": "5m"}]}]}`)
+	r.start("d")
+	r.pass(5 * time.Minute)
+	if top := r.top(); top.Percent != 60 || top.Timed {
+		t.Errorf("top = %+v, want the level held (stay is the default)", top)
+	}
+}
+
+func TestNextOnARunningStepSkipsStraightToTheNextWithoutWaitingOrAnnouncing(t *testing.T) {
+	r := newRoutineRig(t, askRoutine("stay"))
+	r.start("ask")
+	r.pass(10 * time.Minute)
+	must(t, r.worker.RoutineNext()) // work asks for confirmation when it runs out, but a skip goes straight on
+	v := r.info().Active
+	if v == nil || v.Waiting || v.Step != "break" {
+		t.Fatalf("view = %+v", v)
+	}
+	if top := r.top(); top.Percent != 30 || top.Remaining != 5*time.Minute || len(r.status().Layers) != 1 {
+		t.Errorf("top = %+v, layers %d", top, len(r.status().Layers))
+	}
+	if got := r.shown(); len(got) != 0 {
+		t.Errorf("a skip should not announce the end of the step: %v", got)
+	}
+}
+
+func TestSkippingTheLastStepFinishesTheRun(t *testing.T) {
+	r := newRoutineRig(t, `{"routines": [{"name": "one", "steps": [{"name": "a", "level": "50%", "length": "30m"}]}]}`)
+	r.start("one")
+	r.pass(time.Minute)
+	must(t, r.worker.RoutineNext())
+	info := r.info()
+	if info.Active != nil || info.Last == nil || info.Last.Reason != "finished" {
+		t.Errorf("info = %+v", info)
+	}
+	if len(r.status().Layers) != 0 {
+		t.Errorf("layers = %+v", r.status().Layers)
+	}
+}
+
+func TestBackRestartsThePreviousStep(t *testing.T) {
+	r := newRoutineRig(t, pomodoroLite)
+	r.start("pomo")
+	r.pass(25 * time.Minute) // now in break (1/2)
+	r.pass(time.Minute)
+	must(t, r.worker.RoutineBack())
+	v := r.info().Active
+	if v == nil || v.Step != "work (1/2)" || v.Position != 0 {
+		t.Fatalf("view = %+v, want work again", v)
+	}
+	if top := r.top(); top.Percent != 75 || top.Remaining != 25*time.Minute || len(r.status().Layers) != 1 {
+		t.Errorf("top = %+v, layers %d; want a fresh 25 minutes", top, len(r.status().Layers))
+	}
+	must(t, r.worker.RoutineBack()) // at the first step it restarts that step
+	if v := r.info().Active; v.Position != 0 || r.top().Remaining != 25*time.Minute {
+		t.Errorf("back at the start: %+v, %v left", v, r.top().Remaining)
+	}
+}
+
+func TestBackWhileWaitingRestartsTheStepThatJustEnded(t *testing.T) {
+	r := newRoutineRig(t, askRoutine("stay"))
+	r.start("ask")
+	r.pass(25 * time.Minute) // waiting to start the break
+	must(t, r.worker.RoutineBack())
+	v := r.info().Active
+	if v == nil || v.Waiting || v.Step != "work" {
+		t.Fatalf("view = %+v, want work running again", v)
+	}
+	if top := r.top(); top.Percent != 75 || top.Remaining != 25*time.Minute || len(r.status().Layers) != 1 {
+		t.Errorf("top = %+v, layers %d: the hold should be gone and work restarted", top, len(r.status().Layers))
+	}
+}
+
+func TestStopEndsTheRunClosesItsLevelAndRecordsASummary(t *testing.T) {
+	r := newRoutineRig(t, pomodoroLite)
+	r.start("pomo")
+	r.postAndTick(teams, "Ana", "lunch menu for friday")
+	r.pass(3 * time.Minute)
+	must(t, r.worker.RoutineStop())
+	if r.worker.RoutineActive() || len(r.status().Layers) != 0 || r.suppressor.Running() {
+		t.Errorf("active %v layers %+v suppressor %v", r.worker.RoutineActive(), r.status().Layers, r.suppressor.Running())
+	}
+	l := r.info().Last
+	if l == nil || l.Reason != "stopped" || l.Steps != 1 || l.Total != 5 || l.Held != 1 || l.ElapsedSecs < 180 {
+		t.Errorf("summary = %+v", l)
+	}
+	if got := r.shown(); len(got) != 0 {
+		t.Errorf("stopping by hand needs no banner: %v", got)
+	}
+}
+
+func TestSessionsStartedOrStoppedByHandAreRefusedWhileARoutineRuns(t *testing.T) {
+	r := newRoutineRig(t, pomodoroLite)
+	r.start("pomo")
+	if _, err := r.worker.Escalate(session.Escalation{Level: 90}); !errors.Is(err, session.ErrRoutineRunning) {
+		t.Errorf("a manual session: err = %v, want ErrRoutineRunning", err)
+	}
+	if err := r.worker.Stop(); !errors.Is(err, session.ErrRoutineRunning) {
+		t.Errorf("stop: err = %v", err)
+	}
+	if err := r.worker.StopAll(); !errors.Is(err, session.ErrRoutineRunning) {
+		t.Errorf("stop all: err = %v", err)
+	}
+	if v := r.info().Active; v == nil || r.top().Percent != 75 || len(r.status().Layers) != 1 {
+		t.Error("a refused command must change nothing")
+	}
+	must(t, r.worker.RoutineStop())
+	if _, err := r.worker.Escalate(session.Escalation{Level: 90}); err != nil {
+		t.Errorf("after the routine ended a manual session is fine: %v", err)
+	}
+}
+
+func TestBaselinePauseAndAdjustStillWorkDuringARoutine(t *testing.T) {
+	r := newRoutineRig(t, pomodoroLite)
+	r.start("pomo")
+	must(t, r.worker.SetBaseline(20))
+	must(t, r.worker.Pause())
+	r.pass(time.Hour)
+	if v := r.info().Active; v == nil || v.Position != 0 || r.top().Remaining != 25*time.Minute || !r.top().Paused {
+		t.Fatalf("a paused step should not run out: %+v, %+v", v, r.top())
+	}
+	must(t, r.worker.Resume())
+	must(t, r.worker.Adjust(5*time.Minute))
+	r.pass(25 * time.Minute)
+	if v := r.info().Active; v == nil || v.Position != 0 {
+		t.Errorf("work was given 5 more minutes, so it should not have ended yet: %+v", v)
+	}
+	r.pass(5 * time.Minute)
+	if v := r.info().Active; v == nil || v.Position != 1 {
+		t.Errorf("work should end at its adjusted time: %+v", v)
+	}
+}
+
+func TestARestartedWorkerCarriesOnMidStep(t *testing.T) {
+	r := newRoutineRig(t, pomodoroLite)
+	r.start("pomo")
+	r.pass(10 * time.Minute)
+	r.restart()
+	r.tick()
+	v := r.info().Active
+	if v == nil || v.Step != "work (1/2)" || r.top().Remaining != 15*time.Minute {
+		t.Fatalf("after a restart: %+v, %v left", v, r.top().Remaining)
+	}
+	r.pass(15 * time.Minute)
+	if v := r.info().Active; v == nil || v.Step != "break (1/2)" {
+		t.Errorf("the restarted worker should move on at the right time: %+v", v)
+	}
+}
+
+func TestARestartedWorkerCarriesOnWhileWaiting(t *testing.T) {
+	r := newRoutineRig(t, askRoutine("stay"))
+	r.start("ask")
+	r.pass(25 * time.Minute)
+	r.restart()
+	r.tick()
+	if v := r.info().Active; v == nil || !v.Waiting || r.top().Percent != 75 {
+		t.Fatalf("a waiting run should survive a restart: %+v", v)
+	}
+	must(t, r.worker.RoutineNext())
+	if v := r.info().Active; v == nil || v.Step != "break" || v.Waiting {
+		t.Errorf("view = %+v", v)
+	}
+}
+
+func TestAStepThatRanOutWhileTheWorkerWasDownMovesOnWhenItReturns(t *testing.T) {
+	r := newRoutineRig(t, pomodoroLite)
+	r.start("pomo")
+	r.clock.Advance(26 * time.Minute) // the worker is down through the end of work
+	r.restart()
+	r.tick()
+	if v := r.info().Active; v == nil || v.Step != "break (1/2)" {
+		t.Errorf("view = %+v, want the break to have started on the first tick", v)
+	}
+}
+
+func TestARoutineThatVanishesFromTheFileEndsTheRunWithANote(t *testing.T) {
+	r := newRoutineRig(t, pomodoroLite)
+	r.start("pomo")
+	*r.text = `{"routines": []}`
+	r.pass(time.Minute)
+	if r.info().Active != nil {
+		t.Error("the run should have ended")
+	}
+	if l := r.info().Last; l == nil || l.Reason != "missing" {
+		t.Errorf("last = %+v", l)
+	}
+	if len(r.errs) == 0 || !strings.Contains(r.errs[len(r.errs)-1].Error(), "pomo") {
+		t.Errorf("the worker should say why: %v", r.errs)
+	}
+	if len(r.status().Layers) != 0 {
+		t.Errorf("its level should be closed: %+v", r.status().Layers)
+	}
+}
+
+func TestEditingARoutineDuringARunFollowsTheNewSteps(t *testing.T) {
+	r := newRoutineRig(t, pomodoroLite)
+	r.start("pomo")
+	*r.text = strings.Replace(pomodoroLite, `"length": "5m"`, `"length": "10m"`, 1)
+	r.pass(25 * time.Minute)
+	if top := r.top(); top.Remaining != 10*time.Minute {
+		t.Errorf("the break should take the edited length, got %v", top.Remaining)
+	}
+	*r.text = `{"routines": [{"name": "pomo", "steps": [{"name": "only", "length": "5m"}]}]}`
+	r.pass(time.Minute)
+	if r.info().Active != nil {
+		t.Error("a run whose position is past the end of the edited routine should end")
+	}
+}
+
+func TestAStepEndedByHandEndsTheRunAsStopped(t *testing.T) {
+	r := newRoutineRig(t, pomodoroLite)
+	r.start("pomo")
+	must(t, r.store.CloseLevel(r.top().ID, r.clock.Now().Add(time.Minute))) // closed early, not by running out
+	r.pass(2 * time.Minute)
+	if l := r.info().Last; r.info().Active != nil || l == nil || l.Reason != "stopped" {
+		t.Errorf("info = %+v", r.info())
+	}
+}
+
+func TestTheSuppressorFollowsEachStepsLevel(t *testing.T) {
+	r := newRoutineRig(t, pomodoroLite)
+	r.start("pomo")
+	if !r.suppressor.Running() {
+		t.Fatal("work holds notifications back")
+	}
+	r.pass(25 * time.Minute)
+	if r.suppressor.Running() {
+		t.Error("the break is at off, so banners should be left alone")
+	}
+	r.pass(5 * time.Minute)
+	if !r.suppressor.Running() {
+		t.Error("the next work step should hold them back again")
+	}
+}
+
+func TestAStepStartsAtTheTickThatNoticedTheEndSoLengthsAreWholeSteps(t *testing.T) {
+	r := newRoutineRig(t, pomodoroLite)
+	r.start("pomo")
+	r.clock.Advance(25*time.Minute + 1500*time.Millisecond)
+	r.tick()
+	if top := r.top(); top.Remaining != 5*time.Minute {
+		t.Errorf("the break should get its full length from when it began, got %v", top.Remaining)
+	}
+}
+
+func must(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}

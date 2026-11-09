@@ -155,6 +155,26 @@ func (s *Stack) Resume() error {
 	})
 }
 
+// CloseLayer ends one layer wherever it is in the stack. A layer that has already ended is not an error.
+func (s *Stack) CloseLayer(id int64) error {
+	return s.act(func(now time.Time, _ []store.Level) error {
+		if err := s.store.CloseLevel(id, now); err != nil && !errors.Is(err, store.ErrNotFound) {
+			return err
+		}
+		return nil
+	})
+}
+
+// PauseLayer freezes the countdown of one layer, wherever it is in the stack.
+func (s *Stack) PauseLayer(id int64) error {
+	return s.act(func(now time.Time, _ []store.Level) error { return s.store.PauseLevel(id, now) })
+}
+
+// ResumeLayer restarts the countdown of one paused layer with the time it had left.
+func (s *Stack) ResumeLayer(id int64) error {
+	return s.act(func(now time.Time, _ []store.Level) error { return s.store.ResumeLevel(id, now) })
+}
+
 // Adjust adds to or removes from the top timer, running or paused. A cut past the end expires it now.
 func (s *Stack) Adjust(delta time.Duration) error {
 	return s.act(func(now time.Time, layers []store.Level) error {

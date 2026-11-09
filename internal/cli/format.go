@@ -12,6 +12,11 @@ import (
 
 // renderStatus prints the stack of focus levels for people.
 func renderStatus(w io.Writer, v session.StatusView, running bool) {
+	defer func() {
+		if v.Routine != nil {
+			fmt.Fprintf(w, "Routine: %s\n", describeStep(*v.Routine))
+		}
+	}()
 	if v.Level == 0 {
 		suffix := ""
 		if !running {

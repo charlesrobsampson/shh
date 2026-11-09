@@ -129,4 +129,34 @@ ALTER TABLE notifications ADD COLUMN category TEXT;
 	`
 ALTER TABLE notifications ADD COLUMN is_flagged BOOLEAN NOT NULL DEFAULT 0;
 `,
+
+	// Routines (task 52): saved sequences of focus sessions. A run records which routine, where it has got to and which focus level
+	// its current step is, so a restarted worker carries on; each step's level is kept so the summary can total what the run did. Only
+	// one run can be active at a time.
+	`
+CREATE TABLE routine_runs (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	routine TEXT NOT NULL,
+	started_at DATETIME NOT NULL,
+	ended_at DATETIME,
+	end_reason TEXT,
+	position INTEGER NOT NULL DEFAULT 0,
+	state TEXT NOT NULL DEFAULT 'running' CHECK (state IN ('running', 'waiting')),
+	steps_total INTEGER NOT NULL,
+	level_id INTEGER REFERENCES focus_sessions(id),
+	blocked INTEGER NOT NULL DEFAULT 0,
+	allowed INTEGER NOT NULL DEFAULT 0,
+	active_secs INTEGER NOT NULL DEFAULT 0
+);
+CREATE UNIQUE INDEX routine_runs_one_active ON routine_runs ((1)) WHERE ended_at IS NULL;
+CREATE TABLE routine_run_steps (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	run_id INTEGER NOT NULL REFERENCES routine_runs(id),
+	position INTEGER NOT NULL,
+	name TEXT NOT NULL,
+	level_id INTEGER REFERENCES focus_sessions(id),
+	started_at DATETIME NOT NULL
+);
+CREATE INDEX routine_run_steps_run ON routine_run_steps (run_id);
+`,
 }

@@ -31,6 +31,8 @@ type Request struct {
 	NotificationID int64  `json:"notification_id,omitempty"`
 	Label          *int   `json:"label,omitempty"`
 	Feedback       string `json:"feedback,omitempty"`
+	// Name is the routine that "routine_run" starts.
+	Name string `json:"name,omitempty"`
 	// Alert is what the "alert" command shows, through the same alerter the worker uses, so that every banner on screen is
 	// laid out by one process.
 	Alert *AlertMsg `json:"alert,omitempty"`
@@ -55,6 +57,46 @@ type Response struct {
 	Status *StatusView `json:"status,omitempty"`
 	// Train is the outcome of a "train" or "undo" command.
 	Train *TrainView `json:"train,omitempty"`
+	// Routine answers the routine commands: the run in progress, if any, and the last one that ended.
+	Routine *RoutineInfo `json:"routine,omitempty"`
+}
+
+// RoutineView is the routine run in progress, as clients see it.
+type RoutineView struct {
+	Name string `json:"name"`
+	// Position is the step in force or, while Waiting, the step waiting to be started; counting from 0. Total is how many steps there are.
+	Position int `json:"position"`
+	Total    int `json:"total"`
+	// Step is that step as it is labelled on screen ("work (2/4)"); Previous is the step that just ended while waiting, and Next the
+	// one after Step ("" when Step is the last).
+	Step     string `json:"step"`
+	Previous string `json:"previous,omitempty"`
+	Next     string `json:"next,omitempty"`
+	Waiting  bool   `json:"waiting"`
+	// Level and LengthSecs are those of Step, so a client can say "break: 5m at off" for a step that has not started.
+	Level      int       `json:"level"`
+	LengthSecs int       `json:"length_secs"`
+	Started    time.Time `json:"started"`
+}
+
+// RoutineSummary is what a finished run did.
+type RoutineSummary struct {
+	Name   string `json:"name"`
+	Reason string `json:"reason"` // finished, stopped, replaced or missing
+	// Steps is how many steps were started, out of Total.
+	Steps       int       `json:"steps"`
+	Total       int       `json:"total"`
+	Started     time.Time `json:"started"`
+	Ended       time.Time `json:"ended"`
+	ElapsedSecs int       `json:"elapsed_secs"`
+	Held        int       `json:"held"`
+	Let         int       `json:"let"`
+}
+
+// RoutineInfo is the answer to the routine commands.
+type RoutineInfo struct {
+	Active *RoutineView    `json:"active,omitempty"`
+	Last   *RoutineSummary `json:"last,omitempty"`
 }
 
 // TrainView is a TrainOutcome on the wire.
@@ -71,6 +113,8 @@ type StatusView struct {
 	Level  int         `json:"level"`
 	Layers []LayerView `json:"layers"`
 	Now    time.Time   `json:"now"`
+	// Routine is the routine run in progress, if there is one.
+	Routine *RoutineView `json:"routine,omitempty"`
 	// Build identifies the executable the worker is running (see BuildID), so a command can tell when the worker predates the
 	// binary it was typed with, which would otherwise be easy to mistake for a bug in the new code.
 	Build string `json:"build,omitempty"`
@@ -131,6 +175,9 @@ var codes = map[string]error{
 	"already_trained": ErrAlreadyTrained,
 	"nothing_to_undo": ErrNothingToUndo,
 	"not_found":       ErrNoSuchNotification,
+	"routine_running": ErrRoutineRunning,
+	"no_routine":      ErrNoRoutine,
+	"unknown_routine": ErrUnknownRoutine,
 }
 
 func (e *RemoteError) Is(target error) bool {
