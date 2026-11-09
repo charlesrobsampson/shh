@@ -277,6 +277,9 @@ func runTUI(cfg config.Config) error {
 		Data: db, Worker: client, Label: cfg.Menubar.Label,
 		// The Focus tab does everything the command line does, through the worker.
 		Control: client,
+		// The Routines tab starts and steers routines through the worker and reads the routines file itself.
+		Routines: client,
+		Saved:    func() ([]routine.Routine, error) { return routine.Load(routine.DefaultPath(cfg.Paths.Dir)) },
 		// Training goes through the worker, which owns the model; start one if none is running.
 		Trainer: client,
 		Ensure: func() error {

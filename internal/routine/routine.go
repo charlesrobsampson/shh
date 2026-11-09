@@ -445,3 +445,23 @@ const Example = `// Routines: named sequences of focus sessions, filed under the
   }
 }
 `
+
+// Outline is the routine's steps on one line, each as the shh command that does it: "75% 25m work -> off 5m break, 4 times -> off
+// 15m long break".
+func (r Routine) Outline() string {
+	part := func(steps []Step) string {
+		var out []string
+		for _, s := range steps {
+			out = append(out, s.Command())
+		}
+		return strings.Join(out, " -> ")
+	}
+	line := part(r.Steps)
+	if r.Repeat > 1 {
+		line += fmt.Sprintf(", %d times", r.Repeat)
+	}
+	if len(r.Finish) > 0 {
+		line += " -> " + part(r.Finish)
+	}
+	return line
+}

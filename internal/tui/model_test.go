@@ -225,18 +225,22 @@ func TestTabsSwitchWithTabShiftTabAndFunctionKeys(t *testing.T) {
 		want Tab
 	}{
 		{[]string{"tab"}, TabTrain},
+		{[]string{"tab"}, TabRoutines},
 		{[]string{"tab"}, TabFocus},
 		{[]string{"tab"}, TabNotifications},
 		{[]string{"shift+tab"}, TabFocus},
-		{[]string{"shift+tab"}, TabTrain},
+		{[]string{"shift+tab"}, TabRoutines},
 		{[]string{"f1"}, TabFocus},
 		{[]string{"f3"}, TabTrain},
+		{[]string{"f4"}, TabRoutines},
 		{[]string{"f2"}, TabNotifications},
 		{[]string{"right"}, TabTrain},
 		{[]string{"left"}, TabNotifications},
 		{[]string{"l"}, TabTrain},
 		{[]string{"h"}, TabNotifications},
 		{[]string{"h"}, TabFocus},
+		{[]string{"h"}, TabRoutines},
+		{[]string{"l"}, TabFocus},
 		{[]string{"l"}, TabNotifications},
 	} {
 		r.press(step.keys...)
@@ -244,7 +248,7 @@ func TestTabsSwitchWithTabShiftTabAndFunctionKeys(t *testing.T) {
 			t.Fatalf("after %v the tab is %v, want %v", step.keys, r.m.Tab(), step.want)
 		}
 	}
-	for _, name := range []string{"Focus", "Notifications", "Train"} {
+	for _, name := range []string{"Focus", "Notifications", "Train", "Routines"} {
 		if !strings.Contains(r.view(), name) {
 			t.Errorf("the tab bar does not show %q:\n%s", name, r.view())
 		}

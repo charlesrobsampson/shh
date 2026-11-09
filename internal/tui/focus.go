@@ -158,6 +158,11 @@ func (m *Model) run(needsWorker bool, cmd string, do func(Control) (session.Stat
 		return false
 	}
 	view, err := do(m.cfg.Control)
+	if errors.Is(err, session.ErrRoutineRunning) && m.cfg.Routines != nil {
+		// A routine is in charge of focus: ask before ending it, and do what was asked if the answer is yes.
+		m.askToEndRoutine(func() { m.run(needsWorker, cmd, do, done) })
+		return false
+	}
 	if err != nil {
 		m.notice = describeFocusError(err)
 		return false
@@ -180,6 +185,8 @@ func describeFocusError(err error) string {
 		return "no focus session to change"
 	case errors.Is(err, session.ErrNotRunning):
 		return "shh is not running"
+	case errors.Is(err, session.ErrRoutineRunning):
+		return "a routine is running: end it on the Routines tab ($) first"
 	}
 	return err.Error()
 }
@@ -350,6 +357,9 @@ func (m *Model) focusView() string {
 				lines = append(lines, "      "+dim.Render(fmt.Sprintf("%q", oneLine(l.Note))))
 			}
 		}
+	}
+	if m.haveStatus && m.status.Routine != nil {
+		lines = append(lines, "", "  "+bold.Render("Routine ")+routineLine(*m.status.Routine)+dim.Render("  (the $ tab)"))
 	}
 	lines = append(lines, "", "  "+bold.Underline(true).Render("What to do")+dim.Render("  (j/k to select, Enter to do it, or press the key)"))
 

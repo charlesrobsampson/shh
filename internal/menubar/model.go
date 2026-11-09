@@ -20,6 +20,10 @@ const (
 	IDStop   = "stop"
 	IDOff    = "off"
 	IDOpen   = "open"
+	// A routine run has its own items: while one runs, the worker refuses to stop the session it has in force by hand.
+	IDRoutineNext = "routine_next"
+	IDRoutineBack = "routine_back"
+	IDRoutineStop = "routine_stop"
 )
 
 // View is everything the helper draws: the text next to the icon and the menu under it.
@@ -48,6 +52,9 @@ func Build(v session.StatusView, label string) View {
 }
 
 func title(v session.StatusView, label string) string {
+	if r := v.Routine; r != nil {
+		return routineTitle(v, label, *r)
+	}
 	if v.Level == 0 || len(v.Layers) == 0 {
 		return label
 	}
@@ -65,6 +72,26 @@ func title(v session.StatusView, label string) string {
 	return fmt.Sprintf("%s %d%%", label, v.Level)
 }
 
+// routineTitle is the title while a routine runs: "shh pomodoro · work (2/4) · 14m", the time being that left in the step, or
+// "shh pomodoro · break (2/4)?" while the run waits for the user to start that step.
+func routineTitle(v session.StatusView, label string, r session.RoutineView) string {
+	text := fmt.Sprintf("%s %s · %s", label, r.Name, r.Step)
+	if r.Waiting {
+		return text + " ?"
+	}
+	if len(v.Layers) == 0 {
+		return text
+	}
+	top := v.Layers[len(v.Layers)-1]
+	switch {
+	case top.Paused:
+		return text + " · ⏸"
+	case top.Timed:
+		return text + " · " + decide.FormatRemaining(top.RemainingSecs)
+	}
+	return text
+}
+
 func items(v session.StatusView) []Item {
 	var out []Item
 	var top *session.LayerView
@@ -73,6 +100,9 @@ func items(v session.StatusView) []Item {
 	}
 	// Only what is in force: the top layer and, for an escalation, where it falls back to. Layers it covers are not listed one by
 	// one, which keeps the menu short and stops it reading like a log.
+	if r := v.Routine; r != nil {
+		out = append(out, Item{Title: fmt.Sprintf("Routine %s · step %d of %d", r.Name, r.Position+1, r.Total)})
+	}
 	if top == nil {
 		out = append(out, Item{Title: "Focus is off"})
 	} else {
@@ -92,6 +122,14 @@ func items(v session.StatusView) []Item {
 			out = append(out, Item{ID: IDPause, Title: "Pause"})
 		}
 		out = append(out, Item{ID: IDPlus, Title: "+5m"}, Item{ID: IDMinus, Title: "−5m"})
+	}
+	if r := v.Routine; r != nil {
+		next := "Skip to the next step"
+		if r.Waiting {
+			next = "Start " + r.Step
+		}
+		out = append(out, Item{ID: IDRoutineNext, Title: next}, Item{ID: IDRoutineBack, Title: "Back a step"}, Item{ID: IDRoutineStop, Title: "Stop routine " + r.Name}, Item{Separator: true})
+		return append(out, Item{ID: IDOpen, Title: "Open shh…"})
 	}
 	if top != nil && top.Kind != "baseline" {
 		out = append(out, Item{ID: IDStop, Title: "Stop this session"})
