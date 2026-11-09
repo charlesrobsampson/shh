@@ -270,9 +270,9 @@ func (m *Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "d", "x":
 		m.dismiss()
 	case "y":
-		m.quickTrain("y")
+		m.quickTrain(true)
 	case "n":
-		m.quickTrain("n")
+		m.quickTrain(false)
 	case "t":
 		m.openPrompt("")
 	case "u":
@@ -375,12 +375,21 @@ type prompt struct {
 
 const maxLabelInput = 12
 
-// quickTrain labels the selected notification y ("it should have reached me at the level it was decided at") or n ("it was rightly
-// held back").
-func (m *Model) quickTrain(feedback string) {
-	if n, ok := m.trainable(); ok {
-		m.train(session.TrainRequest{Feedback: feedback}, n)
+// quickTrain answers "did shh do the right thing?" for the selected notification: y says it did (a notification it held back should
+// stay held back, one it alerted on should have been alerted), n says it did not. The row already shows what shh did, so the answer
+// needs no working out. The worker's quick labels are absolute (y: it should have reached the user at the level it was decided at, n:
+// it should have stayed muted), so the answer is turned into one of those using what shh did.
+func (m *Model) quickTrain(right bool) {
+	n, ok := m.trainable()
+	if !ok {
+		return
 	}
+	alerted := n.Status == store.StatusAlerted
+	feedback := "n"
+	if alerted == right {
+		feedback = "y"
+	}
+	m.train(session.TrainRequest{Feedback: feedback}, n)
 }
 
 // trainable is the selected notification, when training is possible here: not on the Focus tab, and with a trainer.
@@ -470,20 +479,29 @@ func (m *Model) train(req session.TrainRequest, n store.Notification) {
 	}
 	m.undoStack = append(m.undoStack, entry)
 	if m.notice == "" {
-		m.notice = describeTraining(req, out)
+		m.notice = describeTraining(req, out, n.Status)
 	}
 	m.reload()
 }
 
-func describeTraining(req session.TrainRequest, out session.TrainView) string {
+func describeTraining(req session.TrainRequest, out session.TrainView, did store.Status) string {
 	what := "labelled"
 	switch {
 	case req.Label != nil:
 		what = fmt.Sprintf("labelled %d", *req.Label)
-	case req.Feedback == "y":
-		what = "should have alerted"
-	case req.Feedback == "n":
-		what = "should have stayed muted"
+	default:
+		alerted := did == store.StatusAlerted
+		shouldAlert := req.Feedback == "y"
+		switch {
+		case alerted && shouldAlert:
+			what = "right call to alert you"
+		case !alerted && !shouldAlert:
+			what = "right call to hold it back"
+		case shouldAlert:
+			what = "should have alerted"
+		default:
+			what = "should have stayed muted"
+		}
 	}
 	if !out.Updated {
 		return fmt.Sprintf("%s: the model already agreed (score %d), nothing to change", what, out.Before)
@@ -902,9 +920,9 @@ func (m *Model) keyHints() string {
 	case TabFocus:
 		return "! @ # or Tab switch tabs · ? help · q quit"
 	case TabTrain:
-		return "y should have alerted · n rightly held back · t type a score · u undo · e read · o open · ? help"
+		return "y shh got it right · n shh got it wrong · t type a score · u undo · e read · o open · ? help"
 	}
-	return "e read · o open its app · d dismiss · y / n / t train it · u undo · Tab switch · ? help"
+	return "e read · o open its app · d dismiss · y right call · n wrong call · t score · u undo · ? help"
 }
 
 // promptBar is the state line while an exact label is being typed: the question in the bar's own reverse video, then the box the
@@ -946,7 +964,7 @@ func (m *Model) helpView() string {
 		{"e", "read it all (j/k scroll); not marked read"},
 		{"Enter, o", "open its app and mark it read"},
 		{"d, x", "dismiss (it stays in Train)"},
-		{"y / n", "should have alerted / rightly held back"},
+		{"y / n", "did shh do the right thing? yes / no"},
 		{"t, or a digit", "type an exact 0-100 score or a tier name"},
 		{"u", "undo the last training"},
 		{"?", "this help"},

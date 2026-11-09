@@ -888,26 +888,45 @@ func senders(r *rig) []string {
 	return out
 }
 
-func TestYAndNLabelTheSelectedRowAndItLeavesTheTrainList(t *testing.T) {
-	for _, k := range []string{"y", "n"} {
-		r := newRig(t)
-		first := r.add("Ana", "x", 1, func(n *store.Notification) { n.Score = 0.60 })
-		r.add("Bo", "x", 2, func(n *store.Notification) { n.Score = 0.70 })
-		r.refresh()
-		r.press("f3")
-		if r.selectedSender() != "Ana" {
-			t.Fatalf("setup: selected %q", r.selectedSender())
-		}
-		r.press(k)
-		if len(r.trainer.requests) != 1 {
-			t.Fatalf("%s: %d training requests, want 1", k, len(r.trainer.requests))
-		}
-		if got := r.trainer.requests[0]; got.NotificationID != first || got.Feedback != k || got.Label != nil {
-			t.Errorf("%s: request = %+v", k, got)
-		}
-		if r.ensured != 1 {
-			t.Errorf("%s: the worker was ensured %d times, want once before training", k, r.ensured)
-		}
+func TestYAndNAnswerWhetherShhDidTheRightThing(t *testing.T) {
+	// The worker's quick labels are absolute (y: it should have reached me, n: it should have stayed muted). y and n in the UI are
+	// relative to what shh did, so each answer maps to one of them depending on the row.
+	tests := []struct {
+		name     string
+		status   store.Status
+		key      string
+		feedback string
+		notice   string
+	}{
+		{"right to hold a blocked one back", store.StatusBlocked, "y", "n", "right call to hold it back"},
+		{"wrong to hold a blocked one back", store.StatusBlocked, "n", "y", "should have alerted"},
+		{"right to alert", store.StatusAlerted, "y", "y", "right call to alert you"},
+		{"wrong to alert", store.StatusAlerted, "n", "n", "should have stayed muted"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := newRig(t)
+			first := r.add("Ana", "x", 1, func(n *store.Notification) { n.Score = 0.60; n.Status = tt.status })
+			r.add("Bo", "x", 2, func(n *store.Notification) { n.Score = 0.70 })
+			r.refresh()
+			r.press("f3")
+			if r.selectedSender() != "Ana" {
+				t.Fatalf("setup: selected %q", r.selectedSender())
+			}
+			r.press(tt.key)
+			if len(r.trainer.requests) != 1 {
+				t.Fatalf("%d training requests, want 1", len(r.trainer.requests))
+			}
+			if got := r.trainer.requests[0]; got.NotificationID != first || got.Feedback != tt.feedback || got.Label != nil {
+				t.Errorf("request = %+v, want the worker label %q", got, tt.feedback)
+			}
+			if r.ensured != 1 {
+				t.Errorf("the worker was ensured %d times, want once before training", r.ensured)
+			}
+			if got := r.messageLine(); !strings.Contains(got, tt.notice) {
+				t.Errorf("the message line should say %q: %q", tt.notice, got)
+			}
+		})
 	}
 }
 
@@ -935,15 +954,15 @@ func TestTheNoticeReportsHowTheScoreMoved(t *testing.T) {
 	r := newRig(t)
 	r.add("Ana", "x", 1)
 	r.refresh()
-	r.press("f3", "y")
+	r.press("f3", "n") // blocked, and wrong to have held it back
 	if got := r.view(); !strings.Contains(got, "should have alerted: score 42 → 71") {
 		t.Errorf("status bar:\n%s", got)
 	}
 	r.add("Bo", "x", 2)
 	r.refresh()
 	r.trainer.outcome = session.TrainView{Before: 30, After: 30}
-	r.press("n")
-	if got := r.view(); !strings.Contains(got, "the model already agreed (score 30), nothing to change") {
+	r.press("y") // blocked, and right
+	if got := r.view(); !strings.Contains(got, "right call to hold it back: the model already agreed (score 30), nothing to change") {
 		t.Errorf("status bar:\n%s", got)
 	}
 }
@@ -1236,7 +1255,7 @@ func TestHelpListsTheTrainingKeys(t *testing.T) {
 	r := newRig(t)
 	r.press("?")
 	got := r.view()
-	for _, want := range []string{"y / n", "t, or a digit", "undo"} {
+	for _, want := range []string{"y / n", "did shh do the right thing", "t, or a digit", "undo"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("help does not mention %q:\n%s", want, got)
 		}
@@ -1385,11 +1404,11 @@ func TestTheFooterIsTwoLinesAndTheMessageLineCarriesAnythingToSay(t *testing.T) 
 	if !strings.Contains(lines[len(lines)-2], "notifications") || !strings.Contains(lines[len(lines)-2], "? help") {
 		t.Errorf("the first footer line should be the state: %q", lines[len(lines)-2])
 	}
-	if !strings.Contains(r.messageLine(), "e read") {
-		t.Errorf("with nothing to report the message line should list the keys: %q", r.messageLine())
+	if got := r.messageLine(); !strings.Contains(got, "e read") || !strings.Contains(got, "y right call") {
+		t.Errorf("with nothing to report the message line should list the keys: %q", got)
 	}
 	r.press("f3")
-	if got := r.messageLine(); !strings.Contains(got, "y should have alerted") {
+	if got := r.messageLine(); !strings.Contains(got, "y shh got it right") || !strings.Contains(got, "n shh got it wrong") {
 		t.Errorf("the Train tab has its own hints: %q", got)
 	}
 	r.press("f1")
