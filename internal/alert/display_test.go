@@ -287,3 +287,29 @@ func TestPreviewHeightIncludesTheHeader(t *testing.T) {
 		t.Errorf("preview height %d with a source, %d without; want a header line's difference", with.PreviewHeight, without.PreviewHeight)
 	}
 }
+
+func TestTheFlagButtonNeedsAStoredNotificationToMark(t *testing.T) {
+	with := shown(t, "", alert.Alert{Kind: config.KindMessage, Source: "Teams", BundleID: "com.x", NotificationID: 42, Title: "t", Body: "hi"})
+	without := shown(t, "", alert.Alert{Kind: config.KindMessage, Source: "Teams", BundleID: "com.x", Title: "t", Body: "hi"})
+	if got := buttonTypes(with); got != "goto,dismiss,flag" {
+		t.Errorf("buttons with a notification = %q, want flag after dismiss", got)
+	}
+	if got := buttonTypes(without); got != "goto,dismiss" {
+		t.Errorf("buttons with no notification = %q, want no flag: there is nothing to mark", got)
+	}
+	if with.NotificationID != 42 {
+		t.Errorf("the request lost the notification id: %d", with.NotificationID)
+	}
+}
+
+func TestTheFlagButtonCanBeTurnedOffOrRelabelled(t *testing.T) {
+	in := alert.Alert{Kind: config.KindMessage, BundleID: "com.x", NotificationID: 7, Title: "t", Body: "hi"}
+	off := shown(t, `{"alert": {"buttons": [{"type": "goto"}, {"type": "dismiss"}]}}`, in)
+	if got := buttonTypes(off); got != "goto,dismiss" {
+		t.Errorf("buttons = %q, want flag off when it is not listed", got)
+	}
+	custom := shown(t, `{"alert": {"buttons": [{"type": "flag", "label": "Review", "flagged_label": "Noted"}, {"type": "dismiss"}]}}`, in)
+	if custom.Buttons[0].Type != "flag" || custom.Buttons[0].Label != "Review" || custom.Buttons[0].FlaggedLabel != "Noted" {
+		t.Errorf("buttons = %+v", custom.Buttons)
+	}
+}

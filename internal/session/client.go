@@ -44,7 +44,7 @@ func (c *Client) Stop(all bool) (StatusView, error) { return c.do(Request{Cmd: "
 
 // ShowAlert has the worker show an alert, so it is laid out with the banners the worker already has on screen.
 func (c *Client) ShowAlert(a alert.Alert) error {
-	_, err := c.do(Request{Cmd: "alert", Alert: &AlertMsg{Kind: string(a.Kind), Source: a.Source, BundleID: a.BundleID, Title: a.Title, Body: a.Body}})
+	_, err := c.do(Request{Cmd: "alert", Alert: &AlertMsg{Kind: string(a.Kind), Source: a.Source, BundleID: a.BundleID, Title: a.Title, Body: a.Body, NotificationID: a.NotificationID}})
 	return err
 }
 

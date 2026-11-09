@@ -34,6 +34,9 @@ type OverlayConfig struct {
 	Start func(env []string, onEvent func(line string)) (Process, error)
 	// OnFailure receives alerts whose banner process died without showing them, so they can be shown another way.
 	OnFailure func(Request, error)
+	// OnFlag hears that the Flag button of a banner was switched on or off, with the id of the notification it is about, so it can be
+	// marked (or unmarked) for review. Called from the goroutine that reads the banner's output, only when the state changes. Optional.
+	OnFlag func(notificationID int64, flagged bool)
 }
 
 // Overlay draws each banner in its own osascript process (see docs/spikes/03-banner.md), in a window of its own that the banner
@@ -52,6 +55,7 @@ type Overlay struct {
 
 // banner is what the overlay knows about one banner on screen.
 type banner struct {
+	flagged   bool // the Flag button is on
 	req       Request
 	proc      Process
 	height    int // the current height, which Preview and Collapse change
@@ -111,12 +115,14 @@ type bannerButton struct {
 	Label string `json:"label"`
 	// CollapseLabel is what the Preview button says while the banner is expanded.
 	CollapseLabel string `json:"collapseLabel,omitempty"`
+	// FlaggedLabel is what the Flag button says once it has been pressed.
+	FlaggedLabel string `json:"flaggedLabel,omitempty"`
 }
 
 func bannerEnv(r Request, at layoutMessage) []string {
 	buttons := make([]bannerButton, 0, len(r.Buttons))
 	for _, b := range r.Buttons {
-		buttons = append(buttons, bannerButton{Type: b.Type, Label: b.Label, CollapseLabel: b.CollapseLabel})
+		buttons = append(buttons, bannerButton{Type: b.Type, Label: b.Label, CollapseLabel: b.CollapseLabel, FlaggedLabel: b.FlaggedLabel})
 	}
 	spec, _ := json.Marshal(bannerSpec{
 		Header: strings.TrimSpace(r.Source), Title: r.Title, Body: r.Body, Bundle: r.BundleID, Color: r.Style.Color, Width: r.Width, Height: r.Height,
@@ -225,6 +231,10 @@ func (o *Overlay) Show(r Request) error {
 // itself, and the overlay now moves the banners after it.
 func (o *Overlay) onEvent(b *banner, line string) {
 	field, value, _ := strings.Cut(line, " ")
+	if field == "flag" {
+		o.flag(b, value == "1")
+		return
+	}
 	n, err := strconv.Atoi(value)
 	if err != nil {
 		return
@@ -244,6 +254,21 @@ func (o *Overlay) onEvent(b *banner, line string) {
 				o.layoutLocked(position)
 			}
 		}
+	}
+}
+
+// flag passes a change of a banner's Flag button on to the hook: only a real change, and only for a banner that is still on screen
+// and is about a stored notification.
+func (o *Overlay) flag(b *banner, on bool) {
+	o.mu.Lock()
+	ok := o.onScreenLocked(b) && b.req.NotificationID != 0 && b.flagged != on
+	if ok {
+		b.flagged = on
+	}
+	id := b.req.NotificationID
+	o.mu.Unlock()
+	if ok && o.cfg.OnFlag != nil {
+		o.cfg.OnFlag(id, on)
 	}
 }
 

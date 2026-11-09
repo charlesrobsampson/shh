@@ -43,6 +43,9 @@ type AlertMsg struct {
 	BundleID string `json:"bundle_id,omitempty"`
 	Title    string `json:"title"`
 	Body     string `json:"body"`
+	// NotificationID is the stored notification the alert is about; a negative number is a demonstration (the `shh alert test`
+	// samples), which shows the Flag button without there being anything to flag.
+	NotificationID int64 `json:"notification_id,omitempty"`
 }
 
 type Response struct {

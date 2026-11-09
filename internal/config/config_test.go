@@ -294,10 +294,10 @@ func enabledTypes(buttons []config.Button) []string {
 func TestDefaultButtonsListEveryKnownTypeWithTrainOff(t *testing.T) {
 	cfg := load(t, "")
 	got := cfg.Alert.ButtonsFor(config.KindMessage, "")
-	if want := []string{"preview", "goto", "dismiss", "train"}; strings.Join(types(got), ",") != strings.Join(want, ",") {
+	if want := []string{"preview", "goto", "dismiss", "flag", "train"}; strings.Join(types(got), ",") != strings.Join(want, ",") {
 		t.Fatalf("button types = %v, want %v", types(got), want)
 	}
-	if want := "preview,goto,dismiss"; strings.Join(enabledTypes(got), ",") != want {
+	if want := "preview,goto,dismiss,flag"; strings.Join(enabledTypes(got), ",") != want {
 		t.Errorf("enabled = %v, want %s (train is off until task 45)", enabledTypes(got), want)
 	}
 	if got[0].Label != "Preview" || got[1].Label != "Go to" || got[2].Label != "Dismiss" {
@@ -308,7 +308,7 @@ func TestDefaultButtonsListEveryKnownTypeWithTrainOff(t *testing.T) {
 func TestButtonOrderIsTheListOrderAndMissingTypesComeBackDisabled(t *testing.T) {
 	cfg := load(t, `{"alert": {"buttons": [{"type": "dismiss"}, {"type": "goto", "label": "Open"}]}}`)
 	got := cfg.Alert.ButtonsFor(config.KindMessage, "")
-	if want := "dismiss,goto,preview,train"; strings.Join(types(got), ",") != want {
+	if want := "dismiss,goto,preview,flag,train"; strings.Join(types(got), ",") != want {
 		t.Fatalf("order = %v, want %s (listed first, in the user's order; the rest appended)", types(got), want)
 	}
 	if want := "dismiss,goto"; strings.Join(enabledTypes(got), ",") != want {
@@ -486,5 +486,54 @@ func TestTheMenuBarItemIsOnByDefaultAndCanBeTurnedOff(t *testing.T) {
 	}
 	if _, err := config.Load(write(t, `{"menubar": {"enabled": "yes"}}`)); err == nil || !strings.Contains(err.Error(), `"menubar.enabled"`) {
 		t.Errorf("err = %v, want one naming menubar.enabled", err)
+	}
+}
+
+func TestTheFlagButtonIsOnByDefaultAfterDismissAndHasAFlaggedLabel(t *testing.T) {
+	got := load(t, "").Alert.ButtonsFor(config.KindMessage, "")
+	var flag config.Button
+	for _, b := range got {
+		if b.Type == "flag" {
+			flag = b
+		}
+	}
+	if !flag.Enabled || flag.Label != "Flag" || flag.FlaggedLabel != "Flagged" {
+		t.Errorf("default flag button = %+v, want it on, labelled Flag, saying Flagged once pressed", flag)
+	}
+	if got[3].Type != "flag" {
+		t.Errorf("flag sits at %d, want right after dismiss", 3)
+	}
+	for _, b := range got {
+		if b.Type != "flag" && b.FlaggedLabel != "" {
+			t.Errorf("%s has a flagged label %q; only the flag button does", b.Type, b.FlaggedLabel)
+		}
+	}
+	custom := load(t, `{"alert": {"buttons": [{"type": "flag", "label": "Review later", "flagged_label": "Noted"}]}}`).Alert.ButtonsFor(config.KindMessage, "")
+	if custom[0].Label != "Review later" || custom[0].FlaggedLabel != "Noted" {
+		t.Errorf("custom flag button = %+v", custom[0])
+	}
+}
+
+func TestFlaggedLabelErrorsAndRoundTrip(t *testing.T) {
+	for name, content := range map[string]string{
+		"on another button": `{"alert": {"buttons": [{"type": "goto", "flagged_label": "x"}]}}`,
+		"empty":             `{"alert": {"buttons": [{"type": "flag", "flagged_label": ""}]}}`,
+	} {
+		_, err := config.Load(write(t, content))
+		if err == nil || !strings.Contains(err.Error(), `"alert.buttons[0].flagged_label"`) {
+			t.Errorf("%s: err = %v, want one naming alert.buttons[0].flagged_label", name, err)
+		}
+	}
+	original := load(t, `{"alert": {"buttons": [{"type": "flag", "flagged_label": "Noted"}]}}`)
+	shown, err := original.Effective()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := config.Load(write(t, string(shown)))
+	if err != nil {
+		t.Fatalf("%v\n%s", err, shown)
+	}
+	if got := reloaded.Alert.ButtonsFor(config.KindMessage, "")[0].FlaggedLabel; got != "Noted" {
+		t.Errorf("flagged label after round trip = %q", got)
 	}
 }

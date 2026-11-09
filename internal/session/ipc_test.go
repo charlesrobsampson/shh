@@ -488,3 +488,13 @@ func TestAClientCanTrainAndUndoThroughTheWorker(t *testing.T) {
 		t.Errorf("no label: err = %v", err)
 	}
 }
+
+func TestAnAlertSentToTheWorkerKeepsItsNotificationId(t *testing.T) {
+	r := newIPCRig(t)
+	if err := r.client.ShowAlert(alert.Alert{Kind: config.KindMessage, Title: "t", Body: "b", NotificationID: -1}); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.alerter.Shown(); len(got) != 1 || got[0].NotificationID != -1 {
+		t.Errorf("worker showed %+v, want the demo notification id kept", got)
+	}
+}

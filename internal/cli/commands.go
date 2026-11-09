@@ -238,6 +238,10 @@ type alertCmd struct {
 
 type alertTestCmd struct{}
 
+// demoNotification is the notification id the message samples carry: negative, so the Flag button shows (and shows its pressed state)
+// without there being a stored notification to mark.
+const demoNotification = -1
+
 // Run shows one sample per kind of alert and one per app that has its own style, so changes to config.json can be previewed.
 // The first sample carries Calculator's bundle id: click it to check that clicking opens the source app.
 func (c *alertTestCmd) Run(env *Env) error {
@@ -248,8 +252,8 @@ func (c *alertTestCmd) Run(env *Env) error {
 	}
 	client := env.client()
 	samples := []alert.Alert{
-		{Kind: config.KindMessage, Source: "Calculator", BundleID: "com.apple.calculator", Title: "Sample message", Body: "A message alert in the default style. Press Go to to open Calculator."},
-		{Kind: config.KindMessage, Source: "Calculator", BundleID: "com.apple.calculator", Title: "Sample long message",
+		{Kind: config.KindMessage, Source: "Calculator", BundleID: "com.apple.calculator", NotificationID: demoNotification, Title: "Sample message", Body: "A message alert in the default style. Press Go to to open Calculator."},
+		{Kind: config.KindMessage, Source: "Calculator", BundleID: "com.apple.calculator", NotificationID: demoNotification, Title: "Sample long message",
 			Body: "A long message, so the Preview button has something to show. The banner cuts this text off after a few lines; press Preview to read all of it without dismissing the alert, Go to to open Calculator, or Dismiss to close it. Long messages are capped even in the preview, because alerts are glances and not documents."},
 		{Kind: config.KindCalendar, Source: "Calendar", Title: "Sample meeting", Body: "A calendar alert: Starts at 10:30"},
 	}

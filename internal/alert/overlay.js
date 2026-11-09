@@ -173,10 +173,18 @@ function layoutTo(newIndent, newOffset, newHeight) {
 emit('screen ' + Math.round(area.size.height - 2 * margin));
 
 let expanded = false;
+let flagged = false;
 function press(spec) {
   if (spec.type === 'dismiss') finish('dismissed');
   else if (spec.type === 'goto') finish('opened');
-  else if (spec.type === 'preview') {
+  else if (spec.type === 'flag') {
+    // A toggle: pressing it marks the notification for review in the Train tab and shows the flagged label; pressing it again clears
+    // the mark. The script tells Go the state it now has (1 or 0), not just that it was pressed, so the two cannot drift apart.
+    const button = buttons[cfg.buttons.indexOf(spec)];
+    flagged = !flagged;
+    button.setTitle($(flagged ? (spec.flaggedLabel || 'Flagged') : spec.label));
+    emit('flag ' + (flagged ? 1 : 0));
+  } else if (spec.type === 'preview') {
     expanded = !expanded;
     // Someone reading the full text should not have it vanish: stop the auto-dismiss timer.
     if (expanded && timer) { timer.invalidate; timer = null; }

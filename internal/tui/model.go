@@ -26,6 +26,7 @@ type Data interface {
 	ListNotifications(store.Filter) ([]store.Notification, error)
 	SetRead(id int64, read bool) error
 	SetDismissed(id int64, dismissed bool) error
+	SetFlagged(id int64, flagged bool) error
 }
 
 // Trainer teaches the model from labelled notifications. The worker owns the model, so training goes through it: *session.Client
@@ -269,6 +270,8 @@ func (m *Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.open()
 	case "d", "x":
 		m.dismiss()
+	case "f":
+		m.toggleFlag()
 	case "y":
 		m.quickTrain(true)
 	case "n":
@@ -342,6 +345,25 @@ func (m *Model) open() {
 	}
 	m.notice = "opened " + oneLine(n.Source)
 	m.reload()
+}
+
+// toggleFlag flags the selected notification for review in the Train tab, or clears the flag.
+func (m *Model) toggleFlag() {
+	n, ok := m.Selected()
+	if !ok {
+		return
+	}
+	if err := m.cfg.Data.SetFlagged(n.ID, !n.IsFlagged); err != nil {
+		m.notice = "could not change the flag: " + err.Error()
+		return
+	}
+	if n.IsFlagged {
+		m.notice = "flag cleared"
+	} else {
+		m.notice = "flagged: it is at the top of the Train tab for review"
+	}
+	m.reload()
+	m.selectID(n.ID)
 }
 
 // dismiss takes the selected notification off the Notifications list. It stays on the Train list: dismissing is not training.
@@ -584,7 +606,7 @@ func (m *Model) ensureWorker() error {
 	return m.cfg.Ensure()
 }
 
-// sortMostInformativeFirst orders the Train list so the notifications a label would teach the model most come first: those whose
+// sortMostInformativeFirst orders the Train list: flagged notifications first, then the rest so the notifications a label would teach the model most come first: those whose
 // score sits close to one of the common thresholds, where being a little wrong changes what gets through. Ties keep the newest first.
 func sortMostInformativeFirst(rows []store.Notification) {
 	distance := func(n store.Notification) float64 {
@@ -598,7 +620,12 @@ func sortMostInformativeFirst(rows []store.Notification) {
 		}
 		return best
 	}
-	sort.SliceStable(rows, func(i, j int) bool { return distance(rows[i]) < distance(rows[j]) })
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].IsFlagged != rows[j].IsFlagged {
+			return rows[i].IsFlagged // the ones the user flagged to review come first, whatever their score
+		}
+		return distance(rows[i]) < distance(rows[j])
+	})
 }
 
 func abs(x float64) float64 {
@@ -658,6 +685,8 @@ var (
 	blockedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true) // yellow in most themes: needs a look
 	alertedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))            // green: it got through
 	unreadStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
+	// flaggedStyle marks a notification the user flagged from its alert to look at again: magenta and bold in most themes.
+	flaggedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Bold(true)
 	// inputStyle is the box a label is typed in. It is drawn in normal video inside the reversed bar, so it stands out from the text
 	// around it whatever the theme, and in yellow and underlined so it reads as a place to type.
 	inputStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true).Underline(true)
@@ -691,7 +720,11 @@ func (m *Model) tabBar() string {
 			label += fmt.Sprintf(" (%d)", len(m.lists[t]))
 		}
 		if t == TabTrain && len(m.lists[t]) > 0 {
-			label += fmt.Sprintf(" (%d)", len(m.lists[t]))
+			if flagged := m.flaggedCount(); flagged > 0 {
+				label += fmt.Sprintf(" (%d, %d ⚑)", len(m.lists[t]), flagged)
+			} else {
+				label += fmt.Sprintf(" (%d)", len(m.lists[t]))
+			}
 		}
 		if t == m.tab {
 			parts = append(parts, activeTab.Render(label))
@@ -700,6 +733,17 @@ func (m *Model) tabBar() string {
 		}
 	}
 	return fit(strings.Join(parts, ""), m.width)
+}
+
+// flaggedCount is how many notifications on the Train list are flagged.
+func (m *Model) flaggedCount() int {
+	n := 0
+	for _, row := range m.lists[TabTrain] {
+		if row.IsFlagged {
+			n++
+		}
+	}
+	return n
 }
 
 func (m *Model) separator() string {
@@ -761,19 +805,22 @@ const (
 const blockedMark = "✕ blocked"
 
 func listHeader(w int) string {
-	return fmt.Sprintf("  %-*s%-*s%-*s%*s  %s", colTime, "time", colSource, "app", senderWidth(w), "from", colScore, "score", "held back")
+	return fmt.Sprintf("   %-*s%-*s%-*s%*s  %s", colTime, "time", colSource, "app", senderWidth(w), "from", colScore, "score", "held back")
 }
 
-func senderWidth(w int) int { return max(6, w-2-colTime-colSource-colScore-2-colStatus) }
+func senderWidth(w int) int { return max(6, w-3-colTime-colSource-colScore-2-colStatus) }
 
 // row writes one notification as a line of the list, in the terminal's own colours. The selected row is drawn in reverse video, so
 // each piece is styled with that already, instead of nesting styles inside a reversed line.
 func (m *Model) row(n store.Notification, w int, selected bool) string {
 	cell := func(style lipgloss.Style, text string) string { return style.Reverse(selected).Render(text) }
 	plain := lipgloss.NewStyle().Bold(selected)
+	if n.IsFlagged {
+		plain = flaggedStyle // the whole row stands out, not just a mark in it
+	}
 
-	// Two marker columns: ">" for the selected row (as well as its highlight, for terminals without colour) and "•" for one not yet
-	// opened.
+	// Three marker columns: ">" for the selected row (as well as its highlight, for terminals without colour), "•" for one not yet
+	// opened and "⚑" for one the user flagged to look at again.
 	marker := " "
 	if selected {
 		marker = ">"
@@ -782,13 +829,17 @@ func (m *Model) row(n store.Notification, w int, selected bool) string {
 	if !n.IsRead {
 		unread = "•"
 	}
+	flag, flagStyle := " ", plain
+	if n.IsFlagged {
+		flag, flagStyle = "⚑", flaggedStyle
+	}
 	status := strings.Repeat(" ", colStatus)
 	statusStyle := plain
 	if n.Status == store.StatusBlocked {
 		status = fmt.Sprintf("%-*s", colStatus, blockedMark)
 		statusStyle = blockedStyle
 	}
-	return cell(plain, marker) + cell(unreadStyle, unread) +
+	return cell(plain, marker) + cell(unreadStyle, unread) + cell(flagStyle, flag) +
 		cell(plain, fmt.Sprintf("%-*s%-*s%-*s%*d  ", colTime, m.when(n.Timestamp), colSource, runewidth.Truncate(oneLine(n.Source), colSource-1, "…"),
 			senderWidth(w), runewidth.Truncate(oneLine(n.Sender), senderWidth(w)-1, "…"), colScore, score(n.Score))) +
 		cell(statusStyle, status)
@@ -862,6 +913,9 @@ func (m *Model) detailParts(n store.Notification, w int) (meta, body []string) {
 		decision += fmt.Sprintf(" · focus was %d%%", *n.ThresholdAtDecision)
 	}
 	meta = append(meta, " "+decision)
+	if n.IsFlagged {
+		meta = append(meta, " "+flaggedStyle.Render("⚑ flagged for review")+dim.Render(" (f clears it; labelling it clears it too)"))
+	}
 	if n.Reason != "" {
 		meta = append(meta, " "+dim.Render("why: "+oneLine(n.Reason)))
 	}
@@ -920,9 +974,9 @@ func (m *Model) keyHints() string {
 	case TabFocus:
 		return "! @ # or Tab switch tabs · ? help · q quit"
 	case TabTrain:
-		return "y shh got it right · n shh got it wrong · t type a score · u undo · e read · o open · ? help"
+		return "y shh got it right · n shh got it wrong · t type a score · u undo · f flag · e read · o open · ? help"
 	}
-	return "e read · o open its app · d dismiss · y right call · n wrong call · t score · u undo · ? help"
+	return "e read · o open its app · d dismiss · f flag · y right call · n wrong call · t score · u undo · ? help"
 }
 
 // promptBar is the state line while an exact label is being typed: the question in the bar's own reverse video, then the box the
@@ -964,6 +1018,7 @@ func (m *Model) helpView() string {
 		{"e", "read it all (j/k scroll); not marked read"},
 		{"Enter, o", "open its app and mark it read"},
 		{"d, x", "dismiss (it stays in Train)"},
+		{"f", "flag it to review later (flagged rows lead the Train tab)"},
 		{"y / n", "did shh do the right thing? yes / no"},
 		{"t, or a digit", "type an exact 0-100 score or a tier name"},
 		{"u", "undo the last training"},
@@ -974,7 +1029,7 @@ func (m *Model) helpView() string {
 	for _, k := range keys {
 		lines = append(lines, fmt.Sprintf("  %-32s %s", k[0], k[1]))
 	}
-	lines = append(lines, "", "  • not opened yet    ✕ blocked: held back, never reached you (no mark: it was alerted)",
+	lines = append(lines, "", "  • not opened yet    ✕ blocked: held back, never reached you (no mark: it was alerted)    ⚑ flagged for review",
 		"", dim.Render("  Press any key to go back."))
 	return pad(lines, m.height, m.width)
 }

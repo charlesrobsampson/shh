@@ -124,4 +124,9 @@ ALTER TABLE notifications ADD COLUMN thread TEXT;
 ALTER TABLE notifications ADD COLUMN subtitle TEXT;
 ALTER TABLE notifications ADD COLUMN category TEXT;
 `,
+
+	// A notification the user marked, from its alert, as one to look at again in the Train tab (task 50).
+	`
+ALTER TABLE notifications ADD COLUMN is_flagged BOOLEAN NOT NULL DEFAULT 0;
+`,
 }

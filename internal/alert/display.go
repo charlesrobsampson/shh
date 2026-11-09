@@ -26,7 +26,7 @@ func (d *Display) Show(a Alert) error {
 	style := d.cfg.Resolve(a.Kind, a.Source)
 	width := SizeWidth(style.Size)
 	req := Request{
-		Kind: a.Kind, Source: a.Source, BundleID: a.BundleID, Title: a.Title, Body: a.Body,
+		Kind: a.Kind, Source: a.Source, BundleID: a.BundleID, NotificationID: a.NotificationID, Title: a.Title, Body: a.Body,
 		Style: style, Width: width, Height: BannerHeight(width, a.Body) + headerHeight(a),
 	}
 	d.addButtons(&req, a)
@@ -76,8 +76,8 @@ func (d *Display) addButtons(req *Request, a Alert) {
 	}
 }
 
-// applies is where each button type says when it makes sense: goto needs an app to open, preview needs cut-off text, and train
-// (task 45) will need a stored notification, which alerts do not carry yet.
+// applies is where each button type says when it makes sense: goto needs an app to open, preview needs cut-off text, flag needs a
+// stored notification to mark, and train (task 45) will need one too.
 func applies(buttonType string, width int, a Alert) bool {
 	switch buttonType {
 	case config.ButtonDismiss:
@@ -86,6 +86,8 @@ func applies(buttonType string, width int, a Alert) bool {
 		return a.BundleID != ""
 	case config.ButtonPreview:
 		return Truncated(width, a.Body)
+	case config.ButtonFlag:
+		return a.NotificationID != 0
 	}
 	return false
 }

@@ -3,6 +3,7 @@ package alert_test
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -663,5 +664,110 @@ func TestTheAppNameTravelsWithTheBannerAsItsHeader(t *testing.T) {
 	script := strings.Join(alert.OverlayCommand(request("Ana", "top-right")).Args, " ")
 	if !strings.Contains(script, "cfg.header") || !strings.Contains(script, "headerRow") {
 		t.Error("the banner script does not draw the header")
+	}
+}
+
+func flagReq(title string, notificationID int64) alert.Request {
+	r := request(title, "top-right")
+	r.NotificationID = notificationID
+	r.Buttons = []config.Button{{Type: "flag", Label: "Flag", Enabled: true, FlaggedLabel: "Noted"}}
+	return r
+}
+
+type flagCall struct {
+	id      int64
+	flagged bool
+}
+
+// flagRig is an overlay whose OnFlag calls are recorded.
+func flagRig(t *testing.T) (*overlayRig, func() []flagCall) {
+	t.Helper()
+	var mu sync.Mutex
+	var calls []flagCall
+	r := &overlayRig{t: t}
+	r.overlay = alert.NewOverlay(alert.OverlayConfig{
+		Start: func(env []string, onEvent func(string)) (alert.Process, error) {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			p := &fakeProcess{env: env, finish: make(chan string, 1), onEvent: onEvent}
+			r.started = append(r.started, p)
+			return p, nil
+		},
+		OnFlag: func(id int64, flagged bool) { mu.Lock(); calls = append(calls, flagCall{id, flagged}); mu.Unlock() },
+	})
+	return r, func() []flagCall { mu.Lock(); defer mu.Unlock(); return append([]flagCall(nil), calls...) }
+}
+
+func TestTheFlagButtonToggleReachesTheHookWithTheNewState(t *testing.T) {
+	r, calls := flagRig(t)
+	r.show(flagReq("a", 41))
+	r.show(flagReq("b", 42))
+	r.process(0).emit("flag 1")
+	r.process(1).emit("flag 1")
+	r.process(0).emit("flag 0") // pressed again: cleared
+	r.process(0).emit("flag 1") // and flagged once more
+	want := []flagCall{{41, true}, {42, true}, {41, false}, {41, true}}
+	if got := calls(); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("OnFlag calls = %v, want %v", got, want)
+	}
+}
+
+func TestRepeatedStatesAreNotPassedOnTwice(t *testing.T) {
+	r, calls := flagRig(t)
+	r.show(flagReq("a", 41))
+	r.process(0).emit("flag 1")
+	r.process(0).emit("flag 1")
+	r.process(0).emit("flag 0")
+	r.process(0).emit("flag 0")
+	r.process(0).emit("flag") // no state: treated as off, which changes nothing now
+	if got := calls(); fmt.Sprint(got) != fmt.Sprint([]flagCall{{41, true}, {41, false}}) {
+		t.Errorf("OnFlag calls = %v, want one call per real change", got)
+	}
+}
+
+func TestAFlagEventFromABannerWithNoNotificationOrThatHasGoneIsIgnored(t *testing.T) {
+	r, calls := flagRig(t)
+	r.show(flagReq("no notification", 0))
+	r.show(flagReq("goes away", 5))
+	r.process(0).emit("flag 1")
+	r.process(1).finish <- "dismissed"
+	settle()
+	r.process(1).emit("flag 1")
+	if got := calls(); len(got) != 0 {
+		t.Errorf("OnFlag called %v for a banner with nothing to mark or one that has gone", got)
+	}
+}
+
+func TestAFlagEventWithNoHookIsHarmless(t *testing.T) {
+	r := newOverlayRig(t)
+	r.show(flagReq("a", 1))
+	r.process(0).emit("flag 1")
+	r.process(0).emit("flag 0")
+}
+
+func TestTheFlaggedLabelTravelsWithTheBannerAndTheScriptHandlesTheButton(t *testing.T) {
+	r := newOverlayRig(t)
+	r.show(flagReq("a", 3))
+	var spec struct {
+		Buttons []struct {
+			Type         string `json:"type"`
+			FlaggedLabel string `json:"flaggedLabel"`
+		} `json:"buttons"`
+	}
+	for _, kv := range r.process(0).env {
+		if v, ok := strings.CutPrefix(kv, "SHH_BANNER="); ok {
+			if err := json.Unmarshal([]byte(v), &spec); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if len(spec.Buttons) != 1 || spec.Buttons[0].Type != "flag" || spec.Buttons[0].FlaggedLabel != "Noted" {
+		t.Errorf("buttons = %+v", spec.Buttons)
+	}
+	script := strings.Join(alert.OverlayCommand(request("a", "top-right")).Args, " ")
+	for _, want := range []string{"'flag'", "spec.flaggedLabel", "emit('flag '", "flagged = !flagged"} {
+		if !strings.Contains(script, want) {
+			t.Errorf("the banner script does not mention %s", want)
+		}
 	}
 }
