@@ -449,15 +449,36 @@ func TestWhenTheSelectedRowDisappearsTheCursorStaysInRange(t *testing.T) {
 	r.press("j", "k", "G", "g") // must not panic on an empty list
 }
 
-func TestHelpOpensAndAnyKeyClosesIt(t *testing.T) {
+func TestHelpOpensJKScrollItAndAnyOtherKeyCloses(t *testing.T) {
 	r := newRig(t)
+	r.m.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
 	r.press("?")
-	if got := r.view(); !strings.Contains(got, "shh keys") || !strings.Contains(got, "F1 F2 F3") {
+	if got := r.view(); !strings.Contains(got, "shh keys") || !strings.Contains(got, "Moving around") {
 		t.Errorf("help:\n%s", got)
 	}
-	r.press("j")
-	if got := r.view(); strings.Contains(got, "shh keys") {
-		t.Errorf("help is still open:\n%s", got)
+	r.press("j", "j", "j")
+	if r.m.helpScroll != 3 || !r.m.showHelp {
+		t.Errorf("scroll %d open %v: j should scroll the help, not close it", r.m.helpScroll, r.m.showHelp)
+	}
+	r.press("k")
+	if r.m.helpScroll != 2 {
+		t.Errorf("scroll = %d after k", r.m.helpScroll)
+	}
+	r.press("G")
+	if got := r.view(); !strings.Contains(got, "Quit.") {
+		t.Errorf("G should scroll to the end of the help:\n%s", got)
+	}
+	r.press("g")
+	if r.m.helpScroll != 0 {
+		t.Errorf("g should scroll back to the top, scroll = %d", r.m.helpScroll)
+	}
+	r.press("x")
+	if got := r.view(); strings.Contains(got, "shh keys") || r.m.showHelp {
+		t.Errorf("another key should close the help:\n%s", got)
+	}
+	r.press("?")
+	if r.m.helpScroll != 0 {
+		t.Errorf("the help should open at the top, not where it was left (scroll %d)", r.m.helpScroll)
 	}
 }
 
@@ -1253,14 +1274,112 @@ func TestTheBoostCountsWhenRankingBecauseThatIsWhatWasCompared(t *testing.T) {
 	}
 }
 
-func TestHelpListsTheTrainingKeys(t *testing.T) {
-	r := newRig(t)
-	r.press("?")
-	got := r.view()
-	for _, want := range []string{"y / n", "did shh do the right thing", "6j, 3k", "5G", "digits type into it", "undo"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("help does not mention %q:\n%s", want, got)
+// helpText gathers everything the help shows, scrolling through it.
+func helpText(r *rig) string {
+	r.m.helpScroll = 0
+	var all []string
+	for i := 0; i < 200; i++ {
+		all = append(all, strings.Join(strings.Fields(r.view()), " "))
+		before := r.m.helpScroll
+		r.press("j")
+		if r.m.helpScroll == before {
+			break
 		}
+	}
+	return strings.Join(all, " ")
+}
+
+func TestHelpExplainsEveryKeyInSentences(t *testing.T) {
+	r := newRig(t)
+	r.m.Update(tea.WindowSizeMsg{Width: 100, Height: 80}) // tall enough that every sentence is whole in one view
+	r.press("?")
+	text := helpText(r)
+	r.press("x")
+	// and a small terminal can still reach all of it by scrolling
+	r.m.Update(tea.WindowSizeMsg{Width: 100, Height: 14})
+	r.press("?")
+	small := helpText(r)
+	r.press("x")
+	for _, want := range []string{"Moving around", "Reading", "Training", "What the marks mean", "Other", "Quit."} {
+		if !strings.Contains(small, want) {
+			t.Errorf("scrolling a small terminal never reaches %q", want)
+		}
+	}
+	for _, want := range []string{
+		"6j goes down six rows", "3k up three", "how far it is from the cursor", "5G",
+		"does not mark the notification as read", "not marked", "dismissing is not training", "Flag button on an alert banner",
+		"did shh do the right thing", "✕ blocked", "no mark means it alerted you", "pushing the score further", "digits and letters are typed into it",
+		"Undo the last training exactly", "closest to a common threshold", "Not opened yet", "Flagged for review", "Quit.",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the help never says %q", want)
+		}
+	}
+}
+
+func TestHelpFitsEveryTerminalSize(t *testing.T) {
+	r := newRig(t)
+	for _, size := range [][2]int{{120, 40}, {80, 24}, {60, 12}, {40, 8}} {
+		r.m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		r.press("?")
+		for i := 0; i < 80; i++ {
+			view := r.view()
+			if h := lipgloss.Height(view); h != size[1] {
+				t.Fatalf("%dx%d: the help is %d lines tall", size[0], size[1], h)
+			}
+			for n, line := range strings.Split(view, "\n") {
+				if w := lipgloss.Width(line); w > size[0] {
+					t.Fatalf("%dx%d: help line %d is %d wide: %q", size[0], size[1], n, w, line)
+				}
+			}
+			before := r.m.helpScroll
+			r.press("j")
+			if r.m.helpScroll == before {
+				break
+			}
+		}
+		r.press("x")
+	}
+}
+
+func TestTheFooterHintsAreBriefButCoverEveryKeyOnThePage(t *testing.T) {
+	r := newRig(t)
+	for _, tt := range []struct {
+		tab  string
+		want []string
+	}{
+		{"f2", []string{"j/k move", "e read", "o open", "d dismiss", "f flag", "y/n right/wrong", "t score", "u undo", "q quit"}},
+		{"f3", []string{"j/k move", "y/n right/wrong", "t score", "u undo", "f flag", "e read", "o open", "d dismiss", "q quit"}},
+		{"f1", []string{"switch tabs", "q quit"}},
+	} {
+		r.press(tt.tab)
+		hints := r.messageLine()
+		for _, want := range tt.want {
+			if !strings.Contains(hints, want) {
+				t.Errorf("%s: the hints %q do not mention %q", tt.tab, hints, want)
+			}
+		}
+		if strings.Contains(hints, "6j") || strings.Contains(hints, "3k") || strings.Contains(hints, "5G") {
+			t.Errorf("%s: the hints should stay basic; counts are explained in the help: %q", tt.tab, hints)
+		}
+		if lipgloss.Width(hints) > 100 {
+			t.Errorf("%s: the hints are %d wide, more than fits a 100 column terminal: %q", tt.tab, lipgloss.Width(hints), hints)
+		}
+		if state := r.promptBar(); !strings.Contains(state, "? help") {
+			t.Errorf("%s: the way to the help belongs on the state line above the hints: %q", tt.tab, state)
+		}
+	}
+}
+
+func TestOnANarrowTerminalTheStateLineStillPointsToTheHelpAndTheHintsAreCutCleanly(t *testing.T) {
+	r := newRig(t)
+	r.m.Update(tea.WindowSizeMsg{Width: 50, Height: 12})
+	r.press("f3")
+	if state := r.promptBar(); !strings.Contains(state, "? help") {
+		t.Errorf("state line on 50 columns: %q", state)
+	}
+	if got := r.messageLine(); lipgloss.Width(got) > 50 || !strings.Contains(got, "j/k move") {
+		t.Errorf("hints on a 50 column terminal: %q", got)
 	}
 }
 
@@ -1406,11 +1525,11 @@ func TestTheFooterIsTwoLinesAndTheMessageLineCarriesAnythingToSay(t *testing.T) 
 	if !strings.Contains(lines[len(lines)-2], "notifications") || !strings.Contains(lines[len(lines)-2], "? help") {
 		t.Errorf("the first footer line should be the state: %q", lines[len(lines)-2])
 	}
-	if got := r.messageLine(); !strings.Contains(got, "e read") || !strings.Contains(got, "y right call") {
+	if got := r.messageLine(); !strings.Contains(got, "e read") || !strings.Contains(got, "y/n right/wrong") {
 		t.Errorf("with nothing to report the message line should list the keys: %q", got)
 	}
 	r.press("f3")
-	if got := r.messageLine(); !strings.Contains(got, "y shh got it right") || !strings.Contains(got, "n shh got it wrong") {
+	if got := r.messageLine(); !strings.Contains(got, "y/n right/wrong") || !strings.Contains(got, "t score") {
 		t.Errorf("the Train tab has its own hints: %q", got)
 	}
 	r.press("f1")
@@ -1620,8 +1739,9 @@ func TestHelpAndHintsMentionTheFlag(t *testing.T) {
 	if got := r.messageLine(); !strings.Contains(got, "f flag") {
 		t.Errorf("Train hints: %q", got)
 	}
+	r.m.Update(tea.WindowSizeMsg{Width: 100, Height: 80})
 	r.press("?")
-	if got := r.view(); !strings.Contains(got, "flag it to review later") {
+	if got := helpText(r); !strings.Contains(got, "Flag it to look at again later") {
 		t.Errorf("help:\n%s", got)
 	}
 }

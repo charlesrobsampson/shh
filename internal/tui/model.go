@@ -88,6 +88,7 @@ type Model struct {
 	tab           Tab
 	width, height int
 	showHelp      bool
+	helpScroll    int    // how far down the help text is
 	err           string // a problem to show in the status bar, such as the database failing to read
 
 	lists  [tabCount][]store.Notification // the rows of the Notifications and Train tabs
@@ -242,12 +243,7 @@ func (m *Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.takeBlink()
 	}
 	if m.showHelp {
-		// Any key closes the help, except the ones that quit.
-		if k := msg.String(); k == "ctrl+c" || k == "q" {
-			return m, tea.Quit
-		}
-		m.showHelp = false
-		return m, nil
+		return m.helpKey(msg)
 	}
 	// A number typed before a motion repeats it (6j, 3k) or says where to go (5G). Digits only build a count here; an exact label is
 	// typed after t, when the prompt is open and digits go into it.
@@ -269,7 +265,7 @@ func (m *Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c", "q":
 		return m, tea.Quit
 	case "?":
-		m.showHelp = true
+		m.showHelp, m.helpScroll = true, 0
 	case "tab", "l", "right":
 		m.goTo((m.tab + Tab(steps%int(tabCount))) % tabCount)
 	case "shift+tab", "h", "left":
@@ -996,14 +992,17 @@ func (m *Model) stateLine() string {
 	if m.prompt != nil {
 		return m.promptBar()
 	}
-	right := "? help"
+	// "? help" is always shown. When the line is too narrow the counts go first, then the session text is shortened.
+	right := "? help "
+	room := max(0, m.width-lipgloss.Width(right))
 	counts := fmt.Sprintf("%d notifications · %d to train", len(m.lists[TabNotifications]), len(m.lists[TabTrain]))
-	text := " " + m.sessionText() + "  │  " + counts
-	gap := m.width - lipgloss.Width(text) - lipgloss.Width(right) - 1
-	if gap < 1 {
-		return statusStyle.Render(fit(text, m.width))
+	left := " " + m.sessionText() + "  │  " + counts
+	if lipgloss.Width(left) > room {
+		left = " " + m.sessionText()
 	}
-	return statusStyle.Render(text + strings.Repeat(" ", gap) + right + " ")
+	left = fit(left, room)
+	gap := max(0, m.width-lipgloss.Width(left)-lipgloss.Width(right))
+	return statusStyle.Render(left + strings.Repeat(" ", gap) + right)
 }
 
 // messageLine is the second line of the footer, where anything to say goes so that it is never squeezed into the state line: what
@@ -1029,15 +1028,16 @@ func (m *Model) messageLine() string {
 	return style.Render(fit(" "+text, m.width))
 }
 
-// keyHints are the keys worth knowing on the current tab.
+// keyHints are the keys that work on the current tab, briefly and all of them: the help screen (?, shown at the right of the line above)
+// explains each in full.
 func (m *Model) keyHints() string {
 	switch m.tab {
 	case TabFocus:
-		return "! @ # or Tab switch tabs · ? help · q quit"
+		return "Tab or ! @ # switch tabs · q quit"
 	case TabTrain:
-		return "6j / 3k move · y shh got it right · n shh got it wrong · t type a score · u undo · f flag · e read · ? help"
+		return "j/k move · y/n right/wrong · t score · u undo · f flag · e read · o open · d dismiss · q quit"
 	}
-	return "6j / 3k move · e read · o open its app · d dismiss · f flag · y right call · n wrong call · t score · u undo · ? help"
+	return "j/k move · e read · o open · d dismiss · f flag · y/n right/wrong · t score · u undo · q quit"
 }
 
 // promptBar is the state line while an exact label is being typed: the question in the bar's own reverse video, then the box the
@@ -1070,29 +1070,103 @@ func (m *Model) sessionText() string {
 	return fmt.Sprintf("%s  (%d held back, %d let through)", title, top.Blocked, top.Allowed)
 }
 
+// helpKey handles a key while the help is showing: the motion keys scroll it, quit keys quit, and anything else closes it.
+func (m *Model) helpKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	page := max(1, m.height-2)
+	switch msg.String() {
+	case "ctrl+c", "q":
+		return m, tea.Quit
+	case "j", "down":
+		m.helpScroll++
+	case "k", "up":
+		m.helpScroll--
+	case "pgdown", "ctrl+d", " ":
+		m.helpScroll += page
+	case "pgup", "ctrl+u":
+		m.helpScroll -= page
+	case "g", "home":
+		m.helpScroll = 0
+	case "G", "end":
+		m.helpScroll = 1 << 30
+	default:
+		m.showHelp = false
+	}
+	return m, nil
+}
+
+// helpTopic is one entry of the help: the keys, and what they do, in full.
+type helpTopic struct{ keys, text string }
+
+// helpSections is the detailed help. The line under each page says which keys matter there, briefly; this is where each is explained.
+var helpSections = []struct {
+	title  string
+	topics []helpTopic
+}{
+	{"Moving around", []helpTopic{
+		{"j / k, ↓ / ↑", "Down or up one row. Type a number first to repeat it: 6j goes down six rows, 3k up three. The numbers beside the rows make this easy: every row shows how far it is from the cursor, so the count to type is the number you can see; the cursor's own row shows its place in the list."},
+		{"g / G", "The first or last row. With a number, 5G (or 5g) goes to row 5."},
+		{"PgUp / PgDn", "A page at a time."},
+		{"Tab, l, →", "The next tab. Shift-Tab, h or ← goes back. A number repeats it, so 2l skips one."},
+		{"! @ #", "Jump straight to Focus, Notifications or Train (Shift-1, Shift-2, Shift-3). F1, F2 and F3 do the same."},
+		{"Esc", "Drops a number you have started typing."},
+	}},
+	{"Reading", []helpTopic{
+		{"e", "Read the whole message across the screen, with the list out of the way. j and k scroll it (numbers work here too), e or Esc puts it back. Reading this way does not mark the notification as read."},
+		{"Enter, o", "Open the app the notification came from and mark it read. If the app cannot be opened, it is not marked."},
+		{"d, x", "Dismiss it from the Notifications list. It stays in the Train list: dismissing is not training."},
+		{"f", "Flag it to look at again later. Flagged rows lead the Train tab, so a notification you noticed was wrong is easy to find. Press f again to clear the flag. The Flag button on an alert banner does the same thing; labelling a notification clears its flag."},
+	}},
+	{"Training (Notifications and Train tabs)", []helpTopic{
+		{"y / n", "Answer \"did shh do the right thing?\" The row shows what shh did: ✕ blocked means it held the notification back, no mark means it alerted you. y says the call was right (a blocked one should stay blocked, an alerted one should have alerted); n says it was wrong. A right call close to the line also teaches the model something, by pushing the score further from it. The row then leaves the Train list, and when you label it from Notifications it is archived from there too."},
+		{"t", "Type an exact score instead, from 0 to 100 or light, medium, deep or lockdown, and press Enter. Esc cancels. While the box is open, digits and letters are typed into it."},
+		{"u", "Undo the last training exactly: the model goes back to how it was and the row returns to the list."},
+		{"order", "The Train list shows flagged rows first, then those whose score is closest to a common threshold (35, 65, 90 or 99), because a label there changes what gets through the most."},
+	}},
+	{"What the marks mean", []helpTopic{
+		{">", "The cursor. Its row is also highlighted."},
+		{"•", "Not opened yet."},
+		{"✕ blocked", "shh held it back and it never reached you. A row with nothing here was alerted."},
+		{"⚑", "Flagged for review."},
+	}},
+	{"Other", []helpTopic{
+		{"?", "This help. j and k scroll it, anything else closes it."},
+		{"q, Ctrl-C", "Quit."},
+	}},
+}
+
+// helpLines lays the help out for a screen width, wrapping each description beside its keys.
+func helpLines(width int) []string {
+	const keyWidth = 14
+	textWidth := max(20, width-keyWidth-4)
+	lines := []string{"", " " + lipgloss.NewStyle().Bold(true).Render("shh keys"), ""}
+	for _, section := range helpSections {
+		lines = append(lines, " "+lipgloss.NewStyle().Bold(true).Underline(true).Render(section.title))
+		for _, t := range section.topics {
+			keys := runewidth.Truncate(t.keys, keyWidth-1, "…")
+			for i, part := range strings.Split(lipgloss.NewStyle().Width(textWidth).Render(t.text), "\n") {
+				prefix := strings.Repeat(" ", keyWidth)
+				if i == 0 {
+					prefix = fmt.Sprintf("%-*s", keyWidth, keys)
+				}
+				lines = append(lines, "  "+prefix+" "+part)
+			}
+		}
+		lines = append(lines, "")
+	}
+	return lines
+}
+
 func (m *Model) helpView() string {
-	keys := [][2]string{
-		{"Tab / Shift-Tab, l / h, ← / →", "next / previous tab"},
-		{"! @ #  (Shift-1 2 3), F1 F2 F3", "Focus, Notifications, Train"},
-		{"j / k, ↓ / ↑", "move down / up; a number first repeats it (6j, 3k)"},
-		{"g / G, 5G, PgUp / PgDn", "first / last row, row 5, page"},
-		{"e", "read it all (j/k scroll); not marked read"},
-		{"Enter, o", "open its app and mark it read"},
-		{"d, x", "dismiss (it stays in Train)"},
-		{"f", "flag it to review later (flagged rows lead the Train tab)"},
-		{"y / n", "did shh do the right thing? yes / no"},
-		{"t", "type a 0-100 score or tier name (digits type into it)"},
-		{"u", "undo the last training"},
-		{"?", "this help"},
-		{"q, Ctrl-C", "quit"},
+	lines := helpLines(m.width)
+	room := max(1, m.height-1) // one line is kept for the footer
+	m.helpScroll = max(0, min(m.helpScroll, len(lines)-room))
+	last := min(len(lines), m.helpScroll+room)
+	visible := append([]string{}, lines[m.helpScroll:last]...)
+	for len(visible) < room {
+		visible = append(visible, "")
 	}
-	lines := []string{"", "  shh keys", ""}
-	for _, k := range keys {
-		lines = append(lines, fmt.Sprintf("  %-32s %s", k[0], k[1]))
-	}
-	lines = append(lines, "", "  • not opened yet    ✕ blocked: held back, never reached you (no mark: it was alerted)    ⚑ flagged for review",
-		"", dim.Render("  Press any key to go back."))
-	return pad(lines, m.height, m.width)
+	footer := dim.Render(fmt.Sprintf(" j/k scroll · any other key closes · lines %d-%d of %d", m.helpScroll+1, last, len(lines)))
+	return pad(append(visible, footer), m.height, m.width)
 }
 
 // ---- small helpers ----
