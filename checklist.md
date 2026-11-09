@@ -542,7 +542,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Manual check: the next real meeting reminder: the shh alert has Go to and it opens Outlook.
 
 ### 50 · Flag button on alerts, flagged rows in the Train tab
-- [ ] Done
+- [x] Done
 - Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/50-alert-flag` · Depends: 33, 44
 - Context: the user's idea: a **Flag** button on the alert banner for when you can tell an alert was wrong but cannot stop to think about it. Pressing it does not train anything; it marks the notification so that it stands out in the Train tab (highlighted, and sorted to the top) for review and training later. Shares its plumbing with task 45 (the Train button): alerts carry the stored notification's id, and banners send events back to the worker.
