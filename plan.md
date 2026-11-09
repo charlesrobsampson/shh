@@ -225,7 +225,7 @@ Keep manifest layout, but make the state model explicit:
 | `is_dismissed_inbox` | Gone from Tab 1 | `d`/`x`, or training with quick-train |
 | `is_trained` | Gone from Train list | `y`, `n`, or `l` + number (stored in `user_feedback` / `user_label`) |
 
-Train tab keys: `y` = "should have reached me at that level", `n` = "should have been muted at that level", `l` = exact label (0–100 or a tier name, e.g. `light`). Every row in the Train list shows the score the model gave (0–100) and whether it was alerted or blocked. The detail pane shows the score, boost, `threshold_at_decision`, and the reason.
+Train tab keys: `y` = "should have reached me at that level", `n` = "should have been muted at that level", `t` = exact label (0–100 or a tier name, e.g. `light`; typing a digit starts it too; **[DECIDED, task 33]** `t`, not `l`, so that `h`/`l` stay free for moving between tabs). Every row in the Train list shows the score the model gave (0–100) and whether it was alerted or blocked. The detail pane shows the score, boost, `threshold_at_decision`, and the reason.
 
 - **Entry point [DECIDED]:** bare `shh` opens the TUI (`shh ui` remains an alias). (`ssh` is OpenSSH and can't be used.) Three tabs, switched with `Tab`/`Shift-Tab` and `F1`–`F3` (digits are reserved for training labels):
   1. **Focus:** level stack and time left; start, stop, baseline, pause/resume, adjust, change level. Everything the CLI can do.

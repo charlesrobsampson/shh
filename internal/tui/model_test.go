@@ -193,6 +193,10 @@ func TestTabsSwitchWithTabShiftTabAndFunctionKeys(t *testing.T) {
 		{[]string{"f2"}, TabNotifications},
 		{[]string{"right"}, TabTrain},
 		{[]string{"left"}, TabNotifications},
+		{[]string{"l"}, TabTrain},
+		{[]string{"h"}, TabNotifications},
+		{[]string{"h"}, TabFocus},
+		{[]string{"l"}, TabNotifications},
 	} {
 		r.press(step.keys...)
 		if r.m.Tab() != step.want {
@@ -944,13 +948,13 @@ func TestTheNoticeReportsHowTheScoreMoved(t *testing.T) {
 	}
 }
 
-func TestLTypesAnExactLabelAndEnterSavesIt(t *testing.T) {
+func TestTTypesAnExactLabelAndEnterSavesIt(t *testing.T) {
 	r := newRig(t)
 	id := r.add("Ana", "x", 1)
 	r.refresh()
-	r.press("f3", "l")
+	r.press("f3", "t")
 	if r.m.prompt == nil {
-		t.Fatal("l did not open the label prompt")
+		t.Fatal("t did not open the label prompt")
 	}
 	if got := r.view(); !strings.Contains(got, "label for Ana") || !strings.Contains(got, "Enter saves") {
 		t.Errorf("the prompt should replace the status bar:\n%s", got)
@@ -987,7 +991,7 @@ func TestTierNamesAndOneHundredAreValidLabels(t *testing.T) {
 		r := newRig(t)
 		r.add("Ana", "x", 1)
 		r.refresh()
-		r.press("f3", "l")
+		r.press("f3", "t")
 		for _, ch := range text {
 			r.press(string(ch))
 		}
@@ -1003,7 +1007,7 @@ func TestAnInvalidLabelShowsAnErrorSendsNothingAndKeepsThePromptOpen(t *testing.
 	r.add("Ana", "x", 1)
 	r.refresh()
 	for _, bad := range []string{"abc", "101", "-5", "", "7.5"} {
-		r.press("f3", "l")
+		r.press("f3", "t")
 		for _, ch := range bad {
 			r.press(string(ch))
 		}
@@ -1033,7 +1037,7 @@ func TestEscCancelsThePromptWithoutTraining(t *testing.T) {
 	r := newRig(t)
 	id := r.add("Ana", "x", 1)
 	r.refresh()
-	r.press("f3", "l", "5", "0", "esc")
+	r.press("f3", "t", "5", "0", "esc")
 	if len(r.trainer.requests) != 0 || r.m.prompt != nil || r.row(id).IsTrained {
 		t.Errorf("requests %v, prompt %v: Esc should cancel", r.trainer.requests, r.m.prompt)
 	}
@@ -1043,7 +1047,7 @@ func TestWhileTypingAKeyIsTextNotACommand(t *testing.T) {
 	r := newRig(t)
 	r.add("Ana", "x", 1)
 	r.refresh()
-	r.press("f3", "l", "q", "d", "y", "j", "?")
+	r.press("f3", "t", "q", "d", "y", "j", "?")
 	if r.m.prompt == nil || r.m.prompt.text != "qdyj?" {
 		t.Errorf("prompt = %+v, want the keys typed as text", r.m.prompt)
 	}
@@ -1176,7 +1180,7 @@ func TestWithoutATrainerTrainingKeysSayTheyAreUnavailable(t *testing.T) {
 	if got := r.view(); !strings.Contains(got, "training is not available") {
 		t.Errorf("status bar:\n%s", got)
 	}
-	r.press("l", "u", "5")
+	r.press("t", "u", "5")
 	if m.prompt != nil {
 		t.Error("a prompt opened with no trainer to send it to")
 	}
@@ -1184,13 +1188,13 @@ func TestWithoutATrainerTrainingKeysSayTheyAreUnavailable(t *testing.T) {
 
 func TestTrainingKeysDoNothingOnTheFocusTabOrAnEmptyList(t *testing.T) {
 	r := newRig(t)
-	r.press("y", "n", "l", "5", "esc") // empty list: nothing to label (u still works: it undoes the last training)
+	r.press("y", "n", "t", "5", "esc") // empty list: nothing to label (u still works: it undoes the last training)
 	if len(r.trainer.requests) != 0 || r.m.prompt != nil {
 		t.Errorf("requests %v prompt %v on an empty list", r.trainer.requests, r.m.prompt)
 	}
 	r.add("Ana", "x", 1)
 	r.refresh()
-	r.press("f1", "y", "n", "l", "u", "5", "enter")
+	r.press("f1", "y", "n", "t", "u", "5", "enter")
 	if len(r.trainer.requests) != 0 || r.trainer.undos != 0 || r.m.prompt != nil {
 		t.Errorf("requests %v undos %d prompt %v from the Focus tab", r.trainer.requests, r.trainer.undos, r.m.prompt)
 	}
@@ -1232,7 +1236,7 @@ func TestHelpListsTheTrainingKeys(t *testing.T) {
 	r := newRig(t)
 	r.press("?")
 	got := r.view()
-	for _, want := range []string{"y / n", "l, or a digit", "undo"} {
+	for _, want := range []string{"y / n", "t, or a digit", "undo"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("help does not mention %q:\n%s", want, got)
 		}

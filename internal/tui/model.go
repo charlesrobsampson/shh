@@ -99,7 +99,7 @@ type Model struct {
 	// expandedID is the notification shown in full across the whole screen (e); 0 when none is. scroll is how far down its text is.
 	expandedID int64
 	scroll     int
-	// prompt is the label being typed after l or a digit; nil when there is none.
+	// prompt is the label being typed after t or a digit; nil when there is none.
 	prompt *prompt
 	// undoStack remembers what each training in this session did besides teaching the model, so undo can put that back too.
 	undoStack []trainedEntry
@@ -233,9 +233,9 @@ func (m *Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "?":
 		m.showHelp = true
-	case "tab", "right":
+	case "tab", "l", "right":
 		m.goTo((m.tab + 1) % tabCount)
-	case "shift+tab", "left":
+	case "shift+tab", "h", "left":
 		m.goTo((m.tab + tabCount - 1) % tabCount)
 	case "f1", "!":
 		m.goTo(TabFocus)
@@ -255,7 +255,7 @@ func (m *Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.quickTrain("y")
 	case "n":
 		m.quickTrain("n")
-	case "l":
+	case "t":
 		m.openPrompt("")
 	case "u":
 		m.undoTraining()
@@ -378,7 +378,7 @@ func (m *Model) trainable() (store.Notification, bool) {
 	return n, true
 }
 
-// openPrompt starts typing an exact label (0 to 100, or a tier name) for the selected notification.
+// openPrompt (t, or a digit) starts typing an exact label (0 to 100, or a tier name) for the selected notification.
 func (m *Model) openPrompt(initial string) {
 	if n, ok := m.trainable(); ok {
 		m.prompt = &prompt{text: initial, target: n}
@@ -853,7 +853,7 @@ func (m *Model) sessionText() string {
 
 func (m *Model) helpView() string {
 	keys := [][2]string{
-		{"Tab / Shift-Tab, ← / →", "next / previous tab"},
+		{"Tab / Shift-Tab, l / h, ← / →", "next / previous tab"},
 		{"! @ #  (Shift-1 2 3), F1 F2 F3", "Focus, Notifications, Train"},
 		{"j / k, ↓ / ↑", "move down / up"},
 		{"g / G, PgUp / PgDn", "first / last, page"},
@@ -861,7 +861,7 @@ func (m *Model) helpView() string {
 		{"Enter, o", "open its app and mark it read"},
 		{"d, x", "dismiss (it stays in Train)"},
 		{"y / n", "should have alerted / rightly held back"},
-		{"l, or a digit", "type an exact 0-100 score or a tier name"},
+		{"t, or a digit", "type an exact 0-100 score or a tier name"},
 		{"u", "undo the last training"},
 		{"?", "this help"},
 		{"q, Ctrl-C", "quit"},
