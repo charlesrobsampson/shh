@@ -146,5 +146,19 @@ func (s *Scheduler) alertFor(event store.CalendarEvent, untimed bool) alert.Aler
 			body = fmt.Sprintf("Started at %s", at)
 		}
 	}
-	return alert.Alert{Kind: config.KindCalendar, Source: "Calendar", Title: event.Title, Body: body}
+	return alert.Alert{Kind: config.KindCalendar, Source: "Calendar", BundleID: s.sourceBundle(event), Title: event.Title, Body: body}
+}
+
+// sourceBundle is the app the reminder came from, so that the alert's Go to button opens it (Outlook's reminders carry no meeting
+// link, but the meeting's Join is one click away in the app). Empty when the event has no source notification or it cannot be read:
+// the alert is still shown, just without something to open.
+func (s *Scheduler) sourceBundle(event store.CalendarEvent) string {
+	if event.SourceNotificationID == 0 {
+		return ""
+	}
+	n, err := s.cfg.Store.GetNotification(event.SourceNotificationID)
+	if err != nil {
+		return ""
+	}
+	return n.BundleID
 }
