@@ -467,3 +467,24 @@ func TestCollapseLabelSurvivesTheEffectiveRoundTrip(t *testing.T) {
 		t.Errorf("collapse label after round trip = %q, want Less", got)
 	}
 }
+
+func TestTheMenuBarItemIsOnByDefaultAndCanBeTurnedOff(t *testing.T) {
+	if !load(t, "").Menubar.Enabled {
+		t.Error("the menu bar item should be on by default")
+	}
+	cfg := load(t, `{"menubar": {"enabled": false, "label": "focus"}}`)
+	if cfg.Menubar.Enabled || cfg.Menubar.Label != "focus" {
+		t.Errorf("menubar = %+v", cfg.Menubar)
+	}
+	shown, err := cfg.Effective()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := config.Load(write(t, string(shown)))
+	if err != nil || reloaded.Menubar != cfg.Menubar {
+		t.Errorf("round trip: %+v, %v", reloaded.Menubar, err)
+	}
+	if _, err := config.Load(write(t, `{"menubar": {"enabled": "yes"}}`)); err == nil || !strings.Contains(err.Error(), `"menubar.enabled"`) {
+		t.Errorf("err = %v, want one naming menubar.enabled", err)
+	}
+}

@@ -228,3 +228,13 @@ func (c *replayCmd) Run(env *Env) error {
 	defer in.Close()
 	return replay.Run(in, env.Stdout, replay.Options{Threshold: threshold, Rules: r, Embedder: embedder})
 }
+
+type menubarCmd struct{}
+
+// Run is the menu bar item's own process: it shows the worker's status until the worker is gone. It never starts a worker itself.
+func (c *menubarCmd) Run(env *Env) error {
+	if env.Menubar == nil {
+		return errors.New("this build has no menu bar item")
+	}
+	return env.Menubar(context.Background())
+}

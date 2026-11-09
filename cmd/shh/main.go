@@ -10,6 +10,8 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -19,6 +21,7 @@ import (
 	"github.com/charlesrobsampson/shh/internal/clock"
 	"github.com/charlesrobsampson/shh/internal/config"
 	"github.com/charlesrobsampson/shh/internal/ingest"
+	"github.com/charlesrobsampson/shh/internal/menubar"
 	"github.com/charlesrobsampson/shh/internal/rules"
 	"github.com/charlesrobsampson/shh/internal/session"
 	"github.com/charlesrobsampson/shh/internal/store"
@@ -42,6 +45,7 @@ func realEnv() cli.Env {
 	env.Spawn = func() error { return spawnDaemon(cfg) }
 	env.PersistedFocus = func() bool { return persistedFocus(cfg.Paths.DB) }
 	env.Daemon = func(context.Context) error { return runDaemon(cfg) }
+	env.Menubar = func(ctx context.Context) error { return runMenubar(ctx, cfg) }
 	for source := range cfg.Alert.Source {
 		env.AlertSources = append(env.AlertSources, source)
 	}
@@ -155,6 +159,11 @@ func runDaemon(cfg config.Config) error {
 	if err != nil {
 		return err
 	}
+	if cfg.Menubar.Enabled {
+		if err := spawnMenubar(cfg); err != nil {
+			onError(fmt.Errorf("starting the menu bar item: %w", err))
+		}
+	}
 	logger.Println("shh worker started")
 	defer logger.Println("shh worker stopped")
 	return session.RunDaemon(ctx, session.DaemonConfig{
@@ -163,4 +172,50 @@ func runDaemon(cfg config.Config) error {
 		// Banners stay until dismissed, and only this process can lay them out, so do not leave while any are up.
 		Busy: func() bool { return overlay.Active() > 0 },
 	})
+}
+
+// spawnMenubar starts `shh menubar` as a child of the worker. It is not waited for or killed: it polls the worker's socket and
+// leaves on its own when the worker is gone.
+func spawnMenubar(cfg config.Config) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	logFile, err := os.OpenFile(filepath.Join(cfg.Paths.Dir, "shh.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer logFile.Close()
+	cmd := exec.Command(exe, "menubar")
+	cmd.Stdout, cmd.Stderr = logFile, logFile
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go cmd.Wait() // reap it when it ends
+	return nil
+}
+
+// runMenubar is the menu bar item's process: a status item driven by the worker over its socket.
+func runMenubar(ctx context.Context, cfg config.Config) error {
+	logger := log.New(os.Stderr, "menubar: ", log.LstdFlags)
+	return menubar.Run(ctx, menubar.Config{
+		Controller: session.NewClient(cfg.Paths.Socket),
+		Label:      cfg.Menubar.Label,
+		Open:       openUI,
+		OnError:    func(err error) { logger.Println("error:", err) },
+	})
+}
+
+// openUI opens a Terminal window running shh, which shows the terminal UI.
+func openUI() error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	quoted := "'" + strings.ReplaceAll(exe, "'", `'\''`) + "'"
+	script := `tell application "Terminal"
+	activate
+	do script ` + strconv.Quote(quoted) + `
+end tell`
+	return exec.Command("osascript", "-e", script).Run()
 }

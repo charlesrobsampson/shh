@@ -205,3 +205,12 @@ func TestFormatLevelRoundTripsThroughParseThreshold(t *testing.T) {
 		}
 	}
 }
+
+func TestFormatRemainingIsCompactAndRoundsMinutesUp(t *testing.T) {
+	tests := map[int]string{0: "0s", 30: "30s", 59: "59s", 60: "1m", 61: "2m", 38 * 60: "38m", 59*60 + 1: "1h", 3600: "1h", 3900: "1h05m", 7200: "2h"}
+	for secs, want := range tests {
+		if got := decide.FormatRemaining(secs); got != want {
+			t.Errorf("FormatRemaining(%d) = %q, want %q", secs, got, want)
+		}
+	}
+}

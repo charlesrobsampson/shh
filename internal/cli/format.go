@@ -25,9 +25,9 @@ func renderStatus(w io.Writer, v session.StatusView, running bool) {
 		var detail []string
 		switch {
 		case l.Paused:
-			detail = append(detail, "paused with "+formatRemaining(l.RemainingSecs)+" left")
+			detail = append(detail, "paused with "+decide.FormatRemaining(l.RemainingSecs)+" left")
 		case l.Timed:
-			detail = append(detail, formatRemaining(l.RemainingSecs)+" left")
+			detail = append(detail, decide.FormatRemaining(l.RemainingSecs)+" left")
 		case l.Kind != "baseline":
 			detail = append(detail, "until stopped")
 		}
@@ -55,24 +55,9 @@ func shortStatus(v session.StatusView, label string) string {
 	case top.Paused:
 		return fmt.Sprintf("%s ⏸ %d%%", label, v.Level)
 	case top.Timed:
-		return fmt.Sprintf("%s %s · %d%%", label, formatRemaining(top.RemainingSecs), v.Level)
+		return fmt.Sprintf("%s %s · %d%%", label, decide.FormatRemaining(top.RemainingSecs), v.Level)
 	}
 	return fmt.Sprintf("%s %d%%", label, v.Level)
-}
-
-// formatRemaining writes a countdown compactly: 30s, 38m, 2h, 1h05m. Minutes round up so a running timer never reads 0m.
-func formatRemaining(secs int) string {
-	if secs < 60 {
-		return fmt.Sprintf("%ds", secs)
-	}
-	minutes := (secs + 59) / 60
-	if minutes < 60 {
-		return fmt.Sprintf("%dm", minutes)
-	}
-	if minutes%60 == 0 {
-		return fmt.Sprintf("%dh", minutes/60)
-	}
-	return fmt.Sprintf("%dh%02dm", minutes/60, minutes%60)
 }
 
 func printJSON(w io.Writer, v session.StatusView, running bool) error {

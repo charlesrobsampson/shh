@@ -92,3 +92,18 @@ func FormatLevel(level int) string {
 	}
 	return fmt.Sprintf("%d%%", level)
 }
+
+// FormatRemaining writes a countdown compactly: 30s, 38m, 2h, 1h05m. Minutes round up so a running timer never reads 0m.
+func FormatRemaining(secs int) string {
+	if secs < 60 {
+		return fmt.Sprintf("%ds", secs)
+	}
+	minutes := (secs + 59) / 60
+	if minutes < 60 {
+		return fmt.Sprintf("%dm", minutes)
+	}
+	if minutes%60 == 0 {
+		return fmt.Sprintf("%dh", minutes/60)
+	}
+	return fmt.Sprintf("%dh%02dm", minutes/60, minutes%60)
+}

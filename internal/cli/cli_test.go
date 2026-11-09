@@ -695,3 +695,27 @@ func TestAlertTestNeverRearmsFocus(t *testing.T) {
 		t.Errorf("%d spawns; the worker was already running", r.spawns)
 	}
 }
+
+func TestTheMenubarCommandRunsTheItemAndNeverStartsAWorker(t *testing.T) {
+	r := newRig(t, false)
+	r.env.PersistedFocus = func() bool { return true }
+	r.env.Spawn = func() error { r.spawns++; return nil }
+	ran := false
+	r.env.Menubar = func(context.Context) error { ran = true; return nil }
+	r.mustRun("menubar")
+	if !ran || r.spawns != 0 {
+		t.Errorf("ran=%v spawns=%d; the menu bar item belongs to a worker and must not start one", ran, r.spawns)
+	}
+	r.out.Reset()
+	r.run("--help")
+	if strings.Contains(r.out.String()+r.err.String(), "menubar") {
+		t.Error("the internal menubar command shows up in --help")
+	}
+}
+
+func TestTheMenubarCommandSaysSoWhenThereIsNone(t *testing.T) {
+	r := newRig(t, false)
+	if code := r.run("menubar"); code != 1 || !strings.Contains(r.err.String(), "menu bar") {
+		t.Errorf("exit %d, stderr %q", code, r.err.String())
+	}
+}

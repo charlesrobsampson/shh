@@ -330,11 +330,12 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 ### 30 · Menu bar process
 - [ ] Done
-- Session: _(fill on start)_
 - Branch: `task/30-menubar` · Depends: 04, 26
 - Read: `docs/spikes/04-menubar.md`, `plan.md` §7.1
 - Build: `shh menubar` launched by the worker and exiting with it, driving a persistent JXA `NSStatusItem` helper over JSON lines (stdin: title and menu entries, stdout: clicks; see spike 04); shows `label` + time left + effective level; paused indicator; menu items for the stack, pause/resume, ±5m, stop, open TUI.
 - Tests: title/menu formatting from a status payload (table: baseline only, escalation with time left, paused, indefinite, off). Tray rendering itself is manual.
+- Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
+- Notes: new package `internal/menubar`. `Build(StatusView, label)` makes the `View` (title and menu items) from a status: title `shh 28m · 65%`, `shh 30%` for a level with no timer, `shh ⏸ 65%` paused, plain `shh` when focus is off; counts under three characters are padded with figure spaces so the width does not jitter (spike 04). Menu: one greyed heading per layer (`escalation 65% (medium) · 28m left · then off`), then Pause/Resume, +5m, −5m (only for a timed top layer), "Stop this session" (only with an escalation), "Turn focus off", "Open shh…". `Run(ctx, Config)` polls the worker once a second through a `Controller` (`*session.Client`), sends the helper a new `View` only when it changed, acts on clicks (`pause`, `resume`, `plus`, `minus`, `stop`, `off`, `open`) and refreshes at once, restarts a dead helper, and returns cleanly when the worker has been gone for two polls (so the item leaves with the worker). The helper is `statusitem.js` in an osascript process: JSON lines in on stdin, `event click <id>` out; it quits when its parent is no longer the `parent` pid Go gave it and stops writing then (same lesson as the banners). `shh menubar` is the hidden command that runs it; the daemon starts it as a child at start-up (`menubar.enabled`, default true, in config.json, with `menubar.label`). `FormatRemaining` moved to `decide` so the CLI and menu bar share it. "Open shh…" opens a Terminal window running `shh`; it shows the TUI once tasks 31 to 34 exist and a status until then. There is no Quit item: the item belongs to the worker.
 - Manual check: start a 2m session and watch the countdown; click pause.
 
 ---
