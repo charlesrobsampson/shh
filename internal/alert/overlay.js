@@ -109,14 +109,19 @@ function label(text, size, bold, frame, lines) {
   return field;
 }
 
-// Layout, in points, matching the Go side: 12 of padding, a 20 point title line, a 4 point gap, 16 points per body line, and when
-// there are buttons a 32 point row at the bottom. The caller sized the banner to its text; text beyond what fits ends in an ellipsis.
+// Layout, in points, matching the Go side: 12 of padding, an optional 14 point header line naming the app, a 20 point title line, a
+// 4 point gap, 16 points per body line, and when there are buttons a 32 point row at the bottom. The caller sized the banner to its
+// text; text beyond what fits ends in an ellipsis.
+const headerRow = cfg.header ? 14 : 0;
 const buttonRow = cfg.buttons.length > 0 ? 32 : 0;
-const title = label(cfg.title, 15, true, $.NSMakeRect(16, height - 12 - 20, cfg.width - 32, 20), 1);
-const body = label(cfg.body, 13, false, $.NSMakeRect(16, 12 + buttonRow, cfg.width - 32, height - 12 - 20 - 4 - 12 - buttonRow), 1);
+const header = cfg.header ? label(cfg.header, 11, true, $.NSMakeRect(16, height - 12 - headerRow, cfg.width - 32, headerRow), 1) : null;
+if (header) header.setTextColor($.NSColor.colorWithWhiteAlpha(1, 0.75));
+const title = label(cfg.title, 15, true, $.NSMakeRect(16, height - 12 - headerRow - 20, cfg.width - 32, 20), 1);
+const body = label(cfg.body, 13, false, $.NSMakeRect(16, 12 + buttonRow, cfg.width - 32, height - 12 - headerRow - 20 - 4 - 12 - buttonRow), 1);
 function layoutText() {
-  const room = height - 12 - 20 - 4 - 12 - buttonRow;
-  title.setFrame($.NSMakeRect(16, height - 12 - 20, cfg.width - 32, 20));
+  const room = height - 12 - headerRow - 20 - 4 - 12 - buttonRow;
+  if (header) header.setFrame($.NSMakeRect(16, height - 12 - headerRow, cfg.width - 32, headerRow));
+  title.setFrame($.NSMakeRect(16, height - 12 - headerRow - 20, cfg.width - 32, 20));
   body.setFrame($.NSMakeRect(16, 12 + buttonRow, cfg.width - 32, room));
   body.setMaximumNumberOfLines(Math.max(1, Math.floor(room / 16)));
 }

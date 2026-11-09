@@ -3,6 +3,7 @@ package alert
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/charlesrobsampson/shh/internal/config"
 )
@@ -26,7 +27,7 @@ func (d *Display) Show(a Alert) error {
 	width := SizeWidth(style.Size)
 	req := Request{
 		Kind: a.Kind, Source: a.Source, BundleID: a.BundleID, Title: a.Title, Body: a.Body,
-		Style: style, Width: width, Height: BannerHeight(width, a.Body),
+		Style: style, Width: width, Height: BannerHeight(width, a.Body) + headerHeight(a),
 	}
 	d.addButtons(&req, a)
 	if d.primary == nil && d.fallback == nil {
@@ -70,7 +71,7 @@ func (d *Display) addButtons(req *Request, a Alert) {
 	req.Height += ButtonRowHeight
 	for _, b := range req.Buttons {
 		if b.Type == config.ButtonPreview {
-			req.PreviewHeight = PreviewHeight(req.Width, a.Body) + ButtonRowHeight
+			req.PreviewHeight = PreviewHeight(req.Width, a.Body) + headerHeight(a) + ButtonRowHeight
 		}
 	}
 }
@@ -87,4 +88,12 @@ func applies(buttonType string, width int, a Alert) bool {
 		return Truncated(width, a.Body)
 	}
 	return false
+}
+
+// headerHeight is the room for the app name line: one line when the alert says where it is from, nothing otherwise.
+func headerHeight(a Alert) int {
+	if strings.TrimSpace(a.Source) == "" {
+		return 0
+	}
+	return HeaderHeight
 }

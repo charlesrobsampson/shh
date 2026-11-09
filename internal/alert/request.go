@@ -45,6 +45,8 @@ const (
 	MaxBodyLines = 4
 	// MaxPreviewLines is the most the Preview button shows. Even a preview is not a document.
 	MaxPreviewLines = 12
+	// HeaderHeight is the small line above the title that names the app, drawn only when the alert has a source.
+	HeaderHeight = 14
 	// ButtonRowHeight is the room under the text for the buttons: a 24 point button and 8 points of gap.
 	ButtonRowHeight = 32
 	// avgCharWidth is deliberately a little more than the real average at 13 points, so the estimate leans towards too much room.

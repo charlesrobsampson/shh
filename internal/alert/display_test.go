@@ -50,13 +50,13 @@ func TestStyleIsResolvedBeforeItReachesTheBackend(t *testing.T) {
 		wantH     int
 	}{
 		{"a plain message uses the base style", alert.Alert{Kind: config.KindMessage, Source: "Teams", Title: "Ana", Body: "hi"},
-			config.Style{Position: "top-right", Size: "small", Color: "#111111", DurationSecs: 8, Sound: "Glass"}, 280, 96},
+			config.Style{Position: "top-right", Size: "small", Color: "#111111", DurationSecs: 8, Sound: "Glass"}, 280, 110},
 		{"a calendar alert uses the kind override", alert.Alert{Kind: config.KindCalendar, Source: "Calendar", Title: "Sync"},
-			config.Style{Position: "top-right", Size: "small", Color: "#0a84ff", DurationSecs: 8, Sound: "Hero"}, 280, 96},
+			config.Style{Position: "top-right", Size: "small", Color: "#0a84ff", DurationSecs: 8, Sound: "Hero"}, 280, 110},
 		{"a source override applies to its messages", alert.Alert{Kind: config.KindMessage, Source: "Slack", Title: "ops"},
-			config.Style{Position: "bottom-left", Size: "large", Color: "#111111", DurationSecs: 8, Sound: "none"}, 460, 96},
+			config.Style{Position: "bottom-left", Size: "large", Color: "#111111", DurationSecs: 8, Sound: "none"}, 460, 110},
 		{"a longer body makes the banner taller", alert.Alert{Kind: config.KindMessage, Source: "Teams", Title: "Ana", Body: strings.Repeat("word ", 20)},
-			config.Style{Position: "top-right", Size: "small", Color: "#111111", DurationSecs: 8, Sound: "Glass"}, 280, 128},
+			config.Style{Position: "top-right", Size: "small", Color: "#111111", DurationSecs: 8, Sound: "Glass"}, 280, 142},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -265,5 +265,25 @@ func TestPreviewGrowsTheBannerToTheTextButNotWithoutLimit(t *testing.T) {
 	none := shown(t, "", alert.Alert{Kind: config.KindMessage, BundleID: "com.x", Title: "t", Body: "hi"})
 	if none.PreviewHeight != 0 {
 		t.Errorf("no preview button, but PreviewHeight = %d", none.PreviewHeight)
+	}
+}
+
+func TestTheHeaderNamingTheAppAddsOneLineOnlyWhenThereIsASource(t *testing.T) {
+	with := shown(t, "", alert.Alert{Kind: config.KindMessage, Source: "Teams", BundleID: "com.x", Title: "t", Body: "hi"})
+	without := shown(t, "", alert.Alert{Kind: config.KindMessage, BundleID: "com.x", Title: "t", Body: "hi"})
+	blank := shown(t, "", alert.Alert{Kind: config.KindMessage, Source: "   ", BundleID: "com.x", Title: "t", Body: "hi"})
+	if with.Height != without.Height+alert.HeaderHeight {
+		t.Errorf("height with a source %d, without %d: want one header line (%d) more", with.Height, without.Height, alert.HeaderHeight)
+	}
+	if blank.Height != without.Height {
+		t.Errorf("a blank source took room: %d vs %d", blank.Height, without.Height)
+	}
+}
+
+func TestPreviewHeightIncludesTheHeader(t *testing.T) {
+	with := shown(t, "", alert.Alert{Kind: config.KindMessage, Source: "Teams", BundleID: "com.x", Title: "t", Body: longBody})
+	without := shown(t, "", alert.Alert{Kind: config.KindMessage, BundleID: "com.x", Title: "t", Body: longBody})
+	if with.PreviewHeight != without.PreviewHeight+alert.HeaderHeight {
+		t.Errorf("preview height %d with a source, %d without; want a header line's difference", with.PreviewHeight, without.PreviewHeight)
 	}
 }
