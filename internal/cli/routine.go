@@ -97,16 +97,18 @@ func (c *routineExampleCmd) Run(env *Env) error {
 // ---- controlling a run ----
 
 type routineRunCmd struct {
-	Name string `arg:"" name:"name" help:"The routine to start."`
+	// Name is several words because routine names may have spaces: shh routine run deep work.
+	Name []string `arg:"" name:"name" help:"The routine to start; a name with spaces needs no quotes."`
 }
 
 func (c *routineRunCmd) Run(env *Env) error {
+	name := strings.Join(c.Name, " ")
 	if err := env.ensureWorker(); err != nil {
 		return err
 	}
-	info, err := env.client().RoutineRun(c.Name)
+	info, err := env.client().RoutineRun(name)
 	if errors.Is(err, session.ErrUnknownRoutine) {
-		return unknownRoutine(env, c.Name, err)
+		return unknownRoutine(env, name, err)
 	}
 	if err != nil {
 		return err
@@ -117,11 +119,16 @@ func (c *routineRunCmd) Run(env *Env) error {
 	return nil
 }
 
-// unknownRoutine explains an unknown name and lists the ones there are.
+// unknownRoutine explains an unknown name and lists the ones there are. The worker is the one that said it does not know the name, so
+// when the file here does have it, the worker is not reading the same file: most likely an older build that is still running.
 func unknownRoutine(env *Env, name string, err error) error {
 	routines, loadErr := routine.Load(env.RoutinesPath)
 	if loadErr != nil || len(routines) == 0 {
 		return fmt.Errorf("%w (there are no saved routines in %s)", err, env.RoutinesPath)
+	}
+	if found, ok := routine.Find(routines, name); ok {
+		return fmt.Errorf("%q is in %s, but the running worker does not know it: it is probably an older build that was started before routines existed. "+
+			"Turn focus off (shh stop --all), dismiss any alerts, wait a few seconds for it to exit, and run this again", found.Name, env.RoutinesPath)
 	}
 	var names []string
 	for _, r := range routines {

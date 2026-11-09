@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"github.com/charlesrobsampson/shh/internal/routine"
+	"github.com/charlesrobsampson/shh/internal/rules"
 	"github.com/charlesrobsampson/shh/internal/session"
+	"github.com/charlesrobsampson/shh/internal/testkit"
 )
 
 const lite = `{"routines": {
@@ -283,4 +285,42 @@ func TestARoutineNameWrittenTwiceIsReportedByTheCommand(t *testing.T) {
 	if code := r.run("routine", "run", "pomo"); code == 0 {
 		t.Error("a file with a duplicate name must not start anything")
 	}
+}
+
+func TestRoutineNamesWithSpacesNeedNoQuotes(t *testing.T) {
+	r := newRig(t, true)
+	r.saveRoutines(`{"routines": {"deep work": {"steps": [{"name": "block", "level": "90%", "length": "30m"}]}}}`)
+	r.mustRun("routine", "run", "deep", "work")
+	if v := r.view(); v.Routine == nil || v.Routine.Name != "deep work" {
+		t.Errorf("view = %+v", v.Routine)
+	}
+}
+
+func TestAWorkerThatDoesNotKnowARoutineThatIsInTheFileIsBlamedNotTheName(t *testing.T) {
+	r := newRig(t, false)
+	r.saveRoutines(lite)
+	// A worker from before routines existed: it has no loader, so it knows no routine at all.
+	old, err := session.NewWorker(session.Config{Store: r.store, Source: testkit.NewFakeSource(), Clock: r.clock, Rules: mustRules(t), Alerter: r.alerter, Suppressor: r.suppressor, Location: time.UTC})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.worker = old
+	r.serve()
+	code := r.run("routine", "run", "pomo")
+	msg := r.err.String()
+	if code != 1 || !strings.Contains(msg, `"pomo" is in `) || !strings.Contains(msg, "does not know it") || !strings.Contains(msg, "older build") || strings.Contains(msg, "the saved ones are") {
+		t.Errorf("exit %d, stderr %q: want it to say the worker is old, not list names as if the name were wrong", code, msg)
+	}
+	if code := r.run("routine", "run", "nope"); code != 1 || !strings.Contains(r.err.String(), "the saved ones are: ask, pomo") {
+		t.Errorf("a name that is not in the file should still list the saved ones: %q", r.err.String())
+	}
+}
+
+func mustRules(t *testing.T) rules.Rules {
+	t.Helper()
+	r, err := rules.Defaults()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
 }

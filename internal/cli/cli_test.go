@@ -895,7 +895,7 @@ func TestACommandWarnsWhenTheWorkerIsFromAnotherBuild(t *testing.T) {
 }
 
 func TestNoWarningWhenTheBuildsMatchOrAreUnknown(t *testing.T) {
-	for _, tt := range []struct{ worker, cli string }{{"abc", "abc"}, {"", "abc"}, {"abc", ""}} {
+	for _, tt := range []struct{ worker, cli string }{{"abc", "abc"}, {"abc", ""}, {"", ""}} {
 		r := newRig(t, true)
 		session.BuildID = tt.worker
 		r.env.Build = tt.cli
@@ -919,5 +919,16 @@ func TestTheMessageSamplesShowTheFlagButtonWithoutMarkingAnythingReal(t *testing
 		if a.NotificationID > 0 {
 			t.Errorf("a sample claims to be a real notification: %+v", a)
 		}
+	}
+}
+
+func TestAWorkerThatReportsNoBuildIsOlderThanAnyThatCanAndCountsAsStale(t *testing.T) {
+	r := newRig(t, true)
+	session.BuildID = "" // what a worker from before builds were reported says
+	t.Cleanup(func() { session.BuildID = "" })
+	r.env.Build = "newbuild0002"
+	r.mustRun("status")
+	if got := r.err.String(); !strings.Contains(got, "different build") {
+		t.Errorf("stderr = %q, want the note: a worker that does not even report its build is an old one", got)
 	}
 }
