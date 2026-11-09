@@ -39,6 +39,9 @@ func renderStatus(w io.Writer, v session.StatusView, running bool) {
 		if l.ThenLevel != nil {
 			detail = append(detail, "then "+decide.FormatLevel(*l.ThenLevel))
 		}
+		if l.Alert != "" {
+			detail = append(detail, "alerts at the end ("+l.Alert+")")
+		}
 		line := fmt.Sprintf("  %-10s  %-14s", l.Kind, decide.FormatLevel(l.Percent))
 		if len(detail) > 0 {
 			line += "  " + strings.Join(detail, ", ")

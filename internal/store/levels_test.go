@@ -415,3 +415,38 @@ func TestSetPercentChangesTheLevel(t *testing.T) {
 		t.Errorf("unknown level: err = %v, want ErrNotFound", err)
 	}
 }
+
+func TestSessionsThatRanOutWithAnAlertAreFoundOnceUntilTheAlertIsMarkedDone(t *testing.T) {
+	s := open(t)
+	push := func(alert string, minutes int) int64 {
+		id, err := s.PushLevel(store.Level{Kind: store.LevelEscalation, Percent: 60, StartTime: t0, TargetMinutes: minutes,
+			ExpiresAt: ptr(t0.Add(time.Duration(minutes) * time.Minute)), Alert: alert})
+		must(t, err)
+		return id
+	}
+	banner, sound, none, plain, stopped := push("banner", 5), push("sound", 6), push("none", 7), push("", 8), push("banner", 9)
+	must(t, s.CloseLevel(banner, t0.Add(5*time.Minute)))  // ran out
+	must(t, s.CloseLevel(sound, t0.Add(6*time.Minute)))   // ran out
+	must(t, s.CloseLevel(none, t0.Add(7*time.Minute)))    // ran out, but asked for no alert
+	must(t, s.CloseLevel(plain, t0.Add(8*time.Minute)))   // ran out, no alert
+	must(t, s.CloseLevel(stopped, t0.Add(2*time.Minute))) // stopped by hand before its time
+	stillRunning, err := s.PushLevel(store.Level{Kind: store.LevelEscalation, Percent: 60, StartTime: t0, TargetMinutes: 30, ExpiresAt: ptr(t0.Add(30 * time.Minute)), Alert: "banner"})
+	must(t, err)
+	_ = stillRunning
+
+	due, err := s.EndedWithAlert()
+	if err != nil || len(due) != 2 || due[0].ID != banner || due[1].ID != sound || due[0].Alert != "banner" || due[1].Alert != "sound" {
+		t.Fatalf("due = %+v, %v; want the banner and the sound session, oldest first, and nothing stopped by hand, still running or without an alert", due, err)
+	}
+	must(t, s.MarkAlertDone(banner))
+	due, _ = s.EndedWithAlert()
+	if len(due) != 1 || due[0].ID != sound {
+		t.Errorf("after marking one done: %+v", due)
+	}
+	if l, _ := s.GetLevel(banner); !l.AlertDone {
+		t.Error("the done mark did not stick")
+	}
+	if err := s.MarkAlertDone(9999); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("marking a missing session: %v", err)
+	}
+}

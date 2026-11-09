@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -192,6 +193,8 @@ func runDaemon(cfg config.Config) error {
 		Location:   time.Local, OnError: onError,
 		// Routines are read from routines.json each time one is needed, so edits apply to the next run.
 		Routines: func() ([]routine.Routine, error) { return routine.Load(routine.DefaultPath(cfg.Paths.Dir)) },
+		// The sound for alerts that are only a sound is the one the alert style uses.
+		PlaySound: func() error { return playSystemSound(cfg.Alert.Base.Sound) },
 	})
 	if err != nil {
 		return err
@@ -281,4 +284,21 @@ func runTUI(cfg config.Config) error {
 			return err
 		},
 	})
+}
+
+// systemSound matches the names of the sounds macOS ships (Glass, Hero, Sosumi, ...), and keeps a configured name from being used as a
+// path.
+var systemSound = regexp.MustCompile(`^[A-Za-z0-9 _-]+$`)
+
+// playSystemSound plays a macOS system sound by name without waiting for it; "none" and unknown or odd names play nothing.
+func playSystemSound(name string) error {
+	if name == "" || name == "none" || !systemSound.MatchString(name) {
+		return nil
+	}
+	cmd := exec.Command("afplay", filepath.Join("/System/Library/Sounds", name+".aiff"))
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go cmd.Wait() // reap it when it ends
+	return nil
 }

@@ -312,6 +312,10 @@ func (r *routineRunner) finish(run store.RoutineRun, rt *routine.Routine, reason
 // announce says that the step at pos is over, if its alert asks for that. A banner says what comes next and how to carry on.
 func (r *routineRunner) announce(rt routine.Routine, plan []routine.Planned, pos int, last bool) {
 	step := plan[pos]
+	if step.Alert == routine.AlertSound && !last {
+		r.w.playSound()
+		return
+	}
 	if step.Alert != routine.AlertBanner || last { // the end of the routine has its summary instead
 		return
 	}
@@ -323,11 +327,7 @@ func (r *routineRunner) announce(rt routine.Routine, plan []routine.Planned, pos
 	r.show(alert.Alert{Kind: config.KindMessage, Source: "Routine", Title: step.Name + " is over", Body: body})
 }
 
-func (r *routineRunner) show(a alert.Alert) {
-	if err := r.w.cfg.Alerter.Show(a); err != nil && r.w.cfg.OnError != nil {
-		r.w.cfg.OnError(fmt.Errorf("showing the routine alert %q: %w", a.Title, err))
-	}
-}
+func (r *routineRunner) show(a alert.Alert) { r.w.say(a) }
 
 // ---- loading ----
 

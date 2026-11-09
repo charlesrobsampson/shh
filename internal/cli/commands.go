@@ -24,6 +24,7 @@ type focusCmd struct {
 	Note       string   `short:"m" help:"A note about what you are doing."`
 	Then       string   `aliases:"clear" help:"What to fall back to when the timer ends: a percentage or a tier (see -f). Default: the layer beneath."`
 	EndRoutine bool     `name:"end-routine" help:"If a routine is running, end it and start this session (without it you are asked)."`
+	Alert      string   `help:"Announce when the timer ends: none (the default), sound or banner. Needs a length."`
 	Words      []string `arg:"" optional:"" name:"note" help:"The note, as plain words (same as -m). A leading level or length is read as one, so \"shh focus deep 25m writing\" works; tiers: off (0), light (35%), medium (65%), deep (90%), lockdown (99%)."`
 }
 
@@ -61,16 +62,22 @@ func (c *focusCmd) Run(env *Env) error {
 		}
 		note = joined
 	}
+	if err := session.CheckAlert(c.Alert); err != nil {
+		return usagef("--alert: %w", err)
+	}
+	if c.Alert != "" && c.Alert != session.AlertNone && duration == 0 {
+		return usagef("--alert needs a length, since a session with no timer never ends: for example shh 25m --alert banner")
+	}
 	if err := env.ensureWorker(); err != nil {
 		return err
 	}
-	view, err := env.client().Focus(level, duration, then, note)
+	view, err := env.client().FocusAlert(level, duration, then, note, c.Alert)
 	if errors.Is(err, session.ErrRoutineRunning) {
 		ended, askErr := env.endRoutineFirst(err, c.EndRoutine, "start this session")
 		if askErr != nil || !ended {
 			return askErr
 		}
-		view, err = env.client().Focus(level, duration, then, note)
+		view, err = env.client().FocusAlert(level, duration, then, note, c.Alert)
 	}
 	if err != nil {
 		return err

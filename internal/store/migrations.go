@@ -159,4 +159,11 @@ CREATE TABLE routine_run_steps (
 );
 CREATE INDEX routine_run_steps_run ON routine_run_steps (run_id);
 `,
+
+	// An alert for when a timed focus session runs out (task 52): none, sound or banner. alert_done says it has been given, so a restart
+	// does not give it again.
+	`
+ALTER TABLE focus_sessions ADD COLUMN alert TEXT;
+ALTER TABLE focus_sessions ADD COLUMN alert_done BOOLEAN NOT NULL DEFAULT 0;
+`,
 }

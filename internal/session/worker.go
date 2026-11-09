@@ -43,6 +43,8 @@ type Config struct {
 	OnDecision func(Decision)
 	// Routines loads the saved routines (routines.json). Nil means there are none.
 	Routines RoutineLoader
+	// PlaySound plays the alert sound, for sessions and routine steps whose alert is "sound". Nil means it is silent.
+	PlaySound func() error
 }
 
 // Decision is the outcome for one notification.
@@ -180,6 +182,9 @@ func (w *Worker) Init(backfillSince time.Time) error {
 func (w *Worker) Tick() error {
 	if err := w.routines.Tick(); err != nil && w.cfg.OnError != nil {
 		w.cfg.OnError(fmt.Errorf("routine: %w", err))
+	}
+	if err := w.announceEnded(); err != nil && w.cfg.OnError != nil {
+		w.cfg.OnError(fmt.Errorf("session alerts: %w", err))
 	}
 	if err := w.syncSuppressor(); err != nil {
 		return err
@@ -380,3 +385,60 @@ func (w *Worker) RoutineActive() bool { return w.routines.Active() }
 
 // RoutineInfo is the routine run in progress and the last one that ended.
 func (w *Worker) RoutineInfo() (RoutineInfo, error) { return w.routines.Info() }
+
+// staleAlert is how long after a session ended its alert can still be given. A worker that was down for longer than this does not
+// announce, on its return, something that ended hours ago.
+const staleAlert = time.Hour
+
+// announceEnded gives the alert of every session that ran out of time on its own and asked for one (shh focus --alert), once each. A
+// session stopped by hand ended before its time and is not announced.
+func (w *Worker) announceEnded() error {
+	if _, err := w.stack.Status(); err != nil { // settles timers that have run out, closing their sessions
+		return err
+	}
+	due, err := w.cfg.Store.EndedWithAlert()
+	if err != nil {
+		return err
+	}
+	now := w.cfg.Clock.Now()
+	for _, l := range due {
+		// Marked first: an alert that fails is reported once, not retried on every tick for ever.
+		if err := w.cfg.Store.MarkAlertDone(l.ID); err != nil {
+			return err
+		}
+		if l.EndTime != nil && now.Sub(*l.EndTime) > staleAlert {
+			continue
+		}
+		switch l.Alert {
+		case AlertBanner:
+			w.say(alert.Alert{Kind: config.KindMessage, Source: "Focus", Title: "Focus session over", Body: describeEnded(l)})
+		case AlertSound:
+			w.playSound()
+		}
+	}
+	return nil
+}
+
+// describeEnded says what a session that has just ended was: "25m at 75% · writing docs".
+func describeEnded(l store.Level) string {
+	text := fmt.Sprintf("%s at %s", decide.FormatRemaining(l.TargetMinutes*60), levelText(l.Percent))
+	if l.Note != "" {
+		text += " · " + l.Note
+	}
+	return text
+}
+
+func (w *Worker) say(a alert.Alert) {
+	if err := w.cfg.Alerter.Show(a); err != nil && w.cfg.OnError != nil {
+		w.cfg.OnError(fmt.Errorf("showing the alert %q: %w", a.Title, err))
+	}
+}
+
+func (w *Worker) playSound() {
+	if w.cfg.PlaySound == nil {
+		return
+	}
+	if err := w.cfg.PlaySound(); err != nil && w.cfg.OnError != nil {
+		w.cfg.OnError(fmt.Errorf("playing the alert sound: %w", err))
+	}
+}

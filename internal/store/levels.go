@@ -33,10 +33,13 @@ type Level struct {
 	RemainingSecs *int
 	Blocked       int
 	Allowed       int
+	// Alert is how the end of the session is announced when its timer runs out: "", "sound" or "banner". AlertDone says it has been.
+	Alert     string
+	AlertDone bool
 }
 
 const levelColumns = `id, kind, parent_id, focus_percentage, then_level, note, CAST(start_time AS TEXT), CAST(end_time AS TEXT),
-	target_duration_minutes, CAST(expires_at AS TEXT), CAST(paused_at AS TEXT), remaining_secs, total_blocked, total_allowed`
+	target_duration_minutes, CAST(expires_at AS TEXT), CAST(paused_at AS TEXT), remaining_secs, total_blocked, total_allowed, alert, alert_done`
 
 // PushLevel starts a new active level on top of the stack and returns its id.
 func (s *Store) PushLevel(l Level) (int64, error) {
@@ -68,9 +71,9 @@ func (s *Store) PushLevel(l Level) (int64, error) {
 		parent = nullID(top)
 	}
 	res, err := tx.Exec(`INSERT INTO focus_sessions
-		(kind, parent_id, start_time, target_duration_minutes, expires_at, focus_percentage, then_level, note)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		string(l.Kind), parent, formatTime(l.StartTime), l.TargetMinutes, nullTime(l.ExpiresAt), l.Percent, l.ThenLevel, nullString(l.Note))
+		(kind, parent_id, start_time, target_duration_minutes, expires_at, focus_percentage, then_level, note, alert)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		string(l.Kind), parent, formatTime(l.StartTime), l.TargetMinutes, nullTime(l.ExpiresAt), l.Percent, l.ThenLevel, nullString(l.Note), nullString(l.Alert))
 	if err != nil {
 		return 0, err
 	}
@@ -241,13 +244,14 @@ func scanLevel(row scanner) (Level, error) {
 		kind, start                  string
 		parent, then, remaining      sql.NullInt64
 		note, ended, expires, paused sql.NullString
+		alert                        sql.NullString
 	)
 	err := row.Scan(&l.ID, &kind, &parent, &l.Percent, &then, &note, &start, &ended,
-		&l.TargetMinutes, &expires, &paused, &remaining, &l.Blocked, &l.Allowed)
+		&l.TargetMinutes, &expires, &paused, &remaining, &l.Blocked, &l.Allowed, &alert, &l.AlertDone)
 	if err != nil {
 		return Level{}, err
 	}
-	l.Kind, l.ParentID, l.Note = LevelKind(kind), parent.Int64, note.String
+	l.Kind, l.ParentID, l.Note, l.Alert = LevelKind(kind), parent.Int64, note.String, alert.String
 	if l.StartTime, err = parseTime(start); err != nil {
 		return Level{}, err
 	}
@@ -268,4 +272,30 @@ func scanLevel(row scanner) (Level, error) {
 		l.RemainingSecs = &v
 	}
 	return l, nil
+}
+
+// EndedWithAlert returns the focus sessions that ran out of time on their own, asked for an alert, and have not had it yet, oldest
+// first. A session that was stopped by hand ended before its time and is not among them.
+func (s *Store) EndedWithAlert() ([]Level, error) {
+	rows, err := s.db.Query(`SELECT ` + levelColumns + ` FROM focus_sessions
+		WHERE end_time IS NOT NULL AND expires_at IS NOT NULL AND end_time >= expires_at
+		AND alert IS NOT NULL AND alert <> '' AND alert <> 'none' AND alert_done = 0 ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Level
+	for rows.Next() {
+		l, err := scanLevel(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
+// MarkAlertDone records that a session's end alert has been given.
+func (s *Store) MarkAlertDone(id int64) error {
+	return s.update(id, `UPDATE focus_sessions SET alert_done = 1 WHERE id = ?`, id)
 }

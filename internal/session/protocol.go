@@ -31,6 +31,8 @@ type Request struct {
 	NotificationID int64  `json:"notification_id,omitempty"`
 	Label          *int   `json:"label,omitempty"`
 	Feedback       string `json:"feedback,omitempty"`
+	// SessionAlert is how "focus" announces the end of the session: none, sound or banner.
+	SessionAlert string `json:"session_alert,omitempty"`
 	// Name is the routine that "routine_run" starts.
 	Name string `json:"name,omitempty"`
 	// Alert is what the "alert" command shows, through the same alerter the worker uses, so that every banner on screen is
@@ -134,6 +136,8 @@ type LayerView struct {
 	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
 	Blocked       int        `json:"blocked"`
 	Allowed       int        `json:"allowed"`
+	// Alert is how the end of the session is announced ("sound" or "banner"); empty for none.
+	Alert string `json:"alert,omitempty"`
 }
 
 // Event is one line of a subscription.
@@ -200,7 +204,7 @@ func statusView(st Status, now time.Time) StatusView {
 		view.Layers = append(view.Layers, LayerView{
 			ID: l.ID, Kind: string(l.Kind), Percent: l.Percent, ThenLevel: l.ThenLevel, Note: l.Note, Started: l.StartTime,
 			Timed: l.Timed, Paused: l.Paused, RemainingSecs: int(l.Remaining / time.Second), ExpiresAt: l.ExpiresAt,
-			Blocked: l.Blocked, Allowed: l.Allowed,
+			Blocked: l.Blocked, Allowed: l.Allowed, Alert: l.Alert,
 		})
 	}
 	return view

@@ -27,6 +27,24 @@ type Escalation struct {
 	// Then replaces everything beneath when the timer ends: 0 clears the baseline too, nil falls back to the layer beneath.
 	Then *int
 	Note string
+	// Alert says how the end of a timed session is announced: "" or "none" (the default), "sound" or "banner".
+	Alert string
+}
+
+// Alert values.
+const (
+	AlertNone   = "none"
+	AlertSound  = "sound"
+	AlertBanner = "banner"
+)
+
+// CheckAlert reports whether s is a way to announce the end of a session: "", none, sound or banner.
+func CheckAlert(s string) error {
+	switch s {
+	case "", AlertNone, AlertSound, AlertBanner:
+		return nil
+	}
+	return fmt.Errorf("%w: alert %q is not one of none, sound, banner", ErrInvalid, s)
 }
 
 // Layer is one level of the stack with its time left.
@@ -90,6 +108,12 @@ func (s *Stack) Escalate(e Escalation) (id int64, err error) {
 	if e.Duration < 0 {
 		return 0, fmt.Errorf("%w: duration %v is negative", ErrInvalid, e.Duration)
 	}
+	if err := CheckAlert(e.Alert); err != nil {
+		return 0, err
+	}
+	if e.Alert != "" && e.Alert != AlertNone && e.Duration == 0 {
+		return 0, fmt.Errorf("%w: a session with no length never ends, so it has nothing to alert about", ErrInvalid)
+	}
 	err = s.act(func(now time.Time, layers []store.Level) error {
 		if n := len(layers); e.Duration == 0 && n > 0 {
 			if top := layers[n-1]; top.Kind == store.LevelEscalation && top.TargetMinutes == 0 {
@@ -99,6 +123,9 @@ func (s *Stack) Escalate(e Escalation) (id int64, err error) {
 			}
 		}
 		level := store.Level{Kind: store.LevelEscalation, Percent: e.Level, StartTime: now, ThenLevel: e.Then, Note: e.Note}
+		if e.Alert != AlertNone {
+			level.Alert = e.Alert
+		}
 		if e.Duration > 0 {
 			expires := now.Add(e.Duration)
 			level.ExpiresAt = &expires

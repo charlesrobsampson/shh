@@ -125,7 +125,7 @@ func (s *Server) handle(req Request) Response {
 		err = withLevel(req, func(level int) error { return w.SetBaseline(level) })
 	case "focus":
 		err = withLevel(req, func(level int) error {
-			_, err := w.Escalate(Escalation{Level: level, Duration: time.Duration(req.DurationSecs) * time.Second, Then: req.Then, Note: req.Note})
+			_, err := w.Escalate(Escalation{Level: level, Duration: time.Duration(req.DurationSecs) * time.Second, Then: req.Then, Note: req.Note, Alert: req.SessionAlert})
 			return err
 		})
 	case "level":

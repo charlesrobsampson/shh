@@ -33,7 +33,12 @@ func (c *Client) Baseline(level int) (StatusView, error) {
 
 // Focus starts an escalation. duration 0 means until stopped; then may be nil.
 func (c *Client) Focus(level int, duration time.Duration, then *int, note string) (StatusView, error) {
-	return c.do(Request{Cmd: "focus", Level: &level, DurationSecs: int(duration / time.Second), Then: then, Note: note})
+	return c.FocusAlert(level, duration, then, note, "")
+}
+
+// FocusAlert starts a session that announces its end: alert is none, sound or banner ("" means none).
+func (c *Client) FocusAlert(level int, duration time.Duration, then *int, note, alert string) (StatusView, error) {
+	return c.do(Request{Cmd: "focus", Level: &level, DurationSecs: int(duration / time.Second), Then: then, Note: note, SessionAlert: alert})
 }
 
 func (c *Client) SetLevel(level int) (StatusView, error) {

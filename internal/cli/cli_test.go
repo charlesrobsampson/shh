@@ -932,3 +932,48 @@ func TestAWorkerThatReportsNoBuildIsOlderThanAnyThatCanAndCountsAsStale(t *testi
 		t.Errorf("stderr = %q, want the note: a worker that does not even report its build is an old one", got)
 	}
 }
+
+func TestFocusAlertAsksTheWorkerToAnnounceTheEndAndStatusSaysSo(t *testing.T) {
+	r := newRig(t, true)
+	out := r.mustRun("focus", "75%", "25m", "--alert", "banner")
+	if !strings.Contains(out, "alerts at the end (banner)") {
+		t.Errorf("output = %q", out)
+	}
+	st, err := session.NewClient(r.socket).Status()
+	if err != nil || len(st.Layers) != 1 || st.Layers[0].Alert != "banner" {
+		t.Errorf("status = %+v, %v", st.Layers, err)
+	}
+}
+
+func TestTheShorthandTakesAlertToo(t *testing.T) {
+	r := newRig(t, true)
+	r.mustRun("25m", "--alert", "sound")
+	st, _ := session.NewClient(r.socket).Status()
+	if len(st.Layers) != 1 || st.Layers[0].Alert != "sound" || st.Level != 65 {
+		t.Errorf("status = %+v", st)
+	}
+}
+
+func TestAlertOffByDefaultAndNoneMeansNone(t *testing.T) {
+	for _, args := range [][]string{{"focus", "30%", "10m"}, {"focus", "30%", "10m", "--alert", "none"}} {
+		r := newRig(t, true)
+		out := r.mustRun(args...)
+		if strings.Contains(out, "alerts at the end") {
+			t.Errorf("%v: output = %q", args, out)
+		}
+	}
+}
+
+func TestAlertNeedsAKnownKindAndALength(t *testing.T) {
+	r := newRig(t, true)
+	if code := r.run("focus", "30%", "10m", "--alert", "loud"); code != 2 || !strings.Contains(r.err.String(), "--alert") {
+		t.Errorf("an unknown alert: exit %d, stderr %q", code, r.err.String())
+	}
+	r.err.Reset()
+	if code := r.run("focus", "30%", "--alert", "banner"); code != 2 || !strings.Contains(r.err.String(), "needs a length") {
+		t.Errorf("an alert with no length: exit %d, stderr %q", code, r.err.String())
+	}
+	if st, _ := session.NewClient(r.socket).Status(); st.Level != 0 {
+		t.Errorf("a refused command started something: %+v", st)
+	}
+}
