@@ -152,8 +152,9 @@ Where it *does* fit: as **L3 feature provider**, a Python sidecar answering fixe
 - `p = σ(w·x + b)` is the score `S_base`. Training is soft-target logistic SGD: `w ← w + α (t − p) x` (the manifest formula plus the sigmoid and a bias), where `t` is the target score in [0,1].
 - **[DECIDED] Hybrid labels.** Both feed the same update:
   - **Exact label** (`t` then 0–100, or a tier name): `t = N/100`. Always updates.
-  - **Quick `y`**: "this should have reached me at the threshold it was at." Constraint `S > T_dec/100`. If violated, `t = min(1, T_dec/100 + margin)` (capped at 1 rather than 0.99 so that `y` at lockdown, which needs `S > 0.99`, is satisfiable); otherwise no update.
-  - **Quick `n`**: "this should have been muted at that threshold." Constraint `S ≤ T_dec/100`. If violated (e.g. an item that was alerted), `t = max(0, T_dec/100 − margin)`; otherwise no update.
+  - **Quick `y`**: "this should have reached me at the threshold it was at." Constraint `S > T_dec/100`. If violated, `t = min(1, T_dec/100 + margin)` (capped at 1 rather than 0.99 so that `y` at lockdown, which needs `S > 0.99`, is satisfiable); otherwise (the model was right) **[DECIDED, task 33]** a score within `margin` of the threshold is reinforced: stepped out to `T_dec/100 + margin` (at most 0.995), and one already clear of that is left alone, so a right call that only just got it right still teaches the model something and a confident one does not drift it.
+  - **Quick `n`**: "this should have been muted at that threshold." Constraint `S ≤ T_dec/100`. If violated (e.g. an item that was alerted), `t = max(0, T_dec/100 − margin)`; otherwise a score within `margin` below the threshold is stepped down to `T_dec/100 − margin` (at least 0.005), and a clearer one is left alone.
+  - In the TUI `y`/`n` are asked as "did shh do the right thing?" and mapped onto these absolute labels from what shh did (see §8).
   - `T_dec` is the row's `threshold_at_decision`, so feedback given hours later is still interpreted correctly. `margin` defaults to 0.1 **[ASSUMED]**.
 - **Training order:** the Train list shows the most informative items first (scores near the user's usual thresholds, or where recent labels disagree with the model).
 - **Later, not v1:** implicit weak labels (opened right away, dismissed unread).
