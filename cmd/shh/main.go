@@ -190,6 +190,8 @@ func runDaemon(cfg config.Config) error {
 		Alerter:    alerter,
 		Suppressor: suppress.NewAccessibility(suppress.AccessibilityConfig{OwnPrefix: ingest.OwnTitlePrefix, OnError: onError}),
 		Location:   time.Local, OnError: onError,
+		// Routines are read from routines.json each time one is needed, so edits apply to the next run.
+		Routines: func() ([]routine.Routine, error) { return routine.Load(routine.DefaultPath(cfg.Paths.Dir)) },
 	})
 	if err != nil {
 		return err

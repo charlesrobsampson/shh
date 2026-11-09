@@ -79,8 +79,8 @@ func TestRoutineRunStartsTheFirstStep(t *testing.T) {
 	r := newRig(t, true)
 	r.saveRoutines(lite)
 	out := r.mustRun("routine", "run", "pomo")
-	if !strings.Contains(out, "Started pomo: pomo: work (1/2), step 1 of 5: 25m at 75%") && !strings.Contains(out, "Started pomo: work (1/2), step 1 of 5: 25m at 75%") {
-		t.Errorf("output = %q", out)
+	if strings.TrimSpace(out) != "Started pomo: work (1/2), step 1 of 5: 25m at 75%" {
+		t.Errorf("output = %q, want the name once", out)
 	}
 	if st := r.view(); st.Level != 75 || st.Routine == nil || st.Routine.Name != "pomo" {
 		t.Errorf("status = %+v", st)

@@ -48,6 +48,11 @@ tasks:
     cmds:
       - python3 tools/capture.py --once
 
+  e2e:routines:
+    desc: Run a routine through the real binary and a real worker in a throwaway HOME (takes about 20 s; nothing on screen is touched)
+    cmds:
+      - tools/e2e_routines.sh
+
   watch:invites:
     desc: Watch for meeting invites and record only their structure to private/captures/invites.jsonl; says ENOUGH after 5 (task 47)
     cmds:

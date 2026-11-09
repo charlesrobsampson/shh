@@ -114,7 +114,7 @@ func (c *routineRunCmd) Run(env *Env) error {
 		return err
 	}
 	if info.Active != nil {
-		fmt.Fprintf(env.Stdout, "Started %s: %s\n", info.Active.Name, describeStep(*info.Active))
+		fmt.Fprintf(env.Stdout, "Started %s\n", describeStep(*info.Active)) // which already begins with the routine's name
 	}
 	return nil
 }
