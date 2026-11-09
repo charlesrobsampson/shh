@@ -552,7 +552,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Manual check: flag an alert from its banner, then see it highlighted at the top of the Train tab.
 
 ### 51 · TUI: relative line numbers and vim-style counts
-- [ ] Done
+- [x] Done
 - Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/51-tui-motions` · Depends: 33
 - Context: the user wants to move around the lists the way vim does. A gutter to the left of each row shows its distance from the cursor (the cursor's own row shows its absolute number, as vim's hybrid line numbers do), and typing a number before a motion repeats it: `3k` up three rows, `6j` down six. Digits therefore no longer open the label prompt; they build a count. Once the prompt is open (`t`), digits type into it as before.
