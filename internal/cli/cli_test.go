@@ -745,3 +745,51 @@ func TestSettingABaselineWithNothingOnTopJustConfirmsIt(t *testing.T) {
 		t.Errorf("output = %q, want the baseline reported as cleared", out)
 	}
 }
+
+func TestFocusReadsALeadingLevelAndLengthFromThePlainWords(t *testing.T) {
+	tests := []struct {
+		name      string
+		args      []string
+		wantLevel int
+		wantNote  string
+		wantTimed bool
+	}{
+		{"just a percentage", []string{"focus", "30%"}, 30, "", false},
+		{"a percentage then words", []string{"focus", "30%", "writing", "the", "report"}, 30, "writing the report", false},
+		{"a length", []string{"focus", "25m"}, 65, "", true},
+		{"a length and a level in either order", []string{"focus", "25m", "75%", "deep", "work"}, 75, "deep work", true},
+		{"the other order", []string{"focus", "75%", "1h30m"}, 75, "", true},
+		{"a lone tier name", []string{"focus", "deep"}, 90, "", false},
+		{"a tier name that starts a note is a note", []string{"focus", "deep", "work"}, 65, "deep work", false},
+		{"words that only look a little like settings", []string{"focus", "meeting", "at", "30%"}, 65, "meeting at 30%", false},
+		{"the flag still works", []string{"focus", "-f", "40%", "write", "docs"}, 40, "write docs", false},
+		{"a flag and a plain word for different things", []string{"focus", "-f", "40%", "25m", "write"}, 40, "write", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := newRig(t, true)
+			r.mustRun(tt.args...)
+			st := r.status()
+			top := st.Layers[len(st.Layers)-1]
+			if st.Level != tt.wantLevel || top.Note != tt.wantNote || top.Timed != tt.wantTimed {
+				t.Errorf("level=%d note=%q timed=%v, want %d %q %v", st.Level, top.Note, top.Timed, tt.wantLevel, tt.wantNote, tt.wantTimed)
+			}
+		})
+	}
+}
+
+func TestFocusRejectsAGivenTwiceLevelOrLength(t *testing.T) {
+	for _, args := range [][]string{
+		{"focus", "-f", "40%", "30%"},
+		{"focus", "-t", "10m", "25m"},
+		{"focus", "30%", "40%"},
+	} {
+		r := newRig(t, true)
+		if code := r.run(args...); code != 2 || !strings.Contains(r.err.String(), "twice") {
+			t.Errorf("%v: exit %d, stderr %q; want a usage error about giving it twice", args, code, r.err.String())
+		}
+		if st := r.status(); st.Level != 0 {
+			t.Errorf("%v: a session was started anyway: %+v", args, st)
+		}
+	}
+}

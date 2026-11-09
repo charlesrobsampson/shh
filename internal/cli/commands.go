@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -19,21 +20,67 @@ import (
 )
 
 type focusCmd struct {
-	Timer string   `short:"t" default:"0" help:"Session length such as 25m or 1h30m; 0 means until stopped."`
-	Focus string   `short:"f" default:"medium" help:"Threshold: a percentage like 75% or a tier (off, light, medium, deep, lockdown)."`
+	Timer string   `short:"t" help:"Session length such as 25m or 1h30m; 0 means until stopped (the default)."`
+	Focus string   `short:"f" help:"Threshold: a percentage like 75% or a tier (off, light, medium, deep, lockdown). Default: medium."`
 	Note  string   `short:"m" help:"A note about what you are doing."`
 	Then  string   `aliases:"clear" help:"What to fall back to when the timer ends: a percentage, a tier or off. Default: the layer beneath."`
-	Words []string `arg:"" optional:"" name:"note" help:"The note, as plain words (same as -m)."`
+	Words []string `arg:"" optional:"" name:"note" help:"The note, as plain words (same as -m). A leading 75% or 25m is read as the level or the length, so \"shh focus 75% 25m writing\" works."`
+}
+
+var (
+	percentWord  = regexp.MustCompile(`^[0-9]+%$`)
+	durationWord = regexp.MustCompile(`^([0-9]+(\.[0-9]+)?[hms])+$`)
+)
+
+// leadingSettings takes a level and a length off the front of the plain words, so "shh focus 30%" sets the level instead of
+// becoming a note that says "30%". A flag given as well is a mistake worth reporting rather than choosing between. A lone tier
+// name ("shh focus deep") is a level too, but "deep work" is a note.
+func (c *focusCmd) leadingSettings() (level, length string, words []string, err error) {
+	level, length, words = c.Focus, c.Timer, c.Words
+	for len(words) > 0 {
+		w := words[0]
+		switch {
+		case percentWord.MatchString(w):
+			if level != "" {
+				return "", "", nil, usagef("the level is given twice (%s and %s)", level, w)
+			}
+			level = w
+		case durationWord.MatchString(w):
+			if length != "" {
+				return "", "", nil, usagef("the length is given twice (%s and %s)", length, w)
+			}
+			length = w
+		default:
+			if len(words) == 1 && level == "" {
+				if _, parseErr := decide.ParseThreshold(w); parseErr == nil {
+					level, words = w, nil
+				}
+			}
+			return level, length, words, nil
+		}
+		words = words[1:]
+	}
+	return level, length, words, nil
 }
 
 func (c *focusCmd) Run(env *Env) error {
-	level, err := decide.ParseThreshold(c.Focus)
+	levelText, timerText, words, err := c.leadingSettings()
 	if err != nil {
-		return usagef("-f: %w", err)
+		return err
 	}
-	duration, err := decide.ParseDuration(c.Timer)
+	if levelText == "" {
+		levelText = "medium"
+	}
+	if timerText == "" {
+		timerText = "0"
+	}
+	level, err := decide.ParseThreshold(levelText)
 	if err != nil {
-		return usagef("-t: %w", err)
+		return usagef("level: %w", err)
+	}
+	duration, err := decide.ParseDuration(timerText)
+	if err != nil {
+		return usagef("length: %w", err)
 	}
 	var then *int
 	if c.Then != "" {
@@ -44,11 +91,11 @@ func (c *focusCmd) Run(env *Env) error {
 		then = &v
 	}
 	note := c.Note
-	if words := strings.Join(c.Words, " "); words != "" {
+	if joined := strings.Join(words, " "); joined != "" {
 		if note != "" {
 			return usagef("give the note once, either with -m or as plain words")
 		}
-		note = words
+		note = joined
 	}
 	if err := env.ensureWorker(); err != nil {
 		return err
