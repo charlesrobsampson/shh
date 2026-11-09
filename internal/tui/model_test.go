@@ -1243,7 +1243,13 @@ func TestHelpListsTheTrainingKeys(t *testing.T) {
 	}
 }
 
+// promptBar is the footer's first line (the state line, which holds the label being typed) and messageLine its second.
 func (r *rig) promptBar() string {
+	lines := strings.Split(r.view(), "\n")
+	return lines[len(lines)-2]
+}
+
+func (r *rig) messageLine() string {
 	lines := strings.Split(r.view(), "\n")
 	return lines[len(lines)-1]
 }
@@ -1324,12 +1330,21 @@ func TestTheTypingBoxIsSeparateFromTheQuestionAndAlwaysFits(t *testing.T) {
 		if !strings.Contains(bar, " 75█ ") {
 			t.Errorf("width %d: the typed text should sit in its own padded box: %q", width, bar)
 		}
+		if msg := r.messageLine(); lipgloss.Width(msg) > width || !strings.Contains(msg, "Enter saves") {
+			t.Errorf("width %d: the hint belongs on the line below, within the terminal's width: %q", width, msg)
+		}
 		r.press("esc")
 	}
 	r.m.Update(tea.WindowSizeMsg{Width: 100, Height: 12})
 	r.press("t", "5", "x", "enter")
-	if bar := r.promptBar(); !strings.Contains(bar, "✗") || !strings.Contains(bar, "5x█") {
-		t.Errorf("an invalid label keeps the text in the box and says what is wrong after it: %q", bar)
+	if bar := r.promptBar(); !strings.Contains(bar, "5x█") {
+		t.Errorf("an invalid label keeps its text in the box: %q", bar)
+	}
+	if msg := r.messageLine(); !strings.Contains(msg, "✗") || !strings.Contains(msg, "is not a score: use 0-100, or light, medium, deep, lockdown") {
+		t.Errorf("what is wrong with the label goes on the line below the box: %q", msg)
+	}
+	if bar := r.promptBar(); strings.Contains(bar, "✗") || strings.Contains(bar, "Enter saves") {
+		t.Errorf("the box line should hold only the question and the box: %q", bar)
 	}
 }
 
@@ -1348,13 +1363,79 @@ func TestTheTypingBoxHasItsOwnPaletteColourAndNoFixedColours(t *testing.T) {
 		t.Errorf("the typing box should be underlined: %q", bar)
 	}
 	// The typed text is inside the coloured part, not the reversed part.
-	if i, j := strings.Index(bar, "7\x1b"), strings.Index(bar, "Enter saves"); i < 0 || j < i {
-		t.Errorf("the typed text should come before the hint, inside the box: %q", bar)
+	if !strings.Contains(bar, "7\x1b") {
+		t.Errorf("the typed text should be inside the styled box: %q", bar)
 	}
 	if !strings.Contains(bar, "7m") && !strings.Contains(bar, ";7;") && !strings.Contains(bar, "[7") {
 		t.Errorf("the rest of the bar should stay in reverse video so the box contrasts with it: %q", bar)
 	}
 	if strings.Contains(bar, "38;2;") || strings.Contains(bar, "38;5;") || strings.Contains(bar, "48;") {
 		t.Errorf("fixed colours would ignore the terminal's theme: %q", bar)
+	}
+}
+
+func TestTheFooterIsTwoLinesAndTheMessageLineCarriesAnythingToSay(t *testing.T) {
+	r := newRig(t)
+	r.add("Ana", "x", 1)
+	r.refresh()
+	lines := strings.Split(r.view(), "\n")
+	if h := len(lines); h != 30 {
+		t.Fatalf("the view is %d lines, want the full terminal height", h)
+	}
+	if !strings.Contains(lines[len(lines)-2], "notifications") || !strings.Contains(lines[len(lines)-2], "? help") {
+		t.Errorf("the first footer line should be the state: %q", lines[len(lines)-2])
+	}
+	if !strings.Contains(r.messageLine(), "e read") {
+		t.Errorf("with nothing to report the message line should list the keys: %q", r.messageLine())
+	}
+	r.press("f3")
+	if got := r.messageLine(); !strings.Contains(got, "y should have alerted") {
+		t.Errorf("the Train tab has its own hints: %q", got)
+	}
+	r.press("f1")
+	if got := r.messageLine(); !strings.Contains(got, "switch tabs") {
+		t.Errorf("the Focus tab has its own hints: %q", got)
+	}
+	r.press("f2", "o")
+	if got := r.messageLine(); !strings.Contains(got, "opened Teams") {
+		t.Errorf("the result of an action goes on the message line: %q", got)
+	}
+	if got := r.promptBar(); strings.Contains(got, "opened Teams") {
+		t.Errorf("the state line should not carry the message: %q", got)
+	}
+	r.press("j")
+	if got := r.messageLine(); strings.Contains(got, "opened Teams") || !strings.Contains(got, "e read") {
+		t.Errorf("the message goes at the next key and the hints return: %q", got)
+	}
+}
+
+func TestAProblemReadingTheDatabaseShowsOnTheMessageLine(t *testing.T) {
+	r := newRig(t)
+	r.store.Close()
+	r.refresh()
+	if got := r.messageLine(); !strings.Contains(got, "cannot read notifications") {
+		t.Errorf("message line: %q", got)
+	}
+	if got := r.promptBar(); !strings.Contains(got, "notifications") || strings.Contains(got, "cannot read") {
+		t.Errorf("the state line should keep showing the state: %q", got)
+	}
+}
+
+func TestLabelErrorsFitAnEightyColumnTerminalWithoutBeingCut(t *testing.T) {
+	r := newRig(t)
+	r.add("Ana", "x", 1)
+	r.m.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
+	r.refresh()
+	for _, bad := range []string{"abc", "101", "-5", "7.5", "lots of words"} {
+		r.press("f3", "t")
+		for _, ch := range bad {
+			r.press(string(ch))
+		}
+		r.press("enter")
+		msg := r.messageLine()
+		if strings.Contains(msg, "…") || lipgloss.Width(msg) > 80 {
+			t.Errorf("%q: the error is cut off or too wide: %q", bad, msg)
+		}
+		r.press("esc")
 	}
 }

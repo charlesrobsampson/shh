@@ -413,7 +413,7 @@ func (m *Model) promptKey(msg tea.KeyMsg) {
 	case tea.KeyEnter:
 		label, err := decide.ParseLabel(p.text)
 		if err != nil {
-			p.err = err.Error()
+			p.err = shortLabelError(p.text, err)
 			return
 		}
 		m.prompt = nil
@@ -432,6 +432,15 @@ func (m *Model) promptKey(msg tea.KeyMsg) {
 		}
 		p.err = ""
 	}
+}
+
+// shortLabelError words a bad label so it fits under the box: the parser's own message when it is short ("101" is above 100), a brief
+// version of its long one otherwise.
+func shortLabelError(text string, err error) string {
+	if msg := err.Error(); len(msg) <= 40 {
+		return msg
+	}
+	return fmt.Sprintf("%q is not a score: use 0-100, or light, medium, deep, lockdown", oneLine(text))
 }
 
 // train labels a notification through the worker. A notification trained from the Notifications tab is archived from it, as one
@@ -614,7 +623,7 @@ func (m *Model) scrollBy(delta int) {
 
 const (
 	tabBarHeight    = 1
-	statusBarHeight = 1
+	statusBarHeight = 2 // the state line and the message line under it
 )
 
 // bodyHeight is the room between the tab bar and the status bar.
@@ -847,19 +856,18 @@ func (m *Model) detailParts(n store.Notification, w int) (meta, body []string) {
 
 // statusBar is the line along the bottom: the focus session, then what the lists hold, then the way to the help.
 func (m *Model) statusBar() string {
+	return m.stateLine() + "\n" + m.messageLine()
+}
+
+// stateLine is the first line of the footer: the focus session and what the lists hold, or, while a label is being typed, the
+// question and the box it is typed in.
+func (m *Model) stateLine() string {
 	if m.prompt != nil {
 		return m.promptBar()
 	}
-	left := m.sessionText()
 	right := "? help"
-	switch {
-	case m.err != "":
-		left = errStyle.Render(m.err)
-	case m.notice != "":
-		left = errStyle.Render(oneLine(m.notice))
-	}
 	counts := fmt.Sprintf("%d notifications · %d to train", len(m.lists[TabNotifications]), len(m.lists[TabTrain]))
-	text := " " + left + "  │  " + counts
+	text := " " + m.sessionText() + "  │  " + counts
 	gap := m.width - lipgloss.Width(text) - lipgloss.Width(right) - 1
 	if gap < 1 {
 		return statusStyle.Render(fit(text, m.width))
@@ -867,27 +875,53 @@ func (m *Model) statusBar() string {
 	return statusStyle.Render(text + strings.Repeat(" ", gap) + right + " ")
 }
 
-// promptBar replaces the status bar while an exact label is being typed: the question in the bar's own reverse video, then the box
-// the label is typed in (yellow, underlined, with a blinking block cursor), then what is wrong with it, if anything.
+// messageLine is the second line of the footer, where anything to say goes so that it is never squeezed into the state line: what
+// the last action did, a problem, what is wrong with the label being typed, or, when there is nothing to report, the keys that
+// apply here.
+func (m *Model) messageLine() string {
+	var text string
+	var style lipgloss.Style
+	switch {
+	case m.prompt != nil && m.prompt.err != "":
+		text, style = "✗ "+oneLine(m.prompt.err), errStyle
+	case m.prompt != nil:
+		text, style = "Enter saves · Esc cancels · a score from 0 to 100, or light, medium, deep or lockdown", dim
+	case m.err != "":
+		text, style = m.err, errStyle
+	case m.notice != "":
+		text, style = oneLine(m.notice), errStyle
+	default:
+		text, style = m.keyHints(), dim
+	}
+	return style.Render(fit(" "+text, m.width))
+}
+
+// keyHints are the keys worth knowing on the current tab.
+func (m *Model) keyHints() string {
+	switch m.tab {
+	case TabFocus:
+		return "! @ # or Tab switch tabs · ? help · q quit"
+	case TabTrain:
+		return "y should have alerted · n rightly held back · t type a score · u undo · e read · o open · ? help"
+	}
+	return "e read · o open its app · d dismiss · y / n / t train it · u undo · Tab switch · ? help"
+}
+
+// promptBar is the state line while an exact label is being typed: the question in the bar's own reverse video, then the box the
+// label is typed in (yellow, underlined, with a blinking block cursor). The hint and any error are on the line below.
 func (m *Model) promptBar() string {
 	p := m.prompt
 	cursor := " "
 	if m.cursorOn {
 		cursor = "█"
 	}
-	question := fmt.Sprintf(" label for %s (0-100 or light/medium/deep/lockdown): ", oneLine(p.target.Sender))
+	question := fmt.Sprintf(" label for %s: ", oneLine(p.target.Sender))
 	field := " " + oneLine(p.text) + cursor + " "
-	after := "  Enter saves · Esc cancels"
-	if p.err != "" {
-		after = "  ✗ " + oneLine(p.err)
-	}
-	// Make everything fit the line: the field always shows in full, the question and the note give way.
+	// Make everything fit the line: the box always shows in full, the question gives way.
 	fieldWidth := lipgloss.Width(field)
-	room := max(0, m.width-fieldWidth)
-	question = fit(question, room)
-	after = fit(after, max(0, room-lipgloss.Width(question)))
-	fill := strings.Repeat(" ", max(0, m.width-lipgloss.Width(question)-fieldWidth-lipgloss.Width(after)))
-	return statusStyle.Render(question) + inputStyle.Render(field) + statusStyle.Render(after+fill)
+	question = fit(question, max(0, m.width-fieldWidth))
+	fill := strings.Repeat(" ", max(0, m.width-lipgloss.Width(question)-fieldWidth))
+	return statusStyle.Render(question) + inputStyle.Render(field) + statusStyle.Render(fill)
 }
 
 // sessionText is what the focus session looks like in one line: "shh 28m · 65%", with the counts of what it has held back.
