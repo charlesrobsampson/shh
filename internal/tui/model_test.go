@@ -1242,3 +1242,119 @@ func TestHelpListsTheTrainingKeys(t *testing.T) {
 		}
 	}
 }
+
+func (r *rig) promptBar() string {
+	lines := strings.Split(r.view(), "\n")
+	return lines[len(lines)-1]
+}
+
+func TestOpeningThePromptStartsABlinkingCursor(t *testing.T) {
+	r := newRig(t)
+	r.add("Ana", "x", 1)
+	r.refresh()
+	r.press("f3")
+	_, cmd := r.m.Update(key("t"))
+	if cmd == nil {
+		t.Fatal("opening the prompt should start the blink timer")
+	}
+	if bar := r.promptBar(); !strings.Contains(bar, "█") {
+		t.Errorf("the cursor should be showing as soon as the prompt opens: %q", bar)
+	}
+	gen := r.m.blinkGen
+	r.m.Update(blinkMsg{gen: gen})
+	if bar := r.promptBar(); strings.Contains(bar, "█") {
+		t.Errorf("after a blink the cursor should be off: %q", bar)
+	}
+	_, cmd = r.m.Update(blinkMsg{gen: gen})
+	if cmd == nil {
+		t.Error("a blink should schedule the next one")
+	}
+	if bar := r.promptBar(); !strings.Contains(bar, "█") {
+		t.Errorf("after another blink the cursor should be back: %q", bar)
+	}
+}
+
+func TestTheCursorStaysSolidWhileTypingAndRestartsItsTimer(t *testing.T) {
+	r := newRig(t)
+	r.add("Ana", "x", 1)
+	r.refresh()
+	r.press("f3", "t")
+	r.m.Update(blinkMsg{gen: r.m.blinkGen}) // off
+	old := r.m.blinkGen
+	_, cmd := r.m.Update(key("7"))
+	if !strings.Contains(r.promptBar(), "7█") {
+		t.Errorf("typing should show the cursor right after the text: %q", r.promptBar())
+	}
+	if cmd == nil || r.m.blinkGen == old {
+		t.Errorf("a keystroke should restart the blink timer (cmd %v, generation %d -> %d)", cmd != nil, old, r.m.blinkGen)
+	}
+	// The timer that was running before the keystroke must not flip the cursor again.
+	r.m.Update(blinkMsg{gen: old})
+	if !strings.Contains(r.promptBar(), "█") {
+		t.Error("a stale blink timer flipped the cursor")
+	}
+}
+
+func TestBlinkTimersEndWhenThePromptCloses(t *testing.T) {
+	r := newRig(t)
+	r.add("Ana", "x", 1)
+	r.refresh()
+	r.press("f3", "t")
+	gen := r.m.blinkGen
+	r.press("esc")
+	if _, cmd := r.m.Update(blinkMsg{gen: gen}); cmd != nil {
+		t.Error("a blink after the prompt closed should end the timer, not schedule another")
+	}
+	if _, cmd := r.m.Update(blinkMsg{gen: gen - 1}); cmd != nil {
+		t.Error("a stale blink should end quietly")
+	}
+}
+
+func TestTheTypingBoxIsSeparateFromTheQuestionAndAlwaysFits(t *testing.T) {
+	r := newRig(t)
+	r.add("Ana with a rather long name indeed", "x", 1)
+	r.refresh()
+	for _, width := range []int{120, 80, 50, 30} {
+		r.m.Update(tea.WindowSizeMsg{Width: width, Height: 12})
+		r.press("f3", "t", "7", "5")
+		bar := r.promptBar()
+		if w := lipgloss.Width(bar); w != width {
+			t.Errorf("width %d: the prompt bar is %d wide", width, w)
+		}
+		if !strings.Contains(bar, " 75█ ") {
+			t.Errorf("width %d: the typed text should sit in its own padded box: %q", width, bar)
+		}
+		r.press("esc")
+	}
+	r.m.Update(tea.WindowSizeMsg{Width: 100, Height: 12})
+	r.press("t", "5", "x", "enter")
+	if bar := r.promptBar(); !strings.Contains(bar, "✗") || !strings.Contains(bar, "5x█") {
+		t.Errorf("an invalid label keeps the text in the box and says what is wrong after it: %q", bar)
+	}
+}
+
+func TestTheTypingBoxHasItsOwnPaletteColourAndNoFixedColours(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.ANSI)
+	defer lipgloss.SetColorProfile(termenv.Ascii)
+	r := newRig(t)
+	r.add("Ana", "x", 1)
+	r.refresh()
+	r.press("f3", "t", "7", "5")
+	bar := r.promptBar()
+	if !strings.Contains(bar, "33;4m") && !strings.Contains(bar, "33m") {
+		t.Errorf("the typing box should be yellow (ANSI 33): %q", bar)
+	}
+	if !strings.Contains(bar, ";4m") && !strings.Contains(bar, ";4;") {
+		t.Errorf("the typing box should be underlined: %q", bar)
+	}
+	// The typed text is inside the coloured part, not the reversed part.
+	if i, j := strings.Index(bar, "7\x1b"), strings.Index(bar, "Enter saves"); i < 0 || j < i {
+		t.Errorf("the typed text should come before the hint, inside the box: %q", bar)
+	}
+	if !strings.Contains(bar, "7m") && !strings.Contains(bar, ";7;") && !strings.Contains(bar, "[7") {
+		t.Errorf("the rest of the bar should stay in reverse video so the box contrasts with it: %q", bar)
+	}
+	if strings.Contains(bar, "38;2;") || strings.Contains(bar, "38;5;") || strings.Contains(bar, "48;") {
+		t.Errorf("fixed colours would ignore the terminal's theme: %q", bar)
+	}
+}

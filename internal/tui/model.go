@@ -101,6 +101,11 @@ type Model struct {
 	scroll     int
 	// prompt is the label being typed after t or a digit; nil when there is none.
 	prompt *prompt
+	// cursorOn is whether the prompt's cursor is showing right now; blinkGen identifies the current blink timer; restartBlink asks
+	// for a new one after the key that was just handled.
+	cursorOn     bool
+	blinkGen     int
+	restartBlink bool
 	// undoStack remembers what each training in this session did besides teaching the model, so undo can put that back too.
 	undoStack []trainedEntry
 	// notice is what the last action did or why it could not, shown in the status bar until the next key.
@@ -108,6 +113,13 @@ type Model struct {
 }
 
 type tickMsg time.Time
+
+// blinkMsg flips the prompt's cursor. gen says which prompt or keystroke started this blink timer, so a timer left over from an earlier
+// one (or from a prompt that has closed) does nothing and ends.
+type blinkMsg struct{ gen int }
+
+// blinkInterval is how long the cursor stays on or off.
+const blinkInterval = 500 * time.Millisecond
 
 // New builds the UI and reads its data once, so the first frame is not empty.
 func New(cfg Config) *Model {
@@ -208,6 +220,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		m.reload()
 		return m, m.tick()
+	case blinkMsg:
+		if m.prompt == nil || msg.gen != m.blinkGen {
+			return m, nil // a timer from a prompt or keystroke that has gone
+		}
+		m.cursorOn = !m.cursorOn
+		return m, m.blink()
 	case tea.KeyMsg:
 		return m.key(msg)
 	}
@@ -218,7 +236,7 @@ func (m *Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.notice = ""
 	if m.prompt != nil {
 		m.promptKey(msg)
-		return m, nil
+		return m, m.takeBlink()
 	}
 	if m.showHelp {
 		// Any key closes the help, except the ones that quit.
@@ -274,7 +292,7 @@ func (m *Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "pgup", "ctrl+u":
 		m.move(-m.listHeight())
 	}
-	return m, nil
+	return m, m.takeBlink()
 }
 
 // goTo switches tab, closing any expanded notification.
@@ -382,11 +400,13 @@ func (m *Model) trainable() (store.Notification, bool) {
 func (m *Model) openPrompt(initial string) {
 	if n, ok := m.trainable(); ok {
 		m.prompt = &prompt{text: initial, target: n}
+		m.cursorOn, m.restartBlink = true, true
 	}
 }
 
 func (m *Model) promptKey(msg tea.KeyMsg) {
 	p := m.prompt
+	m.cursorOn, m.restartBlink = true, true // the cursor stays solid while typing, then starts blinking again
 	switch msg.Type {
 	case tea.KeyEsc, tea.KeyCtrlC:
 		m.prompt = nil
@@ -500,6 +520,22 @@ func (m *Model) undoTraining() {
 	m.selectID(out.NotificationID)
 }
 
+// blink schedules the next flip of the cursor.
+func (m *Model) blink() tea.Cmd {
+	gen := m.blinkGen
+	return tea.Tick(blinkInterval, func(time.Time) tea.Msg { return blinkMsg{gen: gen} })
+}
+
+// takeBlink starts a fresh blink timer if the key just handled asked for one, and retires the old one.
+func (m *Model) takeBlink() tea.Cmd {
+	if !m.restartBlink {
+		return nil
+	}
+	m.restartBlink = false
+	m.blinkGen++
+	return m.blink()
+}
+
 // selectID moves the cursor to the notification with this id on the current tab, if it is there.
 func (m *Model) selectID(id int64) {
 	if m.tab == TabFocus {
@@ -595,11 +631,14 @@ var (
 	blockedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true) // yellow in most themes: needs a look
 	alertedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))            // green: it got through
 	unreadStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
-	tabStyle     = lipgloss.NewStyle().Padding(0, 1)
-	activeTab    = tabStyle.Bold(true).Reverse(true)
-	dim          = lipgloss.NewStyle().Faint(true)
-	statusStyle  = lipgloss.NewStyle().Reverse(true)
-	errStyle     = lipgloss.NewStyle().Bold(true)
+	// inputStyle is the box a label is typed in. It is drawn in normal video inside the reversed bar, so it stands out from the text
+	// around it whatever the theme, and in yellow and underlined so it reads as a place to type.
+	inputStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true).Underline(true)
+	tabStyle    = lipgloss.NewStyle().Padding(0, 1)
+	activeTab   = tabStyle.Bold(true).Reverse(true)
+	dim         = lipgloss.NewStyle().Faint(true)
+	statusStyle = lipgloss.NewStyle().Reverse(true)
+	errStyle    = lipgloss.NewStyle().Bold(true)
 )
 
 func (m *Model) View() string {
@@ -828,14 +867,27 @@ func (m *Model) statusBar() string {
 	return statusStyle.Render(text + strings.Repeat(" ", gap) + right + " ")
 }
 
-// promptBar replaces the status bar while an exact label is being typed.
+// promptBar replaces the status bar while an exact label is being typed: the question in the bar's own reverse video, then the box
+// the label is typed in (yellow, underlined, with a blinking block cursor), then what is wrong with it, if anything.
 func (m *Model) promptBar() string {
 	p := m.prompt
-	text := fmt.Sprintf(" label for %s (0-100, or light, medium, deep, lockdown; Enter saves, Esc cancels): %s█", oneLine(p.target.Sender), oneLine(p.text))
-	if p.err != "" {
-		text += "   ✗ " + oneLine(p.err)
+	cursor := " "
+	if m.cursorOn {
+		cursor = "█"
 	}
-	return statusStyle.Render(fit(text+strings.Repeat(" ", max(0, m.width-lipgloss.Width(text))), m.width))
+	question := fmt.Sprintf(" label for %s (0-100 or light/medium/deep/lockdown): ", oneLine(p.target.Sender))
+	field := " " + oneLine(p.text) + cursor + " "
+	after := "  Enter saves · Esc cancels"
+	if p.err != "" {
+		after = "  ✗ " + oneLine(p.err)
+	}
+	// Make everything fit the line: the field always shows in full, the question and the note give way.
+	fieldWidth := lipgloss.Width(field)
+	room := max(0, m.width-fieldWidth)
+	question = fit(question, room)
+	after = fit(after, max(0, room-lipgloss.Width(question)))
+	fill := strings.Repeat(" ", max(0, m.width-lipgloss.Width(question)-fieldWidth-lipgloss.Width(after)))
+	return statusStyle.Render(question) + inputStyle.Render(field) + statusStyle.Render(after+fill)
 }
 
 // sessionText is what the focus session looks like in one line: "shh 28m · 65%", with the counts of what it has held back.
