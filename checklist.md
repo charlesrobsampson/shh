@@ -343,7 +343,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 ## Phase 7: TUI
 
 ### 31 · TUI skeleton and tabs
-- [ ] Done
+- [x] Done
 - Branch: `task/31-tui-skeleton` · Depends: 08, 26
 - Read: `manifest.md` §5, `plan.md` §8
 - Build: Bubble Tea app opened by bare `shh` (and `shh ui`) with three tabs: **Focus**, **Notifications**, **Train** (switch with `Tab`/`Shift-Tab` and `F1`–`F3`, so digit keys stay free for training labels). List rows show time, source, sender, score (0–100) and alerted/blocked; detail pane beside it. Status bar with session info from IPC (works without a worker too), `j/k/h/l`, `?` help. Focus tab is a placeholder here (built in 34).
