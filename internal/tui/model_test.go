@@ -451,15 +451,14 @@ func TestTheUIWorksWithNoWorkerConfigured(t *testing.T) {
 	}
 }
 
-func TestTheSelectedRowAndAlertedRowsAreMarked(t *testing.T) {
+func TestTheSelectedRowIsMarkedAndOnlyBlockedRowsCarryTheBlockedMark(t *testing.T) {
 	r := newRig(t)
 	r.add("Ana", "x", 1, func(n *store.Notification) { n.Status = store.StatusAlerted })
 	r.add("Bo", "x", 2)
 	r.refresh()
-	lines := strings.Split(r.view(), "\n")
 	// Only the list column (left of the separator) holds rows; the detail pane to its right repeats the sender's name.
 	find := func(name string) string {
-		for _, l := range lines {
+		for _, l := range strings.Split(r.view(), "\n") {
 			left, _, found := strings.Cut(l, "│")
 			if found && strings.Contains(left, name) && strings.Contains(left, "Teams") {
 				return left
@@ -467,19 +466,64 @@ func TestTheSelectedRowAndAlertedRowsAreMarked(t *testing.T) {
 		}
 		return ""
 	}
-	if l := find("Ana"); !strings.HasPrefix(l, ">!") {
-		t.Errorf("selected, alerted row = %q, want it to start with >!", l)
+	ana, bo := find("Ana"), find("Bo")
+	if !strings.HasPrefix(ana, ">") || strings.HasPrefix(bo, ">") {
+		t.Errorf("the selected row should start with >: %q / %q", ana, bo)
 	}
-	if l := find("Bo"); !strings.HasPrefix(l, "  ") {
-		t.Errorf("plain row = %q, want two blank marker columns", l)
+	if strings.Contains(ana, "✕") || strings.Contains(ana, "blocked") {
+		t.Errorf("an alerted row should show nothing in the status column: %q", ana)
+	}
+	if !strings.Contains(bo, "✕ blocked") {
+		t.Errorf("a blocked row should carry the mark: %q", bo)
 	}
 	r.press("j")
-	lines = strings.Split(r.view(), "\n")
-	if l := find("Ana"); !strings.HasPrefix(l, " !") {
-		t.Errorf("alerted row that is not selected = %q, want it to start with a space then !", l)
+	if ana, bo = find("Ana"), find("Bo"); strings.HasPrefix(ana, ">") || !strings.HasPrefix(bo, ">") {
+		t.Errorf("the > should follow the cursor: %q / %q", ana, bo)
 	}
-	if l := find("Bo"); !strings.HasPrefix(l, "> ") {
-		t.Errorf("selected plain row = %q, want it to start with >", l)
+	if got := r.view(); !strings.Contains(got, "held back") {
+		t.Errorf("the status column needs a header:\n%s", got)
+	}
+}
+
+func TestTheDetailPaneNamesTheStatusInFull(t *testing.T) {
+	r := newRig(t)
+	r.add("Ana", "x", 1, func(n *store.Notification) { n.Status = store.StatusAlerted })
+	r.refresh()
+	if got := r.view(); !strings.Contains(got, "alerted") {
+		t.Errorf("detail pane:\n%s", got)
+	}
+	r.add("Bo", "x", 0)
+	r.refresh()
+	if got := r.view(); !strings.Contains(got, "blocked") {
+		t.Errorf("detail pane:\n%s", got)
+	}
+}
+
+func TestColoursComeOnlyFromTheTerminalsOwnPalette(t *testing.T) {
+	// With colour on, the escape codes must be the basic 16 colours (30 to 37, 90 to 97) that every terminal theme redefines, and never
+	// 256-colour or true colour codes, which would ignore the theme.
+	lipgloss.SetColorProfile(termenv.ANSI)
+	defer lipgloss.SetColorProfile(termenv.Ascii)
+	r := newRig(t)
+	r.add("Ana", "x", 1, func(n *store.Notification) { n.Status = store.StatusAlerted })
+	r.add("Bo", "x", 2)
+	r.worker.err = nil
+	r.worker.view = session.StatusView{Level: 65, Layers: []session.LayerView{{Kind: "escalation", Percent: 65}}}
+	r.refresh()
+	for _, tab := range []string{"f1", "f2", "f3"} {
+		r.press(tab)
+		view := r.view()
+		if strings.Contains(view, "38;2;") || strings.Contains(view, "38;5;") || strings.Contains(view, "48;2;") || strings.Contains(view, "48;5;") {
+			t.Errorf("%s: the view uses a fixed colour instead of the terminal's palette: %q", tab, view)
+		}
+	}
+	r.press("f2")
+	view := r.view()
+	if !strings.Contains(view, "33m") {
+		t.Errorf("the blocked mark should be coloured (ANSI yellow):\n%q", view)
+	}
+	if !strings.Contains(view, "7m") && !strings.Contains(view, ";7;") && !strings.Contains(view, "[7") {
+		t.Errorf("the selected row and active tab should use reverse video (theme-proof):\n%q", view)
 	}
 }
 

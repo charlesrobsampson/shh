@@ -349,12 +349,16 @@ func (m *Model) listHeight() int { return max(1, m.bodyHeight()-1) }
 func (m *Model) listWidth() int { return max(30, m.width*45/100) }
 
 var (
-	tabStyle      = lipgloss.NewStyle().Padding(0, 1)
-	activeTab     = tabStyle.Bold(true).Reverse(true)
-	dim           = lipgloss.NewStyle().Faint(true)
-	selectedStyle = lipgloss.NewStyle().Bold(true).Reverse(true)
-	statusStyle   = lipgloss.NewStyle().Reverse(true)
-	errStyle      = lipgloss.NewStyle().Bold(true)
+	// Colours come only from the terminal's own palette (ANSI colours 0 to 15, bold, faint and reverse), never fixed RGB values, so the
+	// UI takes on whatever theme the terminal is using, light or dark.
+	blockedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true) // yellow in most themes: needs a look
+	alertedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))            // green: it got through
+	unreadStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
+	tabStyle     = lipgloss.NewStyle().Padding(0, 1)
+	activeTab    = tabStyle.Bold(true).Reverse(true)
+	dim          = lipgloss.NewStyle().Faint(true)
+	statusStyle  = lipgloss.NewStyle().Reverse(true)
+	errStyle     = lipgloss.NewStyle().Bold(true)
 )
 
 func (m *Model) View() string {
@@ -432,49 +436,55 @@ func (m *Model) listView() string {
 	}
 	end := min(len(rows), m.offset[m.tab]+m.listHeight())
 	for i := m.offset[m.tab]; i < end; i++ {
-		line := fit(m.row(rows[i], w, i == m.cursor[m.tab]), w)
-		if i == m.cursor[m.tab] {
-			line = selectedStyle.Render(line)
-		}
-		lines = append(lines, line)
+		lines = append(lines, fit(m.row(rows[i], w, i == m.cursor[m.tab]), w))
 	}
 	return pad(lines, m.bodyHeight(), w)
 }
 
-// Column widths of a list row: time, source, then the sender takes what is left, then the score and alerted or blocked.
+// Column widths of a list row: time, source, then the sender takes what is left, then the score and the blocked mark.
 const (
 	colTime   = 6
 	colSource = 9
-	colScore  = 4
-	colStatus = 8
+	colScore  = 5
+	colStatus = 10
 )
 
+// blockedMark is what a blocked notification shows in the last column; one that was alerted shows nothing. A blocked one never
+// reached you, so it is the one worth a glance, and a blank row is one you already saw.
+const blockedMark = "✕ blocked"
+
 func listHeader(w int) string {
-	return fmt.Sprintf("   %-*s%-*s%-*s%*s %s", colTime, "time", colSource, "app", senderWidth(w), "from", colScore, "score", "status")
+	return fmt.Sprintf("  %-*s%-*s%-*s%*s  %s", colTime, "time", colSource, "app", senderWidth(w), "from", colScore, "score", "held back")
 }
 
-func senderWidth(w int) int { return max(6, w-3-colTime-colSource-colScore-1-colStatus) }
+func senderWidth(w int) int { return max(6, w-2-colTime-colSource-colScore-2-colStatus) }
 
-// row writes one notification as a line of the list.
+// row writes one notification as a line of the list, in the terminal's own colours. The selected row is drawn in reverse video, so
+// each piece is styled with that already, instead of nesting styles inside a reversed line.
 func (m *Model) row(n store.Notification, w int, selected bool) string {
-	// Three marker columns: ">" for the selected row (as well as its highlight, for terminals without colour), "!" for alerted and
-	// "•" for one not yet opened.
+	cell := func(style lipgloss.Style, text string) string { return style.Reverse(selected).Render(text) }
+	plain := lipgloss.NewStyle().Bold(selected)
+
+	// Two marker columns: ">" for the selected row (as well as its highlight, for terminals without colour) and "•" for one not yet
+	// opened.
 	marker := " "
 	if selected {
 		marker = ">"
 	}
-	if n.Status == store.StatusAlerted {
-		marker += "!"
-	} else {
-		marker += " "
+	unread := " "
+	if !n.IsRead {
+		unread = "•"
 	}
-	if n.IsRead {
-		marker += " "
-	} else {
-		marker += "•"
+	status := strings.Repeat(" ", colStatus)
+	statusStyle := plain
+	if n.Status == store.StatusBlocked {
+		status = fmt.Sprintf("%-*s", colStatus, blockedMark)
+		statusStyle = blockedStyle
 	}
-	return fmt.Sprintf("%s%-*s%-*s%-*s%*d %s", marker, colTime, m.when(n.Timestamp), colSource, runewidth.Truncate(oneLine(n.Source), colSource-1, "…"),
-		senderWidth(w), runewidth.Truncate(oneLine(n.Sender), senderWidth(w)-1, "…"), colScore, score(n.Score), n.Status)
+	return cell(plain, marker) + cell(unreadStyle, unread) +
+		cell(plain, fmt.Sprintf("%-*s%-*s%-*s%*d  ", colTime, m.when(n.Timestamp), colSource, runewidth.Truncate(oneLine(n.Source), colSource-1, "…"),
+			senderWidth(w), runewidth.Truncate(oneLine(n.Sender), senderWidth(w)-1, "…"), colScore, score(n.Score))) +
+		cell(statusStyle, status)
 }
 
 // when is the time of day for today's rows and the date for older ones.
@@ -532,7 +542,11 @@ func (m *Model) detailParts(n store.Notification, w int) (meta, body []string) {
 		title += " — " + t
 	}
 	meta = append(meta, " "+lipgloss.NewStyle().Bold(true).Width(w-2).Render(title))
-	meta = append(meta, " "+dim.Render(fmt.Sprintf("%s · %s · %s", oneLine(n.Source), n.Timestamp.In(m.cfg.Now().Location()).Format("Mon Jan 2 15:04"), n.Status)))
+	statusText := alertedStyle.Render("alerted")
+	if n.Status == store.StatusBlocked {
+		statusText = blockedStyle.Render("blocked")
+	}
+	meta = append(meta, " "+dim.Render(fmt.Sprintf("%s · %s · ", oneLine(n.Source), n.Timestamp.In(m.cfg.Now().Location()).Format("Mon Jan 2 15:04")))+statusText)
 	decision := fmt.Sprintf("score %d", score(n.Score))
 	if n.Boost > 0 {
 		decision += fmt.Sprintf(" +%d boost", score(n.Boost))
@@ -599,7 +613,8 @@ func (m *Model) helpView() string {
 	for _, k := range keys {
 		lines = append(lines, fmt.Sprintf("  %-32s %s", k[0], k[1]))
 	}
-	lines = append(lines, "", dim.Render("  Press any key to go back."))
+	lines = append(lines, "", "  • not opened yet    ✕ blocked: held back, never reached you (no mark: it was alerted)",
+		"", dim.Render("  Press any key to go back."))
 	return pad(lines, m.height, m.width)
 }
 
