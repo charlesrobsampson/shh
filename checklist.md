@@ -507,3 +507,23 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Tests: columns (fill, widest banner, dismissal returns to the first column, preview overflow, new banners start in the right column, no screen height means one column); alert IPC command and `alert test` going through the worker; overlay (parent pid, stacking, dismissal compaction, new banner goes below what is left, preview makes room and collapse gives it back, clamping, other positions untouched, late events ignored, no redundant messages, managed flag, script pins); config (collapse label default, custom, errors, round trip); daemon (stays up while busy, grace starts afterwards).
 - Manual check: `shh alert test` with the long message in the middle: Preview pushes the banner below it down and Collapse brings it back; dismissing the middle one moves the lower banner up; nothing is covered.
 
+### 47 · Meeting invites: alert only when they are urgent
+- [ ] Done
+- Session: _(fill on start)_
+- **Pinned until invites arrive (2026-11-09):** no real invites have come through yet (none in the last 14 days; Teams meeting-chat messages are not invites). `task watch:invites` (`tools/watch_invites.py`) watches the notification database read-only and records only the structure of each invite (app, category, text lengths, Teams thread kind, and a masked shape of the text that keeps weekday, month, number, clock-time and a few invite words) to `private/captures/invites.jsonl`; it prints `ENOUGH` after 5 and exits. Start the task when it has.
+- Branch: `task/47-invite-urgency` · Depends: 43
+- Context: a calendar invite should only get through a focus level when it is urgent, which for an invite means the meeting is new or changed and starts soon. An invite for next week should not show up at a 50% filter; one for ten minutes from now probably should. The user suggested a base score for invites with a multiplier that grows the closer the event is. Teams meeting chats are already identifiable (task 43), and Outlook reminders for events already on the calendar go through the calendar path (task 17 and 18), so this is about the invite itself.
+- Read: `internal/calendar`, `internal/classify/boost.go`, `internal/rules`, a captured Outlook invite and a Teams meeting invite (structure only, never message text in notes)
+- Build: find out what an invite looks like in the notification database (category, where the start time is, new versus updated); parse the start time out of it; a time-to-start boost (none beyond about a day, rising through today, the next hour and the last 5 to 10 minutes) with the curve in `rules.json` so it can be tuned, added to the existing boost and still capped; a low base score for plain invites so a far-off one stays muted at normal levels; fall back to today's behaviour when no start time can be read.
+- Tests: table of invites at different distances against thresholds (next week muted at 50%, in 10 minutes alerted at 65%); the curve from rules; unparseable invites unchanged; the booster's cap still holds.
+- Manual check: send an invite for next week and one for ten minutes away at a 50% filter: only the near one alerts.
+
+### 48 · Banner header: which app an alert is from
+- [x] Done
+- Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
+- Branch: `task/48-banner-header` · Depends: 44
+- Context: the user asked for a small header on each banner saying what app it came from, when that is known.
+- Build: `alert.Request` already has `Source` (the friendly app name); the banner draws it as a small dimmed line above the title, and its height grows by one header line only when there is a source; nothing is drawn when there is none.
+- Tests: heights with and without a source; the spec carries the header; script pins.
+- Manual check: `shh alert test` shows the header on each sample.
+

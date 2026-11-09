@@ -77,8 +77,10 @@ func NewOverlay(cfg OverlayConfig) *Overlay {
 }
 
 type bannerSpec struct {
-	Title string `json:"title"`
-	Body  string `json:"body"`
+	// Header is the app the alert is from, drawn small above the title; empty draws nothing.
+	Header string `json:"header"`
+	Title  string `json:"title"`
+	Body   string `json:"body"`
 	// Bundle is the app the banner script opens when the banner is clicked. The script does it itself, because the process that
 	// showed the banner (a short-lived CLI command, say) may be gone by the time of the click.
 	Bundle   string `json:"bundle"`
@@ -117,7 +119,7 @@ func bannerEnv(r Request, at layoutMessage) []string {
 		buttons = append(buttons, bannerButton{Type: b.Type, Label: b.Label, CollapseLabel: b.CollapseLabel})
 	}
 	spec, _ := json.Marshal(bannerSpec{
-		Title: r.Title, Body: r.Body, Bundle: r.BundleID, Color: r.Style.Color, Width: r.Width, Height: r.Height,
+		Header: strings.TrimSpace(r.Source), Title: r.Title, Body: r.Body, Bundle: r.BundleID, Color: r.Style.Color, Width: r.Width, Height: r.Height,
 		Position: r.Style.Position, Indent: at.Indent, Offset: at.Offset, Duration: r.Style.DurationSecs, Sound: r.Style.Sound,
 		Buttons: buttons, DismissOnClick: r.DismissOnClick, PreviewHeight: r.PreviewHeight, Managed: true, Parent: os.Getpid(),
 	})

@@ -874,3 +874,31 @@ func TestHelpListsEveryTierWithItsValue(t *testing.T) {
 		}
 	}
 }
+
+func TestACommandWarnsWhenTheWorkerIsFromAnotherBuild(t *testing.T) {
+	r := newRig(t, true)
+	session.BuildID = "oldbuild0001"
+	t.Cleanup(func() { session.BuildID = "" })
+	r.env.Build = "newbuild0002"
+	r.mustRun("alert", "test")
+	if got := r.err.String(); !strings.Contains(got, "different build") || !strings.Contains(got, "shh stop --all") {
+		t.Errorf("stderr = %q, want a note that the worker is from another build and how to replace it", got)
+	}
+	if strings.Count(r.err.String(), "different build") != 1 {
+		t.Errorf("the note was printed more than once: %q", r.err.String())
+	}
+}
+
+func TestNoWarningWhenTheBuildsMatchOrAreUnknown(t *testing.T) {
+	for _, tt := range []struct{ worker, cli string }{{"abc", "abc"}, {"", "abc"}, {"abc", ""}} {
+		r := newRig(t, true)
+		session.BuildID = tt.worker
+		r.env.Build = tt.cli
+		r.mustRun("status")
+		r.mustRun("alert", "test")
+		if r.err.String() != "" {
+			t.Errorf("worker %q, cli %q: stderr = %q, want nothing", tt.worker, tt.cli, r.err.String())
+		}
+	}
+	session.BuildID = ""
+}

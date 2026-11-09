@@ -15,6 +15,9 @@ var (
 	ErrAlreadyRunning = errors.New("shh is already running")
 )
 
+// BuildID identifies the running executable; main sets it at start-up. Empty when unknown.
+var BuildID string
+
 type Request struct {
 	Cmd          string `json:"cmd"`
 	Level        *int   `json:"level,omitempty"`
@@ -50,6 +53,9 @@ type StatusView struct {
 	Level  int         `json:"level"`
 	Layers []LayerView `json:"layers"`
 	Now    time.Time   `json:"now"`
+	// Build identifies the executable the worker is running (see BuildID), so a command can tell when the worker predates the
+	// binary it was typed with, which would otherwise be easy to mistake for a bug in the new code.
+	Build string `json:"build,omitempty"`
 }
 
 type LayerView struct {
@@ -121,7 +127,7 @@ func codeFor(err error) string {
 }
 
 func statusView(st Status, now time.Time) StatusView {
-	view := StatusView{Level: st.Level, Now: now, Layers: []LayerView{}}
+	view := StatusView{Level: st.Level, Now: now, Layers: []LayerView{}, Build: BuildID}
 	for _, l := range st.Layers {
 		view.Layers = append(view.Layers, LayerView{
 			ID: l.ID, Kind: string(l.Kind), Percent: l.Percent, ThenLevel: l.ThenLevel, Note: l.Note, Started: l.StartTime,

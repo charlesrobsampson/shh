@@ -634,3 +634,34 @@ func TestTheScriptReportsTheScreenAndHonoursTheIndent(t *testing.T) {
 		}
 	}
 }
+
+func TestTheAppNameTravelsWithTheBannerAsItsHeader(t *testing.T) {
+	r := newOverlayRig(t)
+	req := request("Ana", "top-right")
+	req.Source = " Teams "
+	r.show(req)
+	r.show(request("Bo", "top-right")) // no source
+	header := func(i int) string {
+		var spec struct {
+			Header string `json:"header"`
+		}
+		for _, kv := range r.process(i).env {
+			if v, ok := strings.CutPrefix(kv, "SHH_BANNER="); ok {
+				if err := json.Unmarshal([]byte(v), &spec); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		return spec.Header
+	}
+	if got := header(0); got != "Teams" {
+		t.Errorf("header = %q, want the trimmed source", got)
+	}
+	if got := header(1); got != "" {
+		t.Errorf("header = %q for an alert with no source", got)
+	}
+	script := strings.Join(alert.OverlayCommand(request("Ana", "top-right")).Args, " ")
+	if !strings.Contains(script, "cfg.header") || !strings.Contains(script, "headerRow") {
+		t.Error("the banner script does not draw the header")
+	}
+}

@@ -183,6 +183,9 @@ func (c *statusCmd) Run(env *Env) error {
 	if err != nil {
 		return err
 	}
+	if running && !c.Short {
+		env.warnIfStale(view)
+	}
 	switch {
 	case c.JSON:
 		return printJSON(env.Stdout, view, running)
@@ -245,8 +248,8 @@ func (c *alertTestCmd) Run(env *Env) error {
 	}
 	client := env.client()
 	samples := []alert.Alert{
-		{Kind: config.KindMessage, Source: "Teams", BundleID: "com.apple.calculator", Title: "Sample message", Body: "A message alert in the default style. Press Go to to open Calculator."},
-		{Kind: config.KindMessage, Source: "Teams", BundleID: "com.apple.calculator", Title: "Sample long message",
+		{Kind: config.KindMessage, Source: "Calculator", BundleID: "com.apple.calculator", Title: "Sample message", Body: "A message alert in the default style. Press Go to to open Calculator."},
+		{Kind: config.KindMessage, Source: "Calculator", BundleID: "com.apple.calculator", Title: "Sample long message",
 			Body: "A long message, so the Preview button has something to show. The banner cuts this text off after a few lines; press Preview to read all of it without dismissing the alert, Go to to open Calculator, or Dismiss to close it. Long messages are capped even in the preview, because alerts are glances and not documents."},
 		{Kind: config.KindCalendar, Source: "Calendar", Title: "Sample meeting", Body: "A calendar alert: Starts at 10:30"},
 	}

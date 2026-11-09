@@ -22,6 +22,8 @@ type Env struct {
 	ConfigDir string
 	// Version is printed by --version.
 	Version string
+	// Build identifies this executable, for comparing with the worker's (session.BuildID); empty disables the check.
+	Build string
 	// Label starts the --short status, for example "shh".
 	Label string
 	// IsTerminal says whether stdout is a terminal; bare `shh` opens the UI only then.
@@ -37,7 +39,8 @@ type Env struct {
 	// AlertSources names the apps that have a style override in the configuration, so the preview can show each.
 	AlertSources []string
 	// Daemon runs the worker in the foreground until ctx ends; it is what `shh daemon` (the spawned process) does.
-	Daemon func(ctx context.Context) error
+	Daemon      func(ctx context.Context) error
+	staleWarned bool
 	// Menubar runs the menu bar item in the foreground until ctx ends or the worker is gone; it is what `shh menubar` (started by
 	// the worker) does. Nil when the menu bar is not available.
 	Menubar func(ctx context.Context) error
@@ -152,10 +155,24 @@ func (e *Env) rearmPersistedFocus() {
 	}
 }
 
+// warnIfStale says so when the worker running is not from this executable. A worker keeps running after shh is rebuilt or
+// upgraded and goes on serving the old code (including old banner scripts), so a change can look as if it did nothing.
+func (e *Env) warnIfStale(view session.StatusView) {
+	if e.Build == "" || view.Build == "" || view.Build == e.Build || e.staleWarned {
+		return
+	}
+	e.staleWarned = true
+	fmt.Fprintln(e.Stderr, "shh: note: the running worker is from a different build than this command, so it is still running the old code.\n"+
+		"     Turn focus off (shh stop --all), dismiss any alerts on screen and wait a few seconds for it to exit; the next command starts a fresh one.")
+}
+
 // ensureWorker makes sure a worker is answering, starting one if none is running and a spawner is available.
 func (e *Env) ensureWorker() error {
 	client := e.client()
-	_, err := client.Status()
+	view, err := client.Status()
+	if err == nil {
+		e.warnIfStale(view)
+	}
 	if err == nil || !errors.Is(err, session.ErrNotRunning) {
 		return err
 	}
