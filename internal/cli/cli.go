@@ -168,34 +168,9 @@ func (e *Env) warnIfStale(view session.StatusView) {
 
 // ensureWorker makes sure a worker is answering, starting one if none is running and a spawner is available.
 func (e *Env) ensureWorker() error {
-	client := e.client()
-	view, err := client.Status()
+	view, err := session.Ensure(e.client(), e.Spawn, e.SpawnWait)
 	if err == nil {
 		e.warnIfStale(view)
 	}
-	if err == nil || !errors.Is(err, session.ErrNotRunning) {
-		return err
-	}
-	if e.Spawn == nil {
-		return fmt.Errorf("%w, and a worker cannot be started from here", err)
-	}
-	if err := e.Spawn(); err != nil {
-		return fmt.Errorf("starting the worker: %w", err)
-	}
-	wait := e.SpawnWait
-	if wait == 0 {
-		wait = 5 * time.Second
-	}
-	deadline := time.Now().Add(wait)
-	for {
-		if _, err := client.Status(); err == nil {
-			return nil
-		} else if !errors.Is(err, session.ErrNotRunning) {
-			return err
-		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("the worker did not start within %v", wait)
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
+	return err
 }

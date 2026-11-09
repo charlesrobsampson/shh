@@ -1,9 +1,11 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -13,6 +15,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
 
+	"github.com/charlesrobsampson/shh/internal/decide"
 	"github.com/charlesrobsampson/shh/internal/menubar"
 	"github.com/charlesrobsampson/shh/internal/session"
 	"github.com/charlesrobsampson/shh/internal/store"
@@ -23,6 +26,13 @@ type Data interface {
 	ListNotifications(store.Filter) ([]store.Notification, error)
 	SetRead(id int64, read bool) error
 	SetDismissed(id int64, dismissed bool) error
+}
+
+// Trainer teaches the model from labelled notifications. The worker owns the model, so training goes through it: *session.Client
+// satisfies this.
+type Trainer interface {
+	Train(session.TrainRequest) (session.TrainView, error)
+	UndoTraining() (session.TrainView, error)
 }
 
 // Worker is the part of the worker's client the status bar reads. An error (the usual one being session.ErrNotRunning) just
@@ -37,6 +47,11 @@ type Config struct {
 	Worker Worker
 	// Label starts the session text in the status bar, for example "shh".
 	Label string
+	// Trainer handles y, n, l and u. Nil turns training off.
+	Trainer Trainer
+	// Ensure makes sure a worker is running before a notification is trained or an undo is made (starting one if need be); nil means
+	// do not check.
+	Ensure func() error
 	// Open opens the app with the given bundle id, for Enter and o; `open -b` when nil.
 	Open func(bundleID string) error
 	// Now is the clock; time.Now when nil.
@@ -84,6 +99,10 @@ type Model struct {
 	// expandedID is the notification shown in full across the whole screen (e); 0 when none is. scroll is how far down its text is.
 	expandedID int64
 	scroll     int
+	// prompt is the label being typed after l or a digit; nil when there is none.
+	prompt *prompt
+	// undoStack remembers what each training in this session did besides teaching the model, so undo can put that back too.
+	undoStack []trainedEntry
 	// notice is what the last action did or why it could not, shown in the status bar until the next key.
 	notice string
 }
@@ -131,6 +150,9 @@ func (m *Model) reload() {
 		if err != nil {
 			m.err = "cannot read notifications: " + err.Error()
 			continue
+		}
+		if tab == TabTrain {
+			sortMostInformativeFirst(rows)
 		}
 		m.lists[tab] = rows
 		m.cursor[tab] = indexOf(rows, selected, m.cursor[tab])
@@ -194,6 +216,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.notice = ""
+	if m.prompt != nil {
+		m.promptKey(msg)
+		return m, nil
+	}
 	if m.showHelp {
 		// Any key closes the help, except the ones that quit.
 		if k := msg.String(); k == "ctrl+c" || k == "q" {
@@ -207,9 +233,9 @@ func (m *Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "?":
 		m.showHelp = true
-	case "tab", "l", "right":
+	case "tab", "right":
 		m.goTo((m.tab + 1) % tabCount)
-	case "shift+tab", "h", "left":
+	case "shift+tab", "left":
 		m.goTo((m.tab + tabCount - 1) % tabCount)
 	case "f1", "!":
 		m.goTo(TabFocus)
@@ -225,6 +251,16 @@ func (m *Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.open()
 	case "d", "x":
 		m.dismiss()
+	case "y":
+		m.quickTrain("y")
+	case "n":
+		m.quickTrain("n")
+	case "l":
+		m.openPrompt("")
+	case "u":
+		m.undoTraining()
+	case "0", "1", "2", "3", "4", "5", "6", "7", "8", "9":
+		m.openPrompt(msg.String()) // a digit starts typing a label, so a score can be given with one hand
 	case "j", "down":
 		m.move(1)
 	case "k", "up":
@@ -302,6 +338,211 @@ func (m *Model) dismiss() {
 	}
 	m.notice = "dismissed"
 	m.reload()
+}
+
+// ---- training ----
+
+// trainedEntry is what one training did to the lists besides the model: whether it also archived the row from Notifications.
+type trainedEntry struct {
+	id       int64
+	archived bool
+}
+
+// prompt is the exact label being typed.
+type prompt struct {
+	text   string
+	err    string
+	target store.Notification
+}
+
+const maxLabelInput = 12
+
+// quickTrain labels the selected notification y ("it should have reached me at the level it was decided at") or n ("it was rightly
+// held back").
+func (m *Model) quickTrain(feedback string) {
+	if n, ok := m.trainable(); ok {
+		m.train(session.TrainRequest{Feedback: feedback}, n)
+	}
+}
+
+// trainable is the selected notification, when training is possible here: not on the Focus tab, and with a trainer.
+func (m *Model) trainable() (store.Notification, bool) {
+	n, ok := m.Selected()
+	if !ok {
+		return store.Notification{}, false
+	}
+	if m.cfg.Trainer == nil {
+		m.notice = "training is not available here"
+		return store.Notification{}, false
+	}
+	return n, true
+}
+
+// openPrompt starts typing an exact label (0 to 100, or a tier name) for the selected notification.
+func (m *Model) openPrompt(initial string) {
+	if n, ok := m.trainable(); ok {
+		m.prompt = &prompt{text: initial, target: n}
+	}
+}
+
+func (m *Model) promptKey(msg tea.KeyMsg) {
+	p := m.prompt
+	switch msg.Type {
+	case tea.KeyEsc, tea.KeyCtrlC:
+		m.prompt = nil
+	case tea.KeyEnter:
+		label, err := decide.ParseLabel(p.text)
+		if err != nil {
+			p.err = err.Error()
+			return
+		}
+		m.prompt = nil
+		m.train(session.TrainRequest{Label: &label}, p.target)
+	case tea.KeyBackspace:
+		if r := []rune(p.text); len(r) > 0 {
+			p.text = string(r[:len(r)-1])
+		}
+		p.err = ""
+	case tea.KeyRunes, tea.KeySpace:
+		if len([]rune(p.text)) < maxLabelInput {
+			p.text += string(msg.Runes)
+			if msg.Type == tea.KeySpace {
+				p.text += " "
+			}
+		}
+		p.err = ""
+	}
+}
+
+// train labels a notification through the worker. A notification trained from the Notifications tab is archived from it, as one
+// trained on the Train tab leaves that list; either way the row disappears from the list it was trained in.
+func (m *Model) train(req session.TrainRequest, n store.Notification) {
+	if err := m.ensureWorker(); err != nil {
+		m.notice = "cannot reach the worker to train: " + err.Error()
+		return
+	}
+	req.NotificationID = n.ID
+	out, err := m.cfg.Trainer.Train(req)
+	switch {
+	case errors.Is(err, session.ErrAlreadyTrained):
+		m.notice = "already trained: press u to undo the last training first"
+		return
+	case err != nil:
+		m.notice = "could not train: " + err.Error()
+		return
+	}
+	entry := trainedEntry{id: n.ID}
+	if m.tab == TabNotifications {
+		if err := m.cfg.Data.SetDismissed(n.ID, true); err != nil {
+			m.notice = "trained, but could not archive it: " + err.Error()
+		} else {
+			entry.archived = true
+		}
+	}
+	m.undoStack = append(m.undoStack, entry)
+	if m.notice == "" {
+		m.notice = describeTraining(req, out)
+	}
+	m.reload()
+}
+
+func describeTraining(req session.TrainRequest, out session.TrainView) string {
+	what := "labelled"
+	switch {
+	case req.Label != nil:
+		what = fmt.Sprintf("labelled %d", *req.Label)
+	case req.Feedback == "y":
+		what = "should have alerted"
+	case req.Feedback == "n":
+		what = "should have stayed muted"
+	}
+	if !out.Updated {
+		return fmt.Sprintf("%s: the model already agreed (score %d), nothing to change", what, out.Before)
+	}
+	return fmt.Sprintf("%s: score %d → %d  (u undoes)", what, out.Before, out.After)
+}
+
+// undoTraining reverses the most recent training exactly: the model's weights and the row's flags come back, and a row that the
+// training archived from Notifications is put back there.
+func (m *Model) undoTraining() {
+	if m.tab == TabFocus {
+		return
+	}
+	if m.cfg.Trainer == nil {
+		m.notice = "training is not available here"
+		return
+	}
+	if err := m.ensureWorker(); err != nil {
+		m.notice = "cannot reach the worker to undo: " + err.Error()
+		return
+	}
+	out, err := m.cfg.Trainer.UndoTraining()
+	switch {
+	case errors.Is(err, session.ErrNothingToUndo):
+		m.notice = "nothing to undo"
+		return
+	case err != nil:
+		m.notice = "could not undo: " + err.Error()
+		return
+	}
+	if n := len(m.undoStack); n > 0 && m.undoStack[n-1].id == out.NotificationID {
+		if m.undoStack[n-1].archived {
+			if err := m.cfg.Data.SetDismissed(out.NotificationID, false); err != nil {
+				m.notice = "undone, but could not put it back on Notifications: " + err.Error()
+			}
+		}
+		m.undoStack = m.undoStack[:n-1]
+	}
+	if m.notice == "" {
+		m.notice = "undid the last training"
+	}
+	m.reload()
+	m.selectID(out.NotificationID)
+}
+
+// selectID moves the cursor to the notification with this id on the current tab, if it is there.
+func (m *Model) selectID(id int64) {
+	if m.tab == TabFocus {
+		return
+	}
+	for i, n := range m.lists[m.tab] {
+		if n.ID == id {
+			m.cursor[m.tab] = i
+			m.clamp(m.tab)
+			return
+		}
+	}
+}
+
+func (m *Model) ensureWorker() error {
+	if m.cfg.Ensure == nil {
+		return nil
+	}
+	return m.cfg.Ensure()
+}
+
+// sortMostInformativeFirst orders the Train list so the notifications a label would teach the model most come first: those whose
+// score sits close to one of the common thresholds, where being a little wrong changes what gets through. Ties keep the newest first.
+func sortMostInformativeFirst(rows []store.Notification) {
+	distance := func(n store.Notification) float64 {
+		effective := decide.Decide(0, n.Score, n.Boost, false).Effective * 100
+		best := 100.0
+		for _, t := range decide.Tiers() {
+			if t.Level == 0 {
+				continue
+			}
+			best = min(best, abs(effective-float64(t.Level)))
+		}
+		return best
+	}
+	sort.SliceStable(rows, func(i, j int) bool { return distance(rows[i]) < distance(rows[j]) })
+}
+
+func abs(x float64) float64 {
+	if x < 0 {
+		return -x
+	}
+	return x
 }
 
 // openApp opens an app by bundle id, the same way the alert banners do.
@@ -567,6 +808,9 @@ func (m *Model) detailParts(n store.Notification, w int) (meta, body []string) {
 
 // statusBar is the line along the bottom: the focus session, then what the lists hold, then the way to the help.
 func (m *Model) statusBar() string {
+	if m.prompt != nil {
+		return m.promptBar()
+	}
 	left := m.sessionText()
 	right := "? help"
 	switch {
@@ -584,6 +828,16 @@ func (m *Model) statusBar() string {
 	return statusStyle.Render(text + strings.Repeat(" ", gap) + right + " ")
 }
 
+// promptBar replaces the status bar while an exact label is being typed.
+func (m *Model) promptBar() string {
+	p := m.prompt
+	text := fmt.Sprintf(" label for %s (0-100, or light, medium, deep, lockdown; Enter saves, Esc cancels): %s█", oneLine(p.target.Sender), oneLine(p.text))
+	if p.err != "" {
+		text += "   ✗ " + oneLine(p.err)
+	}
+	return statusStyle.Render(fit(text+strings.Repeat(" ", max(0, m.width-lipgloss.Width(text))), m.width))
+}
+
 // sessionText is what the focus session looks like in one line: "shh 28m · 65%", with the counts of what it has held back.
 func (m *Model) sessionText() string {
 	switch {
@@ -599,13 +853,16 @@ func (m *Model) sessionText() string {
 
 func (m *Model) helpView() string {
 	keys := [][2]string{
-		{"Tab / Shift-Tab, h / l", "next / previous tab"},
+		{"Tab / Shift-Tab, ← / →", "next / previous tab"},
 		{"! @ #  (Shift-1 2 3), F1 F2 F3", "Focus, Notifications, Train"},
 		{"j / k, ↓ / ↑", "move down / up"},
 		{"g / G, PgUp / PgDn", "first / last, page"},
 		{"e", "read it all (j/k scroll); not marked read"},
 		{"Enter, o", "open its app and mark it read"},
 		{"d, x", "dismiss (it stays in Train)"},
+		{"y / n", "should have alerted / rightly held back"},
+		{"l, or a digit", "type an exact 0-100 score or a tier name"},
+		{"u", "undo the last training"},
 		{"?", "this help"},
 		{"q, Ctrl-C", "quit"},
 	}

@@ -452,3 +452,39 @@ func TestBadAlertRequestsAreRejected(t *testing.T) {
 		t.Errorf("err = %v, want the alerter's error to reach the client", err)
 	}
 }
+
+func TestAClientCanTrainAndUndoThroughTheWorker(t *testing.T) {
+	r := newIPCRig(t)
+	if err := r.worker.SetBaseline(65); err != nil {
+		t.Fatal(err)
+	}
+	r.postAndTick(teams, "Ana", "lunch menu for friday")
+	id := r.onlyNotification().ID
+	label := 90
+	got, err := r.client.Train(session.TrainRequest{NotificationID: id, Label: &label})
+	if err != nil || got.NotificationID != id || got.After <= got.Before || !got.Updated {
+		t.Fatalf("Train = %+v, %v", got, err)
+	}
+	if row, _ := r.store.GetNotification(id); !row.IsTrained {
+		t.Error("the row is not marked trained")
+	}
+	if _, err := r.client.Train(session.TrainRequest{NotificationID: id, Feedback: "y"}); !errors.Is(err, session.ErrAlreadyTrained) {
+		t.Errorf("a second train: err = %v, want ErrAlreadyTrained across the socket", err)
+	}
+	undone, err := r.client.UndoTraining()
+	if err != nil || undone.NotificationID != id {
+		t.Fatalf("UndoTraining = %+v, %v", undone, err)
+	}
+	if row, _ := r.store.GetNotification(id); row.IsTrained {
+		t.Error("the row is still trained after undo")
+	}
+	if _, err := r.client.UndoTraining(); !errors.Is(err, session.ErrNothingToUndo) {
+		t.Errorf("a second undo: err = %v", err)
+	}
+	if _, err := r.client.Train(session.TrainRequest{NotificationID: 9999, Feedback: "y"}); !errors.Is(err, session.ErrNoSuchNotification) {
+		t.Errorf("an unknown id: err = %v", err)
+	}
+	if _, err := r.client.Train(session.TrainRequest{NotificationID: id}); !errors.Is(err, session.ErrInvalid) {
+		t.Errorf("no label: err = %v", err)
+	}
+}

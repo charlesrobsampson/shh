@@ -239,6 +239,22 @@ func (m *Model) Undo(n int) error {
 	return m.revert(undo, log, undo[len(undo)-1].ID)
 }
 
+// LastTraining is the training call that Undo(1) would reverse, so a caller can tell which notification it was about.
+func (m *Model) LastTraining() (store.TrainingLogEntry, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	log, err := m.store.TrainingLog(0)
+	if err != nil {
+		return store.TrainingLogEntry{}, false
+	}
+	for _, e := range log {
+		if e.Label != checkpointLabel {
+			return e, true
+		}
+	}
+	return store.TrainingLogEntry{}, false
+}
+
 // Checkpoint marks the current weights as a point Rollback can return to.
 func (m *Model) Checkpoint() error {
 	m.mu.Lock()

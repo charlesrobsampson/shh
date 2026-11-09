@@ -26,6 +26,11 @@ type Request struct {
 	Note         string `json:"note,omitempty"`
 	All          bool   `json:"all,omitempty"`
 	DeltaSecs    int    `json:"delta_secs,omitempty"`
+	// NotificationID, Label and Feedback are what the "train" command labels: a stored notification, and either an exact 0 to 100 label or
+	// y/n.
+	NotificationID int64  `json:"notification_id,omitempty"`
+	Label          *int   `json:"label,omitempty"`
+	Feedback       string `json:"feedback,omitempty"`
 	// Alert is what the "alert" command shows, through the same alerter the worker uses, so that every banner on screen is
 	// laid out by one process.
 	Alert *AlertMsg `json:"alert,omitempty"`
@@ -45,6 +50,16 @@ type Response struct {
 	Code   string      `json:"code,omitempty"`
 	Error  string      `json:"error,omitempty"`
 	Status *StatusView `json:"status,omitempty"`
+	// Train is the outcome of a "train" or "undo" command.
+	Train *TrainView `json:"train,omitempty"`
+}
+
+// TrainView is a TrainOutcome on the wire.
+type TrainView struct {
+	NotificationID int64 `json:"notification_id"`
+	Before         int   `json:"before"`
+	After          int   `json:"after"`
+	Updated        bool  `json:"updated"`
 }
 
 // StatusView is the stack of focus levels as clients see it.
@@ -110,6 +125,9 @@ var codes = map[string]error{
 	"not_paused":      ErrNotPaused,
 	"no_session":      ErrNoSession,
 	"invalid":         ErrInvalid,
+	"already_trained": ErrAlreadyTrained,
+	"nothing_to_undo": ErrNothingToUndo,
+	"not_found":       ErrNoSuchNotification,
 }
 
 func (e *RemoteError) Is(target error) bool {

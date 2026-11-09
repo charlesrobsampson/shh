@@ -143,6 +143,8 @@ func (s *Server) handle(req Request) Response {
 		err = w.Adjust(time.Duration(req.DeltaSecs) * time.Second)
 	case "alert":
 		err = w.showAlert(req.Alert)
+	case "train", "undo":
+		return s.handleTraining(req)
 	default:
 		return Response{Code: "bad_request", Error: fmt.Sprintf("unknown command %q", req.Cmd)}
 	}
@@ -155,6 +157,23 @@ func (s *Server) handle(req Request) Response {
 	}
 	view := statusView(st, w.cfg.Clock.Now())
 	return Response{OK: true, Status: &view}
+}
+
+// handleTraining answers "train" and "undo", whose answer is the outcome rather than the focus status.
+func (s *Server) handleTraining(req Request) Response {
+	var (
+		outcome TrainOutcome
+		err     error
+	)
+	if req.Cmd == "undo" {
+		outcome, err = s.worker.UndoTraining()
+	} else {
+		outcome, err = s.worker.Train(TrainRequest{NotificationID: req.NotificationID, Label: req.Label, Feedback: req.Feedback})
+	}
+	if err != nil {
+		return Response{Code: codeFor(err), Error: err.Error()}
+	}
+	return Response{OK: true, Train: &TrainView{NotificationID: outcome.NotificationID, Before: outcome.Before, After: outcome.After, Updated: outcome.Updated}}
 }
 
 func withLevel(req Request, do func(level int) error) error {

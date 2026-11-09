@@ -28,6 +28,44 @@ type fakeWorker struct {
 
 func (w *fakeWorker) Status() (session.StatusView, error) { return w.view, w.err }
 
+// fakeTrainer stands in for the worker's training: it records what it was asked and answers as programmed.
+type fakeTrainer struct {
+	requests  []session.TrainRequest
+	undos     int
+	err       error
+	undoErr   error
+	outcome   session.TrainView
+	lastTrain int64
+	// onTrain and onUndo stand in for the worker's side effects on the stored row, which happen before it answers.
+	onTrain func(session.TrainRequest)
+	onUndo  func(id int64)
+}
+
+func (f *fakeTrainer) Train(req session.TrainRequest) (session.TrainView, error) {
+	f.requests = append(f.requests, req)
+	if f.err != nil {
+		return session.TrainView{}, f.err
+	}
+	out := f.outcome
+	out.NotificationID = req.NotificationID
+	f.lastTrain = req.NotificationID
+	if f.onTrain != nil {
+		f.onTrain(req)
+	}
+	return out, nil
+}
+
+func (f *fakeTrainer) UndoTraining() (session.TrainView, error) {
+	f.undos++
+	if f.undoErr != nil {
+		return session.TrainView{}, f.undoErr
+	}
+	if f.onUndo != nil {
+		f.onUndo(f.lastTrain)
+	}
+	return session.TrainView{NotificationID: f.lastTrain}, nil
+}
+
 type rig struct {
 	t       *testing.T
 	store   *store.Store
@@ -36,6 +74,9 @@ type rig struct {
 	next    int64
 	opened  []string
 	openErr error
+	trainer *fakeTrainer
+	ensured int
+	ensureE error
 }
 
 func newRig(t *testing.T) *rig {
@@ -46,10 +87,17 @@ func newRig(t *testing.T) *rig {
 	}
 	t.Cleanup(func() { s.Close() })
 	r := &rig{t: t, store: s, worker: &fakeWorker{err: session.ErrNotRunning}}
-	r.m = New(Config{Data: s, Worker: r.worker, Now: func() time.Time { return now }, Open: func(bundle string) error {
-		r.opened = append(r.opened, bundle)
-		return r.openErr
-	}})
+	r.trainer = &fakeTrainer{outcome: session.TrainView{Before: 42, After: 71, Updated: true}}
+	r.trainer.onTrain = func(req session.TrainRequest) {
+		_ = s.Train(req.NotificationID, store.Training{Feedback: req.Feedback, Label: req.Label})
+	}
+	r.trainer.onUndo = func(id int64) { _ = s.Untrain(id) }
+	r.m = New(Config{Data: s, Worker: r.worker, Now: func() time.Time { return now }, Trainer: r.trainer,
+		Ensure: func() error { r.ensured++; return r.ensureE },
+		Open: func(bundle string) error {
+			r.opened = append(r.opened, bundle)
+			return r.openErr
+		}})
 	return r
 }
 
@@ -106,6 +154,12 @@ func key(k string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyEnter}
 	case "esc":
 		return tea.KeyMsg{Type: tea.KeyEsc}
+	case "left":
+		return tea.KeyMsg{Type: tea.KeyLeft}
+	case "right":
+		return tea.KeyMsg{Type: tea.KeyRight}
+	case "backspace":
+		return tea.KeyMsg{Type: tea.KeyBackspace}
 	}
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
 }
@@ -137,8 +191,8 @@ func TestTabsSwitchWithTabShiftTabAndFunctionKeys(t *testing.T) {
 		{[]string{"f1"}, TabFocus},
 		{[]string{"f3"}, TabTrain},
 		{[]string{"f2"}, TabNotifications},
-		{[]string{"l"}, TabTrain},
-		{[]string{"h"}, TabNotifications},
+		{[]string{"right"}, TabTrain},
+		{[]string{"left"}, TabNotifications},
 	} {
 		r.press(step.keys...)
 		if r.m.Tab() != step.want {
@@ -819,5 +873,368 @@ func TestWhenTheDatabaseRefusesAnActionTheStatusBarSaysSo(t *testing.T) {
 	r.press("d")
 	if got := r.view(); !strings.Contains(got, "could not dismiss") {
 		t.Errorf("status bar:\n%s", got)
+	}
+}
+
+func senders(r *rig) []string {
+	var out []string
+	for _, n := range r.m.lists[r.m.tab] {
+		out = append(out, n.Sender)
+	}
+	return out
+}
+
+func TestYAndNLabelTheSelectedRowAndItLeavesTheTrainList(t *testing.T) {
+	for _, k := range []string{"y", "n"} {
+		r := newRig(t)
+		first := r.add("Ana", "x", 1, func(n *store.Notification) { n.Score = 0.60 })
+		r.add("Bo", "x", 2, func(n *store.Notification) { n.Score = 0.70 })
+		r.refresh()
+		r.press("f3")
+		if r.selectedSender() != "Ana" {
+			t.Fatalf("setup: selected %q", r.selectedSender())
+		}
+		r.press(k)
+		if len(r.trainer.requests) != 1 {
+			t.Fatalf("%s: %d training requests, want 1", k, len(r.trainer.requests))
+		}
+		if got := r.trainer.requests[0]; got.NotificationID != first || got.Feedback != k || got.Label != nil {
+			t.Errorf("%s: request = %+v", k, got)
+		}
+		if r.ensured != 1 {
+			t.Errorf("%s: the worker was ensured %d times, want once before training", k, r.ensured)
+		}
+	}
+}
+
+func TestTrainedRowsLeaveTheListInTheRealStoreToo(t *testing.T) {
+	// The fake trainer does not touch the store, so stand in for the worker: mark the row trained as the real one does.
+	r := newRig(t)
+	a := r.add("Ana", "x", 1)
+	r.add("Bo", "x", 2)
+	r.refresh()
+	r.press("f3", "y")
+	must(t, r.store.Train(a, store.Training{Feedback: "y"})) // what the worker does
+	r.refresh()
+	if got := senders(r); len(got) != 1 || got[0] != "Bo" {
+		t.Errorf("Train list = %v, want Bo only", got)
+	}
+	if r.selectedSender() != "Bo" {
+		t.Errorf("the cursor is on %q, want the next row so labelling can carry on", r.selectedSender())
+	}
+	if got := r.view(); !strings.Contains(got, "1 to train") {
+		t.Errorf("the count should follow:\n%s", got)
+	}
+}
+
+func TestTheNoticeReportsHowTheScoreMoved(t *testing.T) {
+	r := newRig(t)
+	r.add("Ana", "x", 1)
+	r.refresh()
+	r.press("f3", "y")
+	if got := r.view(); !strings.Contains(got, "should have alerted: score 42 → 71") {
+		t.Errorf("status bar:\n%s", got)
+	}
+	r.add("Bo", "x", 2)
+	r.refresh()
+	r.trainer.outcome = session.TrainView{Before: 30, After: 30}
+	r.press("n")
+	if got := r.view(); !strings.Contains(got, "the model already agreed (score 30), nothing to change") {
+		t.Errorf("status bar:\n%s", got)
+	}
+}
+
+func TestLTypesAnExactLabelAndEnterSavesIt(t *testing.T) {
+	r := newRig(t)
+	id := r.add("Ana", "x", 1)
+	r.refresh()
+	r.press("f3", "l")
+	if r.m.prompt == nil {
+		t.Fatal("l did not open the label prompt")
+	}
+	if got := r.view(); !strings.Contains(got, "label for Ana") || !strings.Contains(got, "Enter saves") {
+		t.Errorf("the prompt should replace the status bar:\n%s", got)
+	}
+	r.press("7", "5", "5", "backspace", "enter")
+	if len(r.trainer.requests) != 1 {
+		t.Fatalf("%d requests, want 1", len(r.trainer.requests))
+	}
+	got := r.trainer.requests[0]
+	if got.NotificationID != id || got.Label == nil || *got.Label != 75 || got.Feedback != "" {
+		t.Errorf("request = %+v, want an exact label of 75 (the 5 typed twice, one deleted)", got)
+	}
+	if r.m.prompt != nil {
+		t.Error("the prompt should close after saving")
+	}
+}
+
+func TestADigitStartsTheLabelPromptWithThatDigit(t *testing.T) {
+	r := newRig(t)
+	r.add("Ana", "x", 1)
+	r.refresh()
+	r.press("f3", "9")
+	if r.m.prompt == nil || r.m.prompt.text != "9" {
+		t.Fatalf("prompt = %+v, want it open and holding 9", r.m.prompt)
+	}
+	r.press("0", "enter")
+	if got := r.trainer.requests; len(got) != 1 || got[0].Label == nil || *got[0].Label != 90 {
+		t.Errorf("requests = %+v, want an exact label of 90", got)
+	}
+}
+
+func TestTierNamesAndOneHundredAreValidLabels(t *testing.T) {
+	for text, want := range map[string]int{"light": 35, "medium": 65, "deep": 90, "lockdown": 99, "100": 100, "0": 0, "75%": 75} {
+		r := newRig(t)
+		r.add("Ana", "x", 1)
+		r.refresh()
+		r.press("f3", "l")
+		for _, ch := range text {
+			r.press(string(ch))
+		}
+		r.press("enter")
+		if got := r.trainer.requests; len(got) != 1 || got[0].Label == nil || *got[0].Label != want {
+			t.Errorf("%q: requests = %+v, want an exact label of %d", text, got, want)
+		}
+	}
+}
+
+func TestAnInvalidLabelShowsAnErrorSendsNothingAndKeepsThePromptOpen(t *testing.T) {
+	r := newRig(t)
+	r.add("Ana", "x", 1)
+	r.refresh()
+	for _, bad := range []string{"abc", "101", "-5", "", "7.5"} {
+		r.press("f3", "l")
+		for _, ch := range bad {
+			r.press(string(ch))
+		}
+		r.press("enter")
+		if len(r.trainer.requests) != 0 {
+			t.Fatalf("%q was sent to the worker: %+v", bad, r.trainer.requests)
+		}
+		if r.m.prompt == nil {
+			t.Fatalf("%q: the prompt closed on an invalid label", bad)
+		}
+		if got := r.view(); !strings.Contains(got, "✗") {
+			t.Errorf("%q: the prompt should say what is wrong:\n%s", bad, got)
+		}
+		// typing again clears the complaint, and Esc leaves without training
+		r.press("x")
+		if r.m.prompt.err != "" {
+			t.Errorf("%q: the error should clear when typing resumes", bad)
+		}
+		r.press("esc")
+		if r.m.prompt != nil {
+			t.Errorf("%q: Esc should close the prompt", bad)
+		}
+	}
+}
+
+func TestEscCancelsThePromptWithoutTraining(t *testing.T) {
+	r := newRig(t)
+	id := r.add("Ana", "x", 1)
+	r.refresh()
+	r.press("f3", "l", "5", "0", "esc")
+	if len(r.trainer.requests) != 0 || r.m.prompt != nil || r.row(id).IsTrained {
+		t.Errorf("requests %v, prompt %v: Esc should cancel", r.trainer.requests, r.m.prompt)
+	}
+}
+
+func TestWhileTypingAKeyIsTextNotACommand(t *testing.T) {
+	r := newRig(t)
+	r.add("Ana", "x", 1)
+	r.refresh()
+	r.press("f3", "l", "q", "d", "y", "j", "?")
+	if r.m.prompt == nil || r.m.prompt.text != "qdyj?" {
+		t.Errorf("prompt = %+v, want the keys typed as text", r.m.prompt)
+	}
+	if len(r.trainer.requests) != 0 {
+		t.Errorf("a typed y trained something: %+v", r.trainer.requests)
+	}
+}
+
+func TestTrainingFromNotificationsArchivesTheRowButTrainingFromTrainDoesNot(t *testing.T) {
+	r := newRig(t)
+	a := r.add("Ana", "x", 1)
+	b := r.add("Bo", "x", 2)
+	r.refresh()
+	r.press("f2", "y") // trains Ana from Notifications
+	if !r.row(a).IsDismissedInbox {
+		t.Error("training from Notifications should archive the row from it")
+	}
+	r.press("f3")
+	r.m.cursor[TabTrain] = 1 // Bo, wherever the ordering put it
+	if n, _ := r.m.Selected(); n.ID != b {
+		r.m.cursor[TabTrain] = 0
+	}
+	r.press("y")
+	if r.row(b).IsDismissedInbox {
+		t.Error("training from Train must leave Notifications alone")
+	}
+}
+
+func TestUndoPutsBackTheArchivedRowAndSelectsIt(t *testing.T) {
+	r := newRig(t)
+	a := r.add("Ana", "x", 1)
+	r.add("Bo", "x", 2)
+	r.refresh()
+	r.press("f2", "y")
+	must(t, r.store.Train(a, store.Training{Feedback: "y"})) // the worker's part
+	r.refresh()
+	if got := senders(r); len(got) != 1 {
+		t.Fatalf("setup: Notifications = %v", got)
+	}
+	r.press("u")
+	if r.trainer.undos != 1 {
+		t.Fatalf("undo calls = %d, want 1", r.trainer.undos)
+	}
+	must(t, r.store.Untrain(a)) // the worker's part
+	r.refresh()
+	if r.row(a).IsDismissedInbox {
+		t.Error("undo should put the row back on Notifications")
+	}
+	r.press("u") // nothing more of ours on the stack, but the fake still answers
+	r.trainer.undoErr = session.ErrNothingToUndo
+	r.press("u")
+	if got := r.view(); !strings.Contains(got, "nothing to undo") {
+		t.Errorf("status bar:\n%s", got)
+	}
+}
+
+func TestUndoSaysSoAndSelectsTheRowThatCameBack(t *testing.T) {
+	r := newRig(t)
+	r.add("Zed", "x", 5, func(n *store.Notification) { n.Score = 0.2; n.Boost = 0 })
+	a := r.add("Ana", "x", 1, func(n *store.Notification) { n.Score = 0.65; n.Boost = 0 })
+	r.refresh()
+	r.press("f3")
+	if r.selectedSender() != "Ana" {
+		t.Fatalf("setup: the most informative row (score near 65) should be first, got %q", r.selectedSender())
+	}
+	r.press("y")
+	must(t, r.store.Train(a, store.Training{Feedback: "y"}))
+	r.refresh()
+	if r.selectedSender() != "Zed" {
+		t.Fatalf("setup: selected %q", r.selectedSender())
+	}
+	r.press("u")
+	must(t, r.store.Untrain(a))
+	r.refresh()
+	if got := r.view(); !strings.Contains(got, "undid the last training") {
+		t.Errorf("status bar:\n%s", got)
+	}
+	if r.selectedSender() != "Ana" {
+		t.Errorf("selected %q after the undo, want the row that came back", r.selectedSender())
+	}
+}
+
+func TestTheWorkerIsEnsuredBeforeTrainingAndAFailureStopsIt(t *testing.T) {
+	r := newRig(t)
+	r.add("Ana", "x", 1)
+	r.refresh()
+	r.ensureE = errors.New("cannot start")
+	r.press("f3", "y")
+	if len(r.trainer.requests) != 0 {
+		t.Errorf("trained without a worker: %+v", r.trainer.requests)
+	}
+	if got := r.view(); !strings.Contains(got, "cannot reach the worker to train: cannot start") {
+		t.Errorf("status bar:\n%s", got)
+	}
+	r.press("u")
+	if r.trainer.undos != 0 {
+		t.Error("undid without a worker")
+	}
+}
+
+func TestTrainingFailuresAreShownAndChangeNothing(t *testing.T) {
+	r := newRig(t)
+	a := r.add("Ana", "x", 1)
+	r.refresh()
+	r.press("f3")
+	r.trainer.err = session.ErrAlreadyTrained
+	r.press("y")
+	if got := r.view(); !strings.Contains(got, "already trained") {
+		t.Errorf("status bar:\n%s", got)
+	}
+	r.trainer.err = errors.New("disk full")
+	r.press("n")
+	if got := r.view(); !strings.Contains(got, "could not train: disk full") {
+		t.Errorf("status bar:\n%s", got)
+	}
+	if r.row(a).IsDismissedInbox || len(r.m.undoStack) != 0 {
+		t.Error("a failed training must not archive the row or leave anything to undo")
+	}
+}
+
+func TestWithoutATrainerTrainingKeysSayTheyAreUnavailable(t *testing.T) {
+	s, err := store.Open(":memory:")
+	must(t, err)
+	defer s.Close()
+	m := New(Config{Data: s, Now: func() time.Time { return now }})
+	r := &rig{t: t, store: s, m: m}
+	r.add("Ana", "x", 1)
+	r.refresh()
+	r.press("f3", "y")
+	if got := r.view(); !strings.Contains(got, "training is not available") {
+		t.Errorf("status bar:\n%s", got)
+	}
+	r.press("l", "u", "5")
+	if m.prompt != nil {
+		t.Error("a prompt opened with no trainer to send it to")
+	}
+}
+
+func TestTrainingKeysDoNothingOnTheFocusTabOrAnEmptyList(t *testing.T) {
+	r := newRig(t)
+	r.press("y", "n", "l", "5", "esc") // empty list: nothing to label (u still works: it undoes the last training)
+	if len(r.trainer.requests) != 0 || r.m.prompt != nil {
+		t.Errorf("requests %v prompt %v on an empty list", r.trainer.requests, r.m.prompt)
+	}
+	r.add("Ana", "x", 1)
+	r.refresh()
+	r.press("f1", "y", "n", "l", "u", "5", "enter")
+	if len(r.trainer.requests) != 0 || r.trainer.undos != 0 || r.m.prompt != nil {
+		t.Errorf("requests %v undos %d prompt %v from the Focus tab", r.trainer.requests, r.trainer.undos, r.m.prompt)
+	}
+}
+
+func TestTheTrainListPutsScoresNearTheCommonThresholdsFirst(t *testing.T) {
+	r := newRig(t)
+	r.add("far-low", "x", 6, func(n *store.Notification) { n.Score = 0.10; n.Boost = 0 })
+	r.add("mid", "x", 5, func(n *store.Notification) { n.Score = 0.50; n.Boost = 0 })
+	r.add("near-90", "x", 4, func(n *store.Notification) { n.Score = 0.88; n.Boost = 0 })
+	r.add("near-35-old", "x", 3, func(n *store.Notification) { n.Score = 0.36; n.Boost = 0 })
+	r.add("near-65-new", "x", 1, func(n *store.Notification) { n.Score = 0.64; n.Boost = 0 })
+	r.refresh()
+	r.press("f3")
+	want := []string{"near-65-new", "near-35-old", "near-90", "mid", "far-low"}
+	got := senders(r)
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("Train order = %v, want %v: closest to a common threshold first, the newest first among equals", got, want)
+	}
+	r.press("f2")
+	wantNewest := []string{"near-65-new", "near-35-old", "near-90", "mid", "far-low"}
+	if got := senders(r); strings.Join(got, ",") != strings.Join(wantNewest, ",") {
+		t.Errorf("Notifications should keep its newest-first order, got %v", got)
+	}
+}
+
+func TestTheBoostCountsWhenRankingBecauseThatIsWhatWasCompared(t *testing.T) {
+	r := newRig(t)
+	r.add("lifted", "x", 3, func(n *store.Notification) { n.Score = 0.50; n.Boost = 0.14 }) // decided at 64
+	r.add("plain-60", "x", 2, func(n *store.Notification) { n.Score = 0.58; n.Boost = 0 })
+	r.refresh()
+	r.press("f3")
+	if got := r.selectedSender(); got != "lifted" {
+		t.Errorf("first = %q, want the row whose boosted score (64) sits next to 65", got)
+	}
+}
+
+func TestHelpListsTheTrainingKeys(t *testing.T) {
+	r := newRig(t)
+	r.press("?")
+	got := r.view()
+	for _, want := range []string{"y / n", "l, or a digit", "undo"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("help does not mention %q:\n%s", want, got)
+		}
 	}
 }

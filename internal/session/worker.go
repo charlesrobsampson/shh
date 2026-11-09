@@ -231,7 +231,7 @@ func (w *Worker) handle(e ingest.Event) error {
 	}
 	level := st.Level
 	n := store.Notification{
-		Source: e.Source, Sender: e.Title, Title: titleWithSubtitle(e), Body: e.Body, Timestamp: e.Delivered, Status: status,
+		Source: e.Source, Sender: e.Title, Title: e.Title, Subtitle: e.Subtitle, Category: e.Category, Body: e.Body, Timestamp: e.Delivered, Status: status,
 		Score: score.Base, Boost: score.Boost, Reason: score.Reason, BundleID: e.BundleID, SourceRecID: e.RecID,
 		ThresholdAtDecision: &level, SessionID: top.ID, Thread: string(e.Thread),
 	}
@@ -322,17 +322,6 @@ func messageAlert(e ingest.Event) alert.Alert {
 		body = string(runes[:maxAlertBody-1]) + "…"
 	}
 	return alert.Alert{Kind: config.KindMessage, Source: e.Source, BundleID: e.BundleID, Title: e.Title, Body: body}
-}
-
-// titleWithSubtitle keeps the subtitle (an email subject, a channel name) with the stored title, which has no column of its own.
-func titleWithSubtitle(e ingest.Event) string {
-	if e.Subtitle == "" {
-		return e.Title
-	}
-	if e.Title == "" {
-		return e.Subtitle
-	}
-	return e.Title + " · " + e.Subtitle
 }
 
 // showAlert shows an alert sent by a client, such as `shh alert test`, through the worker's own alerter. One process owns the

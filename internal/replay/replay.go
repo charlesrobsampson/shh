@@ -91,7 +91,7 @@ func Run(in io.Reader, out io.Writer, opt Options) error {
 		}
 		threshold := opt.Threshold
 		if _, _, err := s.InsertNotification(store.Notification{
-			Source: row.Source, Sender: row.Sender, Title: row.Title, Body: row.Body, Timestamp: at,
+			Source: row.Source, Sender: row.Sender, Title: row.Title, Subtitle: row.Subtitle, Category: row.Category, Body: row.Body, Timestamp: at,
 			Status: status, Score: score.Base, Boost: score.Boost, ThresholdAtDecision: &threshold, Thread: row.Thread,
 		}); err != nil {
 			return fmt.Errorf("line %d: %w", lineNumber, err)
