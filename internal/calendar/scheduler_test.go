@@ -404,3 +404,18 @@ func TestARestartKeepsTheSourceApp(t *testing.T) {
 		t.Errorf("alerts after a restart = %+v, want the source app kept", shown)
 	}
 }
+
+func TestACalendarAlertCarriesTheReminderNotificationSoItCanBeFlagged(t *testing.T) {
+	r := newSchedRig(t)
+	id := r.source("com.microsoft.Outlook")
+	r.scheduler.Schedule(r.meeting("Weekly Sync", 10*time.Minute), id)
+	r.scheduler.Schedule(r.meeting("No source", 12*time.Minute), 0)
+	r.clock.Advance(15 * time.Minute)
+	got := map[string]int64{}
+	for _, a := range r.shown() {
+		got[a.Title] = a.NotificationID
+	}
+	if got["Weekly Sync"] != id || got["No source"] != 0 {
+		t.Errorf("notification ids on the alerts = %v, want the reminder's id for one and none for the other", got)
+	}
+}

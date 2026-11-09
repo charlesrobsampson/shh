@@ -12,6 +12,9 @@ type Alert struct {
 	BundleID string
 	Title    string
 	Body     string
+	// NotificationID is the stored notification this alert is about; 0 when there is none. It is what lets a banner's Flag button say
+	// which notification to mark for review.
+	NotificationID int64
 }
 
 // Alerter shows an alert on screen.

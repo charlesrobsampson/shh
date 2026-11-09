@@ -176,7 +176,13 @@ let expanded = false;
 function press(spec) {
   if (spec.type === 'dismiss') finish('dismissed');
   else if (spec.type === 'goto') finish('opened');
-  else if (spec.type === 'preview') {
+  else if (spec.type === 'flag') {
+    // Marks the notification for review in the Train tab and shows that it has been; pressing it twice would do nothing more.
+    const button = buttons[cfg.buttons.indexOf(spec)];
+    button.setTitle($(spec.flaggedLabel || 'Flagged'));
+    button.setEnabled(false);
+    emit('flag');
+  } else if (spec.type === 'preview') {
     expanded = !expanded;
     // Someone reading the full text should not have it vanish: stop the auto-dismiss timer.
     if (expanded && timer) { timer.invalidate; timer = null; }

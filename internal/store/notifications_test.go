@@ -447,3 +447,41 @@ func TestSubtitleAndCategoryAreStoredAndReadBack(t *testing.T) {
 		t.Errorf("a notification without them reads back %q, %q", got.Subtitle, got.Category)
 	}
 }
+
+func TestFlaggingMarksANotificationForReviewAndTrainingClearsIt(t *testing.T) {
+	s := open(t)
+	id := insert(t, s, sample(func(n *store.Notification) { n.SourceRecID = 11 }))
+	other := insert(t, s, sample(func(n *store.Notification) { n.SourceRecID = 12 }))
+	if got, _ := s.GetNotification(id); got.IsFlagged {
+		t.Fatal("a new notification should not be flagged")
+	}
+	must(t, s.SetFlagged(id, true))
+	if got, _ := s.GetNotification(id); !got.IsFlagged {
+		t.Error("SetFlagged(true) did not stick")
+	}
+	if got, _ := s.GetNotification(other); got.IsFlagged {
+		t.Error("flagging one notification flagged another")
+	}
+	if got, _ := s.GetNotification(id); got.IsRead || got.IsDismissedInbox || got.IsTrained {
+		t.Error("flagging must not change the other flags: it is a note to look again, not training")
+	}
+	must(t, s.SetFlagged(id, false))
+	if got, _ := s.GetNotification(id); got.IsFlagged {
+		t.Error("SetFlagged(false) did not clear it")
+	}
+	must(t, s.SetFlagged(id, true))
+	must(t, s.Train(id, store.Training{Feedback: "y"}))
+	if got, _ := s.GetNotification(id); got.IsFlagged || !got.IsTrained {
+		t.Errorf("after training: flagged %v trained %v, want the flag cleared", got.IsFlagged, got.IsTrained)
+	}
+	if err := s.SetFlagged(9999, true); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("flagging a missing notification: err = %v, want ErrNotFound", err)
+	}
+}
+
+func must(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}

@@ -44,6 +44,8 @@ type Notification struct {
 	Subtitle string
 	Category string
 
+	// IsFlagged marks a notification to review later in the Train tab; training it clears the mark.
+	IsFlagged        bool
 	IsRead           bool
 	IsDismissedInbox bool
 	IsTrained        bool
@@ -80,7 +82,7 @@ type Training struct {
 
 const notificationColumns = `id, source, sender, title, body, CAST(timestamp AS TEXT), status, predicted_score, time_sensitivity_boost,
 	reason, bundle_id, source_rec_id, threshold_at_decision, session_id, summary,
-	is_read, is_dismissed_inbox, is_trained, user_feedback, user_label, thread, subtitle, category`
+	is_read, is_dismissed_inbox, is_trained, user_feedback, user_label, thread, subtitle, category, is_flagged`
 
 // InsertNotification stores n and reports whether it was new. A row with the same macOS record id and delivery time is ignored.
 func (s *Store) InsertNotification(n Notification) (id int64, inserted bool, err error) {
@@ -176,11 +178,17 @@ func (s *Store) SetDismissed(id int64, dismissed bool) error {
 	return s.update(id, `UPDATE notifications SET is_dismissed_inbox = ? WHERE id = ?`, dismissed, id)
 }
 
+// SetFlagged marks or unmarks a notification for review in the Train tab.
+func (s *Store) SetFlagged(id int64, flagged bool) error {
+	return s.update(id, `UPDATE notifications SET is_flagged = ? WHERE id = ?`, flagged, id)
+}
+
 func (s *Store) SetSummary(id int64, summary string) error {
 	return s.update(id, `UPDATE notifications SET summary = ? WHERE id = ?`, nullString(summary), id)
 }
 
-// Train marks the row trained and records the feedback; it does not touch the inbox flag.
+// Train marks the row trained and records the feedback; it does not touch the inbox flag, and it clears the review flag: the review
+// it was flagged for has happened.
 func (s *Store) Train(id int64, t Training) error {
 	quick := t.Feedback == "y" || t.Feedback == "n"
 	switch {
@@ -193,7 +201,7 @@ func (s *Store) Train(id int64, t Training) error {
 	if quick {
 		feedback = t.Feedback
 	}
-	return s.update(id, `UPDATE notifications SET is_trained = 1, user_feedback = ?, user_label = ? WHERE id = ?`, feedback, t.Label, id)
+	return s.update(id, `UPDATE notifications SET is_trained = 1, is_flagged = 0, user_feedback = ?, user_label = ? WHERE id = ?`, feedback, t.Label, id)
 }
 
 func (s *Store) Untrain(id int64) error {
@@ -224,7 +232,7 @@ func scanNotification(row scanner) (Notification, error) {
 	)
 	err := row.Scan(&n.ID, &n.Source, &n.Sender, &title, &n.Body, &stamp, &status, &n.Score, &n.Boost,
 		&reason, &bundle, &recID, &threshold, &session, &summary,
-		&n.IsRead, &n.IsDismissedInbox, &n.IsTrained, &feedback, &label, &thread, &subtitle, &category)
+		&n.IsRead, &n.IsDismissedInbox, &n.IsTrained, &feedback, &label, &thread, &subtitle, &category, &n.IsFlagged)
 	if err != nil {
 		return Notification{}, err
 	}

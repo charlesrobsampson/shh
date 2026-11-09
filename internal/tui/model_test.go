@@ -1458,3 +1458,168 @@ func TestLabelErrorsFitAnEightyColumnTerminalWithoutBeingCut(t *testing.T) {
 		r.press("esc")
 	}
 }
+
+func flagged(n *store.Notification) { n.IsFlagged = true }
+
+func TestFlaggedNotificationsLeadTheTrainListWhateverTheirScore(t *testing.T) {
+	r := newRig(t)
+	r.add("near-65", "x", 1, func(n *store.Notification) { n.Score = 0.65; n.Boost = 0 })
+	far := r.add("far-flagged", "x", 3, func(n *store.Notification) { n.Score = 0.05; n.Boost = 0 })
+	r.add("near-35", "x", 2, func(n *store.Notification) { n.Score = 0.35; n.Boost = 0 })
+	closer := r.add("closer-flagged", "x", 4, func(n *store.Notification) { n.Score = 0.20; n.Boost = 0 })
+	must(t, r.store.SetFlagged(far, true))
+	must(t, r.store.SetFlagged(closer, true))
+	r.refresh()
+	r.press("f3")
+	want := []string{"closer-flagged", "far-flagged", "near-65", "near-35"}
+	if got := senders(r); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("Train order = %v, want %v: flagged first (the usual most-informative order among them), then the rest", got, want)
+	}
+	r.press("f2")
+	if first := senders(r)[0]; first != "near-65" {
+		t.Errorf("Notifications keeps newest first and does not reorder by flag, got %q first", first)
+	}
+}
+
+func mustList(t *testing.T, r *rig) []store.Notification {
+	t.Helper()
+	rows, err := r.store.ListNotifications(store.Filter{})
+	must(t, err)
+	return rows
+}
+
+func TestAFlaggedRowShowsAMarkTheDetailPaneAndACountInTheTab(t *testing.T) {
+	r := newRig(t)
+	id := r.add("Ana", "x", 1)
+	r.add("Bo", "x", 2)
+	must(t, r.store.SetFlagged(id, true))
+	r.refresh()
+	view := r.view()
+	if !strings.Contains(view, "(2, 1 ⚑)") {
+		t.Errorf("the Train tab should count the flagged ones:\n%s", view)
+	}
+	r.press("f3")
+	view = r.view()
+	if !strings.Contains(view, "⚑") || !strings.Contains(view, "flagged for review") {
+		t.Errorf("the flagged row and its detail should say so:\n%s", view)
+	}
+	rows := 0
+	for _, l := range strings.Split(view, "\n") {
+		if left, _, ok := strings.Cut(l, "│"); ok && strings.Contains(left, "Teams") && strings.Contains(left, "⚑") {
+			rows++
+		}
+	}
+	if rows != 1 {
+		t.Errorf("%d rows carry the flag mark, want exactly the flagged one:\n%s", rows, view)
+	}
+}
+
+func TestFTogglesTheFlagAndKeepsTheCursorOnTheSameRow(t *testing.T) {
+	for _, tab := range []string{"f2", "f3"} {
+		r := newRig(t)
+		r.add("Ana", "x", 1, func(n *store.Notification) { n.Score = 0.10; n.Boost = 0 })
+		b := r.add("Bo", "x", 2, func(n *store.Notification) { n.Score = 0.64; n.Boost = 0 })
+		r.refresh()
+		r.press(tab)
+		r.m.selectID(b)
+		r.press("f")
+		if !r.row(b).IsFlagged {
+			t.Fatalf("%s: f did not flag the selected row", tab)
+		}
+		if got := r.messageLine(); !strings.Contains(got, "flagged") {
+			t.Errorf("%s: message line = %q", tab, got)
+		}
+		if r.selectedSender() != "Bo" {
+			t.Errorf("%s: the cursor moved to %q when the row was flagged; it should stay on Bo even though Train re-sorted", tab, r.selectedSender())
+		}
+		r.press("f")
+		if r.row(b).IsFlagged {
+			t.Errorf("%s: a second f should clear the flag", tab)
+		}
+		if got := r.messageLine(); !strings.Contains(got, "flag cleared") {
+			t.Errorf("%s: message line = %q", tab, got)
+		}
+	}
+}
+
+func TestLabellingAFlaggedRowClearsItsFlagAndTheCount(t *testing.T) {
+	r := newRig(t)
+	id := r.add("Ana", "x", 1)
+	r.add("Bo", "x", 2)
+	must(t, r.store.SetFlagged(id, true))
+	r.refresh()
+	r.press("f3")
+	if r.selectedSender() != "Ana" {
+		t.Fatalf("setup: selected %q", r.selectedSender())
+	}
+	r.press("y") // the fake worker marks it trained, which clears the flag as the real store does
+	r.refresh()
+	if r.row(id).IsFlagged {
+		t.Error("training left the flag on")
+	}
+	if got := r.view(); strings.Contains(got, "⚑") {
+		t.Errorf("no flagged rows are left, so no flag mark or count should show:\n%s", got)
+	}
+}
+
+func TestFlaggedRowsAreHighlightedInThePaletteColourAndOthersAreNot(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.ANSI)
+	defer lipgloss.SetColorProfile(termenv.Ascii)
+	r := newRig(t)
+	id := r.add("Ana", "x", 1, func(n *store.Notification) { n.Status = store.StatusAlerted })
+	r.add("Bo", "x", 2, func(n *store.Notification) { n.Status = store.StatusAlerted })
+	must(t, r.store.SetFlagged(id, true))
+	r.refresh()
+	r.press("f3", "j") // the cursor on the plain row, so the flagged one is not reversed
+	var flaggedLine, plainLine string
+	for _, l := range strings.Split(r.view(), "\n") {
+		left, _, ok := strings.Cut(l, "│")
+		switch {
+		case ok && strings.Contains(left, "Ana"):
+			flaggedLine = left
+		case ok && strings.Contains(left, "Bo"):
+			plainLine = left
+		}
+	}
+	if !strings.Contains(flaggedLine, "35m") {
+		t.Errorf("the flagged row should be in the palette's magenta (ANSI 35): %q", flaggedLine)
+	}
+	if strings.Contains(plainLine, "35m") {
+		t.Errorf("an unflagged row should not be magenta: %q", plainLine)
+	}
+	if strings.Contains(flaggedLine, "38;2;") || strings.Contains(flaggedLine, "38;5;") {
+		t.Errorf("fixed colours would ignore the theme: %q", flaggedLine)
+	}
+}
+
+func TestFDoesNothingOnTheFocusTabAnEmptyListOrADatabaseError(t *testing.T) {
+	r := newRig(t)
+	r.press("f") // empty list
+	id := r.add("Ana", "x", 1)
+	r.refresh()
+	r.press("f1", "f")
+	if r.row(id).IsFlagged {
+		t.Error("f flagged something from the Focus tab")
+	}
+	r.press("f2")
+	r.store.Close()
+	r.press("f")
+	if got := r.messageLine(); !strings.Contains(got, "could not change the flag") {
+		t.Errorf("message line = %q", got)
+	}
+}
+
+func TestHelpAndHintsMentionTheFlag(t *testing.T) {
+	r := newRig(t)
+	if got := r.messageLine(); !strings.Contains(got, "f flag") {
+		t.Errorf("Notifications hints: %q", got)
+	}
+	r.press("f3")
+	if got := r.messageLine(); !strings.Contains(got, "f flag") {
+		t.Errorf("Train hints: %q", got)
+	}
+	r.press("?")
+	if got := r.view(); !strings.Contains(got, "flag it to review later") {
+		t.Errorf("help:\n%s", got)
+	}
+}

@@ -247,7 +247,9 @@ func (w *Worker) handle(e ingest.Event) error {
 		err = w.scheduleReminder(e, id)
 	case decision.Interrupt:
 		alerted = true
-		if showErr := w.cfg.Alerter.Show(messageAlert(e)); showErr != nil && w.cfg.OnError != nil {
+		a := messageAlert(e)
+		a.NotificationID = id // so the banner's Flag button can say which notification to mark
+		if showErr := w.cfg.Alerter.Show(a); showErr != nil && w.cfg.OnError != nil {
 			// The row is stored, so retrying would only find it again; the notification stays visible in the inbox.
 			w.cfg.OnError(fmt.Errorf("showing the alert for notification %d: %w", id, showErr))
 		}
@@ -337,5 +339,5 @@ func (w *Worker) showAlert(msg *AlertMsg) error {
 	if w.cfg.Alerter == nil {
 		return errors.New("this worker cannot show alerts")
 	}
-	return w.cfg.Alerter.Show(alert.Alert{Kind: kind, Source: msg.Source, BundleID: msg.BundleID, Title: msg.Title, Body: msg.Body})
+	return w.cfg.Alerter.Show(alert.Alert{Kind: kind, Source: msg.Source, BundleID: msg.BundleID, NotificationID: msg.NotificationID, Title: msg.Title, Body: msg.Body})
 }

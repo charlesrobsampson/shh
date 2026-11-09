@@ -902,3 +902,17 @@ func TestNoWarningWhenTheBuildsMatchOrAreUnknown(t *testing.T) {
 	}
 	session.BuildID = ""
 }
+
+func TestTheMessageSamplesShowTheFlagButtonWithoutMarkingAnythingReal(t *testing.T) {
+	r := newRig(t, true)
+	r.mustRun("alert", "test")
+	shown := r.alerter.Shown()
+	if len(shown) < 2 || shown[0].NotificationID >= 0 || shown[1].NotificationID >= 0 {
+		t.Errorf("the message samples should carry a demo (negative) notification id: %+v", shown)
+	}
+	for _, a := range shown {
+		if a.NotificationID > 0 {
+			t.Errorf("a sample claims to be a real notification: %+v", a)
+		}
+	}
+}

@@ -471,3 +471,18 @@ func TestTheThreadKindFromTheAppIsStoredAndChangesTheFeatures(t *testing.T) {
 		t.Errorf("with no metadata the text guess should still apply, got %q", guessedReason)
 	}
 }
+
+func TestAnAlertCarriesTheIdOfTheStoredNotificationSoItCanBeFlagged(t *testing.T) {
+	r := newWorkerRig(t)
+	if err := r.worker.SetBaseline(65); err != nil {
+		t.Fatal(err)
+	}
+	r.postAndTick(teams, "Ana", "prod outage, need you now")
+	shown := r.alerter.Shown()
+	if len(shown) != 1 {
+		t.Fatalf("alerts = %d", len(shown))
+	}
+	if n := r.onlyNotification(); shown[0].NotificationID != n.ID || n.ID == 0 {
+		t.Errorf("alert notification id = %d, stored id = %d: they should be the same", shown[0].NotificationID, n.ID)
+	}
+}

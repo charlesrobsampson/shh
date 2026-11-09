@@ -146,7 +146,10 @@ func (s *Scheduler) alertFor(event store.CalendarEvent, untimed bool) alert.Aler
 			body = fmt.Sprintf("Started at %s", at)
 		}
 	}
-	return alert.Alert{Kind: config.KindCalendar, Source: "Calendar", BundleID: s.sourceBundle(event), Title: event.Title, Body: body}
+	return alert.Alert{
+		Kind: config.KindCalendar, Source: "Calendar", BundleID: s.sourceBundle(event), NotificationID: event.SourceNotificationID,
+		Title: event.Title, Body: body,
+	}
 }
 
 // sourceBundle is the app the reminder came from, so that the alert's Go to button opens it (Outlook's reminders carry no meeting

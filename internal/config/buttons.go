@@ -10,6 +10,7 @@ const (
 	ButtonPreview = "preview"
 	ButtonGoto    = "goto"
 	ButtonDismiss = "dismiss"
+	ButtonFlag    = "flag"
 	ButtonTrain   = "train"
 )
 
@@ -24,6 +25,7 @@ var buttonSpecs = []buttonSpec{
 	{ButtonPreview, "Preview", true},
 	{ButtonGoto, "Go to", true},
 	{ButtonDismiss, "Dismiss", true},
+	{ButtonFlag, "Flag", true},    // marks the notification to look at again in the Train tab; shown only for alerts that have one
 	{ButtonTrain, "Train", false}, // reserved until task 45
 }
 
@@ -35,6 +37,8 @@ type ButtonEntry struct {
 	Enabled *bool   `json:"enabled,omitempty"`
 	// CollapseLabel (preview only) is what the button says while the banner is expanded; pressing it folds the banner back up.
 	CollapseLabel *string `json:"collapse_label,omitempty"`
+	// FlaggedLabel (flag only) is what the button says once it has been pressed.
+	FlaggedLabel *string `json:"flagged_label,omitempty"`
 }
 
 // Button is a resolved button.
@@ -42,8 +46,9 @@ type Button struct {
 	Type    string
 	Label   string
 	Enabled bool
-	// CollapseLabel is only set for preview.
+	// CollapseLabel is only set for preview, and FlaggedLabel only for flag.
 	CollapseLabel string
+	FlaggedLabel  string
 }
 
 // ButtonsFor is the full button list for an alert, left to right: the per-source list if there is one, else the per-kind list, else
@@ -63,7 +68,7 @@ func normalize(entries []ButtonEntry) []Button {
 	if entries == nil {
 		out := make([]Button, 0, len(buttonSpecs))
 		for _, s := range buttonSpecs {
-			out = append(out, Button{s.Type, s.Label, s.Enabled, defaultCollapse(s.Type)})
+			out = append(out, Button{s.Type, s.Label, s.Enabled, defaultCollapse(s.Type), defaultFlagged(s.Type)})
 		}
 		return out
 	}
@@ -71,9 +76,12 @@ func normalize(entries []ButtonEntry) []Button {
 	seen := map[string]bool{}
 	for _, e := range entries {
 		spec := buttonSpecs[specIndex(e.Type)]
-		b := Button{Type: spec.Type, Label: spec.Label, Enabled: true, CollapseLabel: defaultCollapse(spec.Type)}
+		b := Button{Type: spec.Type, Label: spec.Label, Enabled: true, CollapseLabel: defaultCollapse(spec.Type), FlaggedLabel: defaultFlagged(spec.Type)}
 		if e.CollapseLabel != nil {
 			b.CollapseLabel = *e.CollapseLabel
+		}
+		if e.FlaggedLabel != nil {
+			b.FlaggedLabel = *e.FlaggedLabel
 		}
 		if e.Label != nil {
 			b.Label = *e.Label
@@ -86,7 +94,7 @@ func normalize(entries []ButtonEntry) []Button {
 	}
 	for _, s := range buttonSpecs {
 		if !seen[s.Type] {
-			out = append(out, Button{s.Type, s.Label, false, defaultCollapse(s.Type)})
+			out = append(out, Button{s.Type, s.Label, false, defaultCollapse(s.Type), defaultFlagged(s.Type)})
 		}
 	}
 	return out
@@ -95,6 +103,13 @@ func normalize(entries []ButtonEntry) []Button {
 func defaultCollapse(buttonType string) string {
 	if buttonType == ButtonPreview {
 		return "Collapse"
+	}
+	return ""
+}
+
+func defaultFlagged(buttonType string) string {
+	if buttonType == ButtonFlag {
+		return "Flagged"
 	}
 	return ""
 }
@@ -111,6 +126,10 @@ func entries(buttons []Button) []ButtonEntry {
 		if b.CollapseLabel != "" {
 			collapse := b.CollapseLabel
 			entry.CollapseLabel = &collapse
+		}
+		if b.FlaggedLabel != "" {
+			flagged := b.FlaggedLabel
+			entry.FlaggedLabel = &flagged
 		}
 		out = append(out, entry)
 	}
@@ -136,6 +155,10 @@ func validateButtons(prefix string, list []ButtonEntry) error {
 			return fmt.Errorf("%q: only the preview button has a collapse label", key+".collapse_label")
 		case e.CollapseLabel != nil && *e.CollapseLabel == "":
 			return fmt.Errorf("%q must not be empty (leave it out to use the default label)", key+".collapse_label")
+		case e.FlaggedLabel != nil && e.Type != ButtonFlag:
+			return fmt.Errorf("%q: only the flag button has a flagged label", key+".flagged_label")
+		case e.FlaggedLabel != nil && *e.FlaggedLabel == "":
+			return fmt.Errorf("%q must not be empty (leave it out to use the default label)", key+".flagged_label")
 		}
 		seen[e.Type] = true
 	}
