@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -27,55 +26,10 @@ type focusCmd struct {
 	Words []string `arg:"" optional:"" name:"note" help:"The note, as plain words (same as -m). A leading level or length is read as one, so \"shh focus deep 25m writing\" works; tiers: off (0), light (35%), medium (65%), deep (90%), lockdown (99%)."`
 }
 
-var (
-	percentWord  = regexp.MustCompile(`^[0-9]+%$`)
-	durationWord = regexp.MustCompile(`^([0-9]+(\.[0-9]+)?[hms])+$`)
-)
-
-// isSettingWord is true for a level or a length written the short way.
-func isSettingWord(w string) bool {
-	return percentWord.MatchString(w) || durationWord.MatchString(w) || isTierWord(w)
-}
-
-// isTierWord is true for a tier name, "off" included.
-func isTierWord(w string) bool {
-	_, err := decide.ParseThreshold(w)
-	return err == nil && !percentWord.MatchString(w)
-}
-
-// leadingSettings takes a level and a length off the front of the plain words, so "shh focus 30%" sets the level instead of
-// becoming a note that says "30%". A flag given as well is a mistake worth reporting rather than choosing between. A lone tier
-// name ("shh focus deep") is a level too, but "deep work" is a note.
-func (c *focusCmd) leadingSettings() (level, length string, words []string, err error) {
-	level, length, words = c.Focus, c.Timer, c.Words
-	for len(words) > 0 {
-		w := words[0]
-		switch {
-		case percentWord.MatchString(w):
-			if level != "" {
-				return "", "", nil, usagef("the level is given twice (%s and %s)", level, w)
-			}
-			level = w
-		case durationWord.MatchString(w):
-			if length != "" {
-				return "", "", nil, usagef("the length is given twice (%s and %s)", length, w)
-			}
-			length = w
-		case level == "" && isTierWord(w) && (len(words) == 1 || isSettingWord(words[1])):
-			// "deep" alone, or followed by another setting ("deep 5m"), is a level; "deep work" is a note.
-			level = w
-		default:
-			return level, length, words, nil
-		}
-		words = words[1:]
-	}
-	return level, length, words, nil
-}
-
 func (c *focusCmd) Run(env *Env) error {
-	levelText, timerText, words, err := c.leadingSettings()
+	levelText, timerText, words, err := decide.SplitFocusWords(c.Focus, c.Timer, c.Words)
 	if err != nil {
-		return err
+		return usagef("%w", err)
 	}
 	if levelText == "" {
 		levelText = "medium"

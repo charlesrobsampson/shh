@@ -48,7 +48,9 @@ type Config struct {
 	Worker Worker
 	// Label starts the session text in the status bar, for example "shh".
 	Label string
-	// Trainer handles y, n, l and u. Nil turns training off.
+	// Control handles the Focus tab's keys. Nil turns them off.
+	Control Control
+	// Trainer handles y, n, t and u. Nil turns training off.
 	Trainer Trainer
 	// Ensure makes sure a worker is running before a notification is trained or an undo is made (starting one if need be); nil means
 	// do not check.
@@ -101,6 +103,9 @@ type Model struct {
 	// expandedID is the notification shown in full across the whole screen (e); 0 when none is. scroll is how far down its text is.
 	expandedID int64
 	scroll     int
+	// filter narrows both lists to notifications containing this text; totals is how many each list holds before it is applied.
+	filter string
+	totals [tabCount]int
 	// count is the number typed before a motion (3 in 3k), vim style; 0 when none is pending.
 	count int
 	// prompt is the label being typed after t; nil when there is none.
@@ -166,6 +171,10 @@ func (m *Model) reload() {
 		if err != nil {
 			m.err = "cannot read notifications: " + err.Error()
 			continue
+		}
+		m.totals[tab] = len(rows)
+		if m.filter != "" {
+			rows = filterRows(rows, m.filter)
 		}
 		if tab == TabTrain {
 			sortMostInformativeFirst(rows)
@@ -249,7 +258,7 @@ func (m *Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// typed after t, when the prompt is open and digits go into it.
 	key := msg.String()
 	if digit, ok := countDigit(key); ok {
-		if m.tab != TabFocus && (digit != 0 || m.count > 0) { // a lone 0 does nothing
+		if digit != 0 || m.count > 0 { // a lone 0 does nothing
 			m.count = min(m.count*10+digit, maxCount)
 		}
 		return m, nil
@@ -260,6 +269,11 @@ func (m *Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil // Esc drops a pending count before it does anything else
 	}
 	steps := max(1, count)
+
+	// The Focus tab has no rows to act on, so its letters mean other things: start, baseline, level, pause, adjust, stop.
+	if m.tab == TabFocus && m.focusKey(key, steps) {
+		return m, m.takeBlink()
+	}
 
 	switch key {
 	case "ctrl+c", "q":
@@ -279,7 +293,15 @@ func (m *Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "e":
 		m.toggleExpand()
 	case "esc":
-		m.collapse()
+		if m.expanded() {
+			m.collapse()
+		} else if m.filter != "" {
+			m.setFilter("")
+		}
+	case "/":
+		if m.tab != TabFocus {
+			m.openAsk(promptFilter, m.filter)
+		}
 	case "enter", "o":
 		m.open()
 	case "d", "x":
@@ -404,14 +426,33 @@ type trainedEntry struct {
 	archived bool
 }
 
-// prompt is the exact label being typed.
+// promptKind says what a prompt is asking for, and so what Enter does with the text.
+type promptKind int
+
+const (
+	promptLabel          promptKind = iota // an exact label for the selected notification
+	promptStart                            // a new focus session: level, length, note
+	promptBaseline                         // the standing level
+	promptLevel                            // a new level for the session in force
+	promptFilter                           // text to narrow the lists to
+	promptConfirmStopAll                   // y or n: turn everything off, baseline included
+)
+
+// prompt is a line being typed at the bottom of the screen.
 type prompt struct {
+	kind   promptKind
 	text   string
 	err    string
-	target store.Notification
+	target store.Notification // for a label: the notification it is for
 }
 
-const maxLabelInput = 12
+// promptLimit is how much can be typed: a label is short, a focus line with a note is not.
+func promptLimit(kind promptKind) int {
+	if kind == promptLabel {
+		return 12
+	}
+	return 80
+}
 
 // quickTrain answers "did shh do the right thing?" for the selected notification: y says it did (a notification it held back should
 // stay held back, one it alerted on should have been alerted), n says it did not. The row already shows what shh did, so the answer
@@ -451,13 +492,53 @@ func (m *Model) openPrompt(initial string) {
 	}
 }
 
+// openAsk starts a prompt that is not about a notification (a focus line, a baseline, a level, a filter).
+func (m *Model) openAsk(kind promptKind, initial string) {
+	m.prompt = &prompt{kind: kind, text: initial}
+	m.cursorOn, m.restartBlink = true, true
+}
+
 func (m *Model) promptKey(msg tea.KeyMsg) {
 	p := m.prompt
 	m.cursorOn, m.restartBlink = true, true // the cursor stays solid while typing, then starts blinking again
+	if p.kind == promptConfirmStopAll {
+		// A yes or no question: one key answers it.
+		switch msg.String() {
+		case "y", "Y":
+			m.prompt = nil
+			m.stop(true)
+		case "n", "N", "esc", "ctrl+c":
+			m.prompt = nil
+		}
+		return
+	}
 	switch msg.Type {
 	case tea.KeyEsc, tea.KeyCtrlC:
 		m.prompt = nil
 	case tea.KeyEnter:
+		m.submitPrompt()
+	case tea.KeyBackspace:
+		if r := []rune(p.text); len(r) > 0 {
+			p.text = string(r[:len(r)-1])
+		}
+		p.err = ""
+	case tea.KeyRunes, tea.KeySpace:
+		if len([]rune(p.text)) < promptLimit(p.kind) {
+			p.text += string(msg.Runes)
+			if msg.Type == tea.KeySpace {
+				p.text += " "
+			}
+		}
+		p.err = ""
+	}
+}
+
+// submitPrompt does what Enter means for the prompt that is open. A text that cannot be used leaves the prompt open with the reason
+// under it, and nothing is sent anywhere.
+func (m *Model) submitPrompt() {
+	p := m.prompt
+	switch p.kind {
+	case promptLabel:
 		label, err := decide.ParseLabel(p.text)
 		if err != nil {
 			p.err = shortLabelError(p.text, err)
@@ -465,19 +546,15 @@ func (m *Model) promptKey(msg tea.KeyMsg) {
 		}
 		m.prompt = nil
 		m.train(session.TrainRequest{Label: &label}, p.target)
-	case tea.KeyBackspace:
-		if r := []rune(p.text); len(r) > 0 {
-			p.text = string(r[:len(r)-1])
-		}
-		p.err = ""
-	case tea.KeyRunes, tea.KeySpace:
-		if len([]rune(p.text)) < maxLabelInput {
-			p.text += string(msg.Runes)
-			if msg.Type == tea.KeySpace {
-				p.text += " "
-			}
-		}
-		p.err = ""
+	case promptStart:
+		m.startFocus(p)
+	case promptBaseline:
+		m.setBaseline(p)
+	case promptLevel:
+		m.changeLevel(p)
+	case promptFilter:
+		m.prompt = nil
+		m.setFilter(strings.TrimSpace(p.text))
 	}
 }
 
@@ -656,6 +733,33 @@ func openApp(bundleID string) error {
 	return exec.Command("open", "-b", bundleID).Run()
 }
 
+// setFilter narrows the lists to notifications containing the text, or clears the filter when it is empty.
+func (m *Model) setFilter(text string) {
+	m.filter = text
+	m.collapse()
+	m.reload()
+	if text == "" {
+		m.notice = "filter cleared"
+	} else {
+		m.notice = fmt.Sprintf("showing only what contains %q (Esc clears the filter)", text)
+	}
+}
+
+// filterRows keeps the notifications whose sender, app, title, subtitle or message contains the text, ignoring case.
+func filterRows(rows []store.Notification, text string) []store.Notification {
+	needle := strings.ToLower(text)
+	var out []store.Notification
+	for _, n := range rows {
+		for _, field := range []string{n.Sender, n.Source, n.Title, n.Subtitle, n.Body} {
+			if strings.Contains(strings.ToLower(field), needle) {
+				out = append(out, n)
+				break
+			}
+		}
+	}
+	return out
+}
+
 // maxCount bounds a typed count to four digits.
 const maxCount = 9999
 
@@ -735,6 +839,7 @@ var (
 	tabStyle    = lipgloss.NewStyle().Padding(0, 1)
 	activeTab   = tabStyle.Bold(true).Reverse(true)
 	dim         = lipgloss.NewStyle().Faint(true)
+	bold        = lipgloss.NewStyle().Bold(true)
 	statusStyle = lipgloss.NewStyle().Reverse(true)
 	errStyle    = lipgloss.NewStyle().Bold(true)
 )
@@ -774,7 +879,11 @@ func (m *Model) tabBar() string {
 			parts = append(parts, tabStyle.Render(label))
 		}
 	}
-	return fit(strings.Join(parts, ""), m.width)
+	bar := strings.Join(parts, "")
+	if m.filter != "" {
+		bar += dim.Render(" / " + oneLine(m.filter))
+	}
+	return fit(bar, m.width)
 }
 
 // flaggedCount is how many notifications on the Train list are flagged.
@@ -790,28 +899,6 @@ func (m *Model) flaggedCount() int {
 
 func (m *Model) separator() string {
 	return dim.Render(strings.TrimRight(strings.Repeat("│\n", m.bodyHeight()), "\n"))
-}
-
-// focusView is the placeholder for the Focus tab, which task 34 builds.
-func (m *Model) focusView() string {
-	lines := []string{"", "  Focus", ""}
-	switch {
-	case !m.haveStatus:
-		lines = append(lines, "  shh is not running, so no focus session is active.")
-	case m.status.Level == 0:
-		lines = append(lines, "  Focus is off.")
-	default:
-		for _, l := range m.status.Layers {
-			lines = append(lines, "  "+layerLine(l))
-		}
-	}
-	lines = append(lines, "", dim.Render("  Starting, stopping and adjusting sessions from here is coming; use the shh command for now."))
-	return pad(lines, m.bodyHeight(), m.width)
-}
-
-func layerLine(l session.LayerView) string {
-	view := menubar.Build(session.StatusView{Level: l.Percent, Layers: []session.LayerView{l}}, "")
-	return view.Items[0].Title
 }
 
 // listView is the left column: a header and the rows of the current tab.
@@ -1011,9 +1098,13 @@ func (m *Model) stateLine() string {
 		return m.promptBar()
 	}
 	// "? help" is always shown. When the line is too narrow the counts go first, then the session text is shortened.
-	right := "? help "
+	right := "? help · q quit "
 	room := max(0, m.width-lipgloss.Width(right))
 	counts := fmt.Sprintf("%d notifications · %d to train", len(m.lists[TabNotifications]), len(m.lists[TabTrain]))
+	if m.filter != "" {
+		counts = fmt.Sprintf("%d of %d notifications · %d of %d to train", len(m.lists[TabNotifications]), m.totals[TabNotifications],
+			len(m.lists[TabTrain]), m.totals[TabTrain])
+	}
 	left := " " + m.sessionText() + "  │  " + counts
 	if lipgloss.Width(left) > room {
 		left = " " + m.sessionText()
@@ -1035,7 +1126,7 @@ func (m *Model) messageLine() string {
 	case m.prompt != nil && m.prompt.err != "":
 		text, style = "✗ "+oneLine(m.prompt.err), errStyle
 	case m.prompt != nil:
-		text, style = "Enter saves · Esc cancels · a score from 0 to 100, or light, medium, deep or lockdown", dim
+		text, style = m.prompt.hint(), dim
 	case m.err != "":
 		text, style = m.err, errStyle
 	case m.notice != "":
@@ -1047,15 +1138,49 @@ func (m *Model) messageLine() string {
 }
 
 // keyHints are the keys that work on the current tab, briefly and all of them: the help screen (?, shown at the right of the line above)
-// explains each in full.
+// explains each in full. The keys that work everywhere, ? and q, are at the right of the state line instead.
 func (m *Model) keyHints() string {
 	switch m.tab {
 	case TabFocus:
-		return "Tab or ! @ # switch tabs · q quit"
+		return "s start · b baseline · f level · p pause/resume · +/- time · x stop · X stop all · Tab switch"
 	case TabTrain:
-		return "j/k move · y/n right/wrong · t score · u undo · f flag · e read · o open · d dismiss · q quit"
+		return "j/k move · / filter · y/n right/wrong · t score · u undo · f flag · e read · o open · d dismiss"
 	}
-	return "j/k move · e read · o open · d dismiss · f flag · y/n right/wrong · t score · u undo · q quit"
+	return "j/k move · / filter · e read · o open · d dismiss · f flag · y/n right/wrong · t score · u undo"
+}
+
+// question is what the prompt asks, at the left of the bar.
+func (p *prompt) question() string {
+	switch p.kind {
+	case promptStart:
+		return " start focus: "
+	case promptBaseline:
+		return " baseline: "
+	case promptLevel:
+		return " change level: "
+	case promptFilter:
+		return " filter: "
+	case promptConfirmStopAll:
+		return " turn focus off completely, baseline included? "
+	}
+	return fmt.Sprintf(" label for %s: ", oneLine(p.target.Sender))
+}
+
+// hint is the line under the bar while the prompt is open: how to answer it.
+func (p *prompt) hint() string {
+	switch p.kind {
+	case promptStart:
+		return "e.g. 75% 25m writing docs · then off at the end sets what follows · Enter starts · Esc cancels"
+	case promptBaseline:
+		return "a percentage like 30% or a tier; off clears the baseline · Enter sets · Esc cancels"
+	case promptLevel:
+		return "the new level for the session in force: a percentage or a tier · Enter changes it · Esc cancels"
+	case promptFilter:
+		return "text to find in the sender, app, title or message · Enter applies (empty clears) · Esc cancels"
+	case promptConfirmStopAll:
+		return "y turns it all off · n or Esc keeps it"
+	}
+	return "Enter saves · Esc cancels · a score from 0 to 100, or light, medium, deep or lockdown"
 }
 
 // promptBar is the state line while an exact label is being typed: the question in the bar's own reverse video, then the box the
@@ -1066,8 +1191,11 @@ func (m *Model) promptBar() string {
 	if m.cursorOn {
 		cursor = "█"
 	}
-	question := fmt.Sprintf(" label for %s: ", oneLine(p.target.Sender))
+	question := p.question()
 	field := " " + oneLine(p.text) + cursor + " "
+	if p.kind == promptConfirmStopAll {
+		field = " y / n "
+	}
 	// Make everything fit the line: the box always shows in full, the question gives way.
 	fieldWidth := lipgloss.Width(field)
 	question = fit(question, max(0, m.width-fieldWidth))
@@ -1126,7 +1254,18 @@ var helpSections = []struct {
 		{"PgUp / PgDn", "A page at a time."},
 		{"Tab, l, →", "The next tab. Shift-Tab, h or ← goes back. A number repeats it, so 2l skips one."},
 		{"! @ #", "Jump straight to Focus, Notifications or Train (Shift-1, Shift-2, Shift-3). F1, F2 and F3 do the same."},
-		{"Esc", "Drops a number you have started typing."},
+		{"/", "Filter both lists: type some text and press Enter to see only the notifications whose sender, app, title or message contain it (case does not matter). The filter shows beside the tabs. Esc clears it; an empty filter does too."},
+		{"Esc", "Drops a number you have started typing, or closes a message you are reading, or clears the filter."},
+	}},
+	{"Focus tab", []helpTopic{
+		{"what you see", "The sessions in force, top first. ▶ marks the one in force; the others are what it falls back to as sessions end. Each shows its level and its time left (or that it runs until stopped), and a note if it has one."},
+		{"s", "Start a session on top of what is in force. Type a level, a length and a note in any order, the way the shh command takes them: 75% 25m writing docs, or deep 1h, or just 30%. Add then off (or then a level) at the end to choose what it falls back to. Nothing typed starts medium until stopped. If shh is not running, a worker is started for you."},
+		{"b", "Set the standing level that applies whenever no session does: a percentage, a tier, or off to clear it."},
+		{"f", "Change the level of the session in force, without starting a new one."},
+		{"p, Space", "Pause the countdown of a timed session, or start it again. Only the timer stops; the level stays."},
+		{"+ / -", "Add or take away five minutes from the time left. A number first repeats it: 3+ adds fifteen. Time cannot go below zero."},
+		{"x", "Stop the session in force; focus falls back to what is under it."},
+		{"X", "Turn focus off completely, baseline included. It asks first: y confirms, n or Esc keeps it."},
 	}},
 	{"Reading", []helpTopic{
 		{"e", "Read the whole message across the screen, with the list out of the way. j and k scroll it (numbers work here too), e or Esc puts it back. Reading this way does not mark the notification as read."},
