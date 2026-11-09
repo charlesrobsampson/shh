@@ -793,3 +793,55 @@ func TestFocusRejectsAGivenTwiceLevelOrLength(t *testing.T) {
 		}
 	}
 }
+
+func TestShorthandStartsASessionFromALevelAndALength(t *testing.T) {
+	tests := []struct {
+		args      []string
+		wantLevel int
+		wantTimed bool
+		wantNote  string
+	}{
+		{[]string{"30%"}, 30, false, ""},
+		{[]string{"40%", "5m"}, 40, true, ""},
+		{[]string{"5m", "40%"}, 40, true, ""},
+		{[]string{"25m"}, 65, true, ""},
+		{[]string{"deep"}, 90, false, ""},
+		{[]string{"75%", "writing", "docs"}, 75, false, "writing docs"},
+		{[]string{"75%", "--then", "off", "-m", "x"}, 75, false, "x"},
+	}
+	for _, tt := range tests {
+		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
+			r := newRig(t, true)
+			r.mustRun(tt.args...)
+			st := r.status()
+			top := st.Layers[len(st.Layers)-1]
+			if st.Level != tt.wantLevel || top.Timed != tt.wantTimed || top.Note != tt.wantNote {
+				t.Errorf("level=%d timed=%v note=%q, want %d %v %q", st.Level, top.Timed, top.Note, tt.wantLevel, tt.wantTimed, tt.wantNote)
+			}
+		})
+	}
+}
+
+func TestShorthandLeavesEveryOtherCommandAlone(t *testing.T) {
+	r := newRig(t, true)
+	r.mustRun("baseline", "30%")
+	r.mustRun("status")
+	if got := r.status(); got.Level != 30 || len(got.Layers) != 1 {
+		t.Errorf("status = %+v: baseline and status must not be read as shorthand", got)
+	}
+	r.mustRun("stop", "--all")
+	if r.status().Level != 0 {
+		t.Error("stop --all did not run as written")
+	}
+	// A bare "shh" is still the UI, and "off" is not a shorthand.
+	r.env.IsTerminal = true
+	opened := false
+	r.env.TUI = func() error { opened = true; return nil }
+	r.mustRun()
+	if !opened {
+		t.Error("bare shh did not open the UI")
+	}
+	if code := r.run("off"); code == 0 {
+		t.Error(`"shh off" should not be a shorthand`)
+	}
+}

@@ -67,22 +67,24 @@ func title(v session.StatusView, label string) string {
 
 func items(v session.StatusView) []Item {
 	var out []Item
-	if v.Level == 0 || len(v.Layers) == 0 {
-		out = append(out, Item{Title: "Focus is off"})
+	var top *session.LayerView
+	if n := len(v.Layers); n > 0 {
+		top = &v.Layers[n-1]
 	}
-	for _, l := range v.Layers {
-		out = append(out, Item{Title: describe(l)})
+	// Only what is in force: the top layer and, for an escalation, where it falls back to. Layers it covers are not listed one by
+	// one, which keeps the menu short and stops it reading like a log.
+	if top == nil {
+		out = append(out, Item{Title: "Focus is off"})
+	} else {
+		out = append(out, Item{Title: describe(*top)})
+		if top.Kind != "baseline" {
+			out = append(out, Item{Title: fallback(v.Layers)})
+		}
 	}
 	if len(out) > 0 {
 		out = append(out, Item{Separator: true})
 	}
 
-	var top *session.LayerView
-	hasEscalation := false
-	if n := len(v.Layers); n > 0 {
-		top = &v.Layers[n-1]
-		hasEscalation = top.Kind != "baseline"
-	}
 	if top != nil && top.Timed {
 		if top.Paused {
 			out = append(out, Item{ID: IDResume, Title: "Resume"})
@@ -91,7 +93,7 @@ func items(v session.StatusView) []Item {
 		}
 		out = append(out, Item{ID: IDPlus, Title: "+5m"}, Item{ID: IDMinus, Title: "−5m"})
 	}
-	if hasEscalation {
+	if top != nil && top.Kind != "baseline" {
 		out = append(out, Item{ID: IDStop, Title: "Stop this session"})
 	}
 	if top != nil {
@@ -100,7 +102,7 @@ func items(v session.StatusView) []Item {
 	return append(out, Item{ID: IDOpen, Title: "Open shh…"})
 }
 
-// describe is one heading per layer: "baseline 30%", "escalation 75% · 12m left · then 30%".
+// describe is the heading for a layer: "baseline 30%", "escalation 75% · 12m left · "deep work"".
 func describe(l session.LayerView) string {
 	parts := []string{fmt.Sprintf("%s %s", l.Kind, decide.FormatLevel(l.Percent))}
 	switch {
@@ -111,11 +113,21 @@ func describe(l session.LayerView) string {
 	case l.Kind != "baseline":
 		parts = append(parts, "until stopped")
 	}
-	if l.ThenLevel != nil {
-		parts = append(parts, "then "+decide.FormatLevel(*l.ThenLevel))
-	}
 	if l.Note != "" {
 		parts = append(parts, fmt.Sprintf("%q", l.Note))
 	}
 	return strings.Join(parts, " · ")
+}
+
+// fallback says what focus goes back to when the top escalation ends: its own "then" level, else the layer beneath, else off.
+func fallback(layers []session.LayerView) string {
+	top := layers[len(layers)-1]
+	switch {
+	case top.ThenLevel != nil:
+		return "then " + decide.FormatLevel(*top.ThenLevel)
+	case len(layers) > 1:
+		below := layers[len(layers)-2]
+		return fmt.Sprintf("then back to %s %s", below.Kind, decide.FormatLevel(below.Percent))
+	}
+	return "then off"
 }

@@ -492,3 +492,70 @@ func TestStateSurvivesAnEngineRestart(t *testing.T) {
 		t.Fatalf("restarted status = %+v, %v", st, err)
 	}
 }
+
+func equalIntSlices(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestAnUntimedSessionReplacesAnUntimedOneOnTopOfIt(t *testing.T) {
+	r := newRig(t)
+	r.stack.SetBaseline(30)
+	r.mustEscalate(t, session.Escalation{Level: 65, Note: "first"})
+	r.mustEscalate(t, session.Escalation{Level: 40})
+	r.mustEscalate(t, session.Escalation{Level: 0})
+	r.mustEscalate(t, session.Escalation{Level: 75})
+	st := r.status(t)
+	if got := percents(st); !equalIntSlices(got, []int{30, 75}) || st.Level != 75 {
+		t.Fatalf("layers = %v, level %d, want the baseline and just the newest session: repeated untimed sessions replace each other", got, st.Level)
+	}
+	if err := r.stack.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.level(t); got != 30 {
+		t.Errorf("level after stopping = %d, want the baseline: there is no pile of old sessions to fall back to", got)
+	}
+}
+
+func TestATimedSessionStillStacksOnAnUntimedOne(t *testing.T) {
+	r := newRig(t)
+	r.mustEscalate(t, session.Escalation{Level: 65})
+	r.mustEscalate(t, session.Escalation{Level: 90, Duration: 25 * time.Minute})
+	if got := percents(r.status(t)); !equalIntSlices(got, []int{65, 90}) {
+		t.Fatalf("layers = %v, want both: the timed session falls back to the untimed one", got)
+	}
+	r.clock.Advance(26 * time.Minute)
+	if got := r.level(t); got != 65 {
+		t.Errorf("level after the timer = %d, want 65", got)
+	}
+}
+
+func TestAnUntimedSessionStacksOnATimedOne(t *testing.T) {
+	r := newRig(t)
+	r.mustEscalate(t, session.Escalation{Level: 90, Duration: 25 * time.Minute})
+	r.mustEscalate(t, session.Escalation{Level: 40})
+	if got := percents(r.status(t)); !equalIntSlices(got, []int{90, 40}) {
+		t.Errorf("layers = %v: a timed session is not replaced, it comes back when the newer one stops", got)
+	}
+}
+
+func TestReplacingKeepsTheReplacedSessionInTheHistory(t *testing.T) {
+	r := newRig(t)
+	r.mustEscalate(t, session.Escalation{Level: 65})
+	r.mustEscalate(t, session.Escalation{Level: 40})
+	levels, err := r.store.ActiveLevels()
+	if err != nil || len(levels) != 1 {
+		t.Fatalf("active = %d, %v", len(levels), err)
+	}
+	old, err := r.store.GetLevel(levels[0].ID - 1)
+	if err != nil || old.EndTime == nil {
+		t.Errorf("the replaced session = %+v, %v; want it kept with an end time, not deleted", old, err)
+	}
+}

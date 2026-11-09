@@ -82,6 +82,7 @@ func Run(args []string, env Env) (code int) {
 		}
 	}()
 
+	args = expandShorthand(args)
 	var root cli
 	parser, err := kong.New(&root,
 		kong.Name("shh"),
@@ -112,6 +113,30 @@ func Run(args []string, env Env) (code int) {
 		return 1
 	}
 	return 0
+}
+
+// expandShorthand turns "shh 30%", "shh 40% 5m" and "shh deep" into "shh focus ...", the quick way to start a session. Anything
+// that does not start with a level or a length is left alone, so every full command and flag still works as written, and bare
+// "shh" still opens the UI.
+func expandShorthand(args []string) []string {
+	if len(args) == 0 {
+		return args
+	}
+	first := args[0]
+	if percentWord.MatchString(first) || durationWord.MatchString(first) || isTierName(first) {
+		return append([]string{"focus"}, args...)
+	}
+	return args
+}
+
+// isTierName is true for the names that stand for a level, except "off", which would make "shh off" mean something other than
+// what it says.
+func isTierName(word string) bool {
+	switch word {
+	case "light", "medium", "deep", "lockdown":
+		return true
+	}
+	return false
 }
 
 func (e *Env) client() *session.Client { return session.NewClient(e.SocketPath) }

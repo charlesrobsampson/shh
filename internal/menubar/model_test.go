@@ -44,11 +44,11 @@ func TestTitleAndMenuForEveryKindOfState(t *testing.T) {
 		{"a baseline alone", session.StatusView{Level: 30, Layers: []session.LayerView{baseline}}, "shh 30%",
 			"(baseline 30%) - off - open"},
 		{"an escalation with time left", session.StatusView{Level: 65, Layers: []session.LayerView{baseline, timed}},
-			"shh 28m · 65%", "(baseline 30%) (escalation 65% (medium) · 28m left) - pause plus minus stop off - open"},
+			"shh 28m · 65%", "(escalation 65% (medium) · 28m left) (then back to baseline 30%) - pause plus minus stop off - open"},
 		{"paused", session.StatusView{Level: 65, Layers: []session.LayerView{baseline, paused}}, "shh ⏸ 65%",
-			"(baseline 30%) (escalation 65% (medium) · paused, 28m left) - resume plus minus stop off - open"},
+			"(escalation 65% (medium) · paused, 28m left) (then back to baseline 30%) - resume plus minus stop off - open"},
 		{"an escalation until stopped", session.StatusView{Level: 90, Layers: []session.LayerView{indefinite}}, "shh 90%",
-			"(escalation 90% (deep) · until stopped) - stop off - open"},
+			"(escalation 90% (deep) · until stopped) (then off) - stop off - open"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -88,14 +88,33 @@ func TestShortCountsArePaddedSoTheTitleDoesNotChangeWidth(t *testing.T) {
 	}
 }
 
-func TestHeadingsShowTheThenLevelAndNote(t *testing.T) {
+func TestHeadingsShowTheNoteAndWhereTheSessionFallsBackTo(t *testing.T) {
 	l := timed
 	l.ThenLevel = intp(0)
 	l.Note = "deep work"
-	got := menubar.Build(session.StatusView{Level: 65, Layers: []session.LayerView{l}}, "shh")
-	want := `escalation 65% (medium) · 28m left · then off · "deep work"`
-	if got.Items[0].Title != want {
+	got := menubar.Build(session.StatusView{Level: 65, Layers: []session.LayerView{baseline, l}}, "shh")
+	if want := `escalation 65% (medium) · 28m left · "deep work"`; got.Items[0].Title != want {
 		t.Errorf("heading = %q, want %q", got.Items[0].Title, want)
+	}
+	if want := "then off"; got.Items[1].Title != want {
+		t.Errorf("fallback = %q, want %q: an explicit then level wins over the layer beneath", got.Items[1].Title, want)
+	}
+}
+
+func TestOnlyWhatIsInForceIsListed(t *testing.T) {
+	covered := session.LayerView{Kind: "escalation", Percent: 65}
+	top := session.LayerView{Kind: "escalation", Percent: 40}
+	got := menubar.Build(session.StatusView{Level: 40, Layers: []session.LayerView{baseline, covered, top}}, "shh")
+	var text []string
+	for _, it := range got.Items {
+		text = append(text, it.Title)
+	}
+	all := strings.Join(text, "|")
+	if strings.Contains(all, "baseline") {
+		t.Errorf("menu %q lists the baseline two layers down; only the session in force and where it falls back to belong there", all)
+	}
+	if !strings.Contains(all, "escalation 40%") || !strings.Contains(all, "then back to escalation 65%") {
+		t.Errorf("menu %q should show the 40%% session and what it falls back to", all)
 	}
 }
 
