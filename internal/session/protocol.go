@@ -23,6 +23,18 @@ type Request struct {
 	Note         string `json:"note,omitempty"`
 	All          bool   `json:"all,omitempty"`
 	DeltaSecs    int    `json:"delta_secs,omitempty"`
+	// Alert is what the "alert" command shows, through the same alerter the worker uses, so that every banner on screen is
+	// laid out by one process.
+	Alert *AlertMsg `json:"alert,omitempty"`
+}
+
+// AlertMsg is an alert.Alert on the wire.
+type AlertMsg struct {
+	Kind     string `json:"kind"`
+	Source   string `json:"source,omitempty"`
+	BundleID string `json:"bundle_id,omitempty"`
+	Title    string `json:"title"`
+	Body     string `json:"body"`
 }
 
 type Response struct {

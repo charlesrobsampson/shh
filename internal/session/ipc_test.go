@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charlesrobsampson/shh/internal/alert"
+	"github.com/charlesrobsampson/shh/internal/config"
 	"github.com/charlesrobsampson/shh/internal/session"
 )
 
@@ -422,5 +424,31 @@ func TestMalformedRequestsGetAnErrorAndTheConnectionSurvives(t *testing.T) {
 	}
 	if resp := ask(`{"cmd":"status"}`); resp["ok"] != true {
 		t.Errorf("a valid request after the bad ones got %v", resp)
+	}
+}
+
+func TestAClientCanHaveTheWorkerShowAnAlert(t *testing.T) {
+	r := newIPCRig(t)
+	err := r.client.ShowAlert(alert.Alert{Kind: config.KindMessage, Source: "Teams", BundleID: "com.x", Title: "Ana", Body: "hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	shown := r.alerter.Shown()
+	if len(shown) != 1 || shown[0].Title != "Ana" || shown[0].Body != "hello" || shown[0].Source != "Teams" || shown[0].BundleID != "com.x" || shown[0].Kind != config.KindMessage {
+		t.Errorf("worker showed %+v, want the alert the client sent", shown)
+	}
+}
+
+func TestBadAlertRequestsAreRejected(t *testing.T) {
+	r := newIPCRig(t)
+	if err := r.client.ShowAlert(alert.Alert{Kind: "shout", Title: "x"}); !errors.Is(err, session.ErrInvalid) {
+		t.Errorf("unknown kind: err = %v, want ErrInvalid", err)
+	}
+	if len(r.alerter.Shown()) != 0 {
+		t.Error("a bad alert was shown")
+	}
+	r.alerter.FailWith(errors.New("display unavailable"))
+	if err := r.client.ShowAlert(alert.Alert{Kind: config.KindCalendar, Title: "x"}); err == nil || !strings.Contains(err.Error(), "display unavailable") {
+		t.Errorf("err = %v, want the alerter's error to reach the client", err)
 	}
 }

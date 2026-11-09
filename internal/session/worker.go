@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -332,4 +333,20 @@ func titleWithSubtitle(e ingest.Event) string {
 		return e.Subtitle
 	}
 	return e.Title + " · " + e.Subtitle
+}
+
+// showAlert shows an alert sent by a client, such as `shh alert test`, through the worker's own alerter. One process owns the
+// banners on screen, so they stack and follow Preview and Dismiss together.
+func (w *Worker) showAlert(msg *AlertMsg) error {
+	if msg == nil {
+		return fmt.Errorf("%w: alert needs an alert", ErrInvalid)
+	}
+	kind := config.Kind(msg.Kind)
+	if kind != config.KindMessage && kind != config.KindCalendar {
+		return fmt.Errorf("%w: unknown alert kind %q", ErrInvalid, msg.Kind)
+	}
+	if w.cfg.Alerter == nil {
+		return errors.New("this worker cannot show alerts")
+	}
+	return w.cfg.Alerter.Show(alert.Alert{Kind: kind, Source: msg.Source, BundleID: msg.BundleID, Title: msg.Title, Body: msg.Body})
 }

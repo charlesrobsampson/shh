@@ -10,6 +10,8 @@ import (
 	"net"
 	"syscall"
 	"time"
+
+	"github.com/charlesrobsampson/shh/internal/alert"
 )
 
 const requestTimeout = 5 * time.Second
@@ -39,8 +41,15 @@ func (c *Client) SetLevel(level int) (StatusView, error) {
 }
 
 func (c *Client) Stop(all bool) (StatusView, error) { return c.do(Request{Cmd: "stop", All: all}) }
-func (c *Client) Pause() (StatusView, error)        { return c.do(Request{Cmd: "pause"}) }
-func (c *Client) Resume() (StatusView, error)       { return c.do(Request{Cmd: "resume"}) }
+
+// ShowAlert has the worker show an alert, so it is laid out with the banners the worker already has on screen.
+func (c *Client) ShowAlert(a alert.Alert) error {
+	_, err := c.do(Request{Cmd: "alert", Alert: &AlertMsg{Kind: string(a.Kind), Source: a.Source, BundleID: a.BundleID, Title: a.Title, Body: a.Body}})
+	return err
+}
+
+func (c *Client) Pause() (StatusView, error)  { return c.do(Request{Cmd: "pause"}) }
+func (c *Client) Resume() (StatusView, error) { return c.do(Request{Cmd: "resume"}) }
 
 func (c *Client) Adjust(delta time.Duration) (StatusView, error) {
 	return c.do(Request{Cmd: "adjust", DeltaSecs: int(delta / time.Second)})

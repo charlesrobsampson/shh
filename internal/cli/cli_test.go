@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charlesrobsampson/shh/internal/alert"
 	"github.com/charlesrobsampson/shh/internal/cli"
 	"github.com/charlesrobsampson/shh/internal/config"
 	"github.com/charlesrobsampson/shh/internal/rules"
@@ -27,6 +26,7 @@ type rig struct {
 	worker     *session.Worker
 	clock      *testkit.FakeClock
 	suppressor *testkit.FakeSuppressor
+	alerter    *testkit.FakeAlerter
 	store      *store.Store
 	socket     string
 	out, err   bytes.Buffer
@@ -54,13 +54,13 @@ func newRig(t *testing.T, serve bool) *rig {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	r := &rig{t: t, clock: testkit.NewFakeClock(t0), suppressor: testkit.NewFakeSuppressor(), store: s, socket: shortSocketPath(t)}
+	r := &rig{t: t, clock: testkit.NewFakeClock(t0), suppressor: testkit.NewFakeSuppressor(), alerter: testkit.NewFakeAlerter(), store: s, socket: shortSocketPath(t)}
 	rl, err := rules.Defaults()
 	if err != nil {
 		t.Fatal(err)
 	}
 	r.worker, err = session.NewWorker(session.Config{
-		Store: s, Source: testkit.NewFakeSource(), Clock: r.clock, Rules: rl, Alerter: testkit.NewFakeAlerter(), Suppressor: r.suppressor, Location: time.UTC,
+		Store: s, Source: testkit.NewFakeSource(), Clock: r.clock, Rules: rl, Alerter: r.alerter, Suppressor: r.suppressor, Location: time.UTC,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -624,15 +624,13 @@ func TestTheDaemonCommandIsHiddenFromHelp(t *testing.T) {
 }
 
 func TestAlertTestShowsASampleInEachStyle(t *testing.T) {
-	r := newRig(t, false)
-	fake := testkit.NewFakeAlerter()
-	r.env.NewAlerter = func() (alert.Alerter, error) { return fake, nil }
+	r := newRig(t, true)
 	r.env.AlertSources = []string{"Outlook", "Slack"}
 
 	out := r.mustRun("alert", "test")
-	shown := fake.Shown()
+	shown := r.alerter.Shown()
 	if len(shown) != 5 {
-		t.Fatalf("%d alerts shown, want a message, a calendar alert, a long message and one per configured source: %+v", len(shown), shown)
+		t.Fatalf("%d alerts shown, want a message, a long message, a calendar alert and one per configured source: %+v", len(shown), shown)
 	}
 	if shown[0].Kind != config.KindMessage || shown[2].Kind != config.KindCalendar {
 		t.Errorf("kinds = %v, %v; want a message first and the calendar alert third", shown[0].Kind, shown[2].Kind)
@@ -640,6 +638,9 @@ func TestAlertTestShowsASampleInEachStyle(t *testing.T) {
 	// The long one sits in the middle so Preview can be tried on a banner with neighbours above and below it.
 	if len([]rune(shown[1].Body)) < 200 {
 		t.Errorf("the second sample should be long enough to need Preview: %q", shown[1].Body)
+	}
+	if shown[0].BundleID == "" || shown[1].BundleID == "" {
+		t.Errorf("the message samples should carry an app to open: %+v %+v", shown[0], shown[1])
 	}
 	if shown[3].Source != "Outlook" || shown[4].Source != "Slack" || shown[3].Kind != config.KindMessage {
 		t.Errorf("per-source samples = %+v, %+v", shown[3], shown[4])
@@ -656,30 +657,41 @@ func TestAlertTestShowsASampleInEachStyle(t *testing.T) {
 	}
 }
 
-func TestAlertTestWithoutAnAlerterOrWithABrokenOne(t *testing.T) {
+func TestAlertTestHandsTheSamplesToTheWorkerSoTheyShareTheScreen(t *testing.T) {
 	r := newRig(t, false)
-	if code := r.run("alert", "test"); code != 1 || r.err.String() == "" {
-		t.Errorf("no alerter: exit %d, stderr %q", code, r.err.String())
+	r.env.Spawn = func() error { r.spawns++; r.serve(); return nil }
+	r.mustRun("alert", "test")
+	if r.spawns != 1 || len(r.alerter.Shown()) == 0 {
+		t.Fatalf("spawns=%d shown=%d; with no worker running one should be started and given the alerts", r.spawns, len(r.alerter.Shown()))
 	}
-	r.env.NewAlerter = func() (alert.Alerter, error) { return nil, errors.New("overlay script missing") }
-	if code := r.run("alert", "test"); code != 1 || !strings.Contains(r.err.String(), "overlay script missing") {
-		t.Errorf("broken alerter: exit %d, stderr %q", code, r.err.String())
-	}
-	fake := testkit.NewFakeAlerter()
-	fake.FailWith(errors.New("display unavailable"))
-	r.env.NewAlerter = func() (alert.Alerter, error) { return fake, nil }
-	if code := r.run("alert", "test"); code != 1 || !strings.Contains(r.err.String(), "display unavailable") {
-		t.Errorf("failing Show: exit %d, stderr %q", code, r.err.String())
+	r.mustRun("alert", "test")
+	if r.spawns != 1 {
+		t.Errorf("%d spawns after a second run; the running worker should be reused, so there is only ever one", r.spawns)
 	}
 }
 
-func TestAlertTestDoesNotNeedAWorkerAndNeverRearms(t *testing.T) {
-	r := newRig(t, false)
+func TestAlertTestFailures(t *testing.T) {
+	t.Run("no worker and none can be started", func(t *testing.T) {
+		r := newRig(t, false)
+		if code := r.run("alert", "test"); code != 1 || r.err.String() == "" {
+			t.Errorf("exit %d, stderr %q", code, r.err.String())
+		}
+	})
+	t.Run("the worker cannot show the alert", func(t *testing.T) {
+		r := newRig(t, true)
+		r.alerter.FailWith(errors.New("display unavailable"))
+		if code := r.run("alert", "test"); code != 1 || !strings.Contains(r.err.String(), "display unavailable") {
+			t.Errorf("exit %d, stderr %q", code, r.err.String())
+		}
+	})
+}
+
+func TestAlertTestNeverRearmsFocus(t *testing.T) {
+	r := newRig(t, true)
 	r.env.PersistedFocus = func() bool { return true }
 	r.env.Spawn = func() error { r.spawns++; return nil }
-	r.env.NewAlerter = func() (alert.Alerter, error) { return testkit.NewFakeAlerter(), nil }
 	r.mustRun("alert", "test")
 	if r.spawns != 0 {
-		t.Errorf("%d spawns; a style preview should not start a worker", r.spawns)
+		t.Errorf("%d spawns; the worker was already running", r.spawns)
 	}
 }

@@ -42,9 +42,6 @@ func realEnv() cli.Env {
 	env.Spawn = func() error { return spawnDaemon(cfg) }
 	env.PersistedFocus = func() bool { return persistedFocus(cfg.Paths.DB) }
 	env.Daemon = func(context.Context) error { return runDaemon(cfg) }
-	env.NewAlerter = func() (alert.Alerter, error) {
-		return newAlerter(cfg, func(err error) { fmt.Fprintln(os.Stderr, "shh:", err) }), nil
-	}
 	for source := range cfg.Alert.Source {
 		env.AlertSources = append(env.AlertSources, source)
 	}
@@ -104,7 +101,7 @@ func persistedFocus(dbPath string) bool {
 
 // newAlerter draws alerts in the AppKit overlay and falls back to a Notification Center notification (titled with the own-banner
 // prefix so the suppressor lets it through) if the overlay cannot run or dies.
-func newAlerter(cfg config.Config, onError func(error)) alert.Alerter {
+func newAlerter(cfg config.Config, onError func(error)) (alert.Alerter, *alert.Overlay) {
 	fallback := alert.NewFallback(alert.FallbackConfig{OwnPrefix: ingest.OwnTitlePrefix})
 	overlay := alert.NewOverlay(alert.OverlayConfig{
 		OnFailure: func(req alert.Request, err error) {
@@ -114,7 +111,7 @@ func newAlerter(cfg config.Config, onError func(error)) alert.Alerter {
 			}
 		},
 	})
-	return alert.NewDisplay(cfg.Alert, overlay, fallback, onError)
+	return alert.NewDisplay(cfg.Alert, overlay, fallback, onError), overlay
 }
 
 // runDaemon is the background worker: real notification source, real banner suppressor and the real alerter.
@@ -148,9 +145,10 @@ func runDaemon(cfg config.Config) error {
 		return err
 	}
 
+	alerter, overlay := newAlerter(cfg, onError)
 	worker, err := session.NewWorker(session.Config{
 		Store: db, Source: ingest.NewMacOS(ingest.DefaultPaths(home)...), Clock: clock.Real{}, Rules: r, Embedder: embedder,
-		Alerter:    newAlerter(cfg, onError),
+		Alerter:    alerter,
 		Suppressor: suppress.NewAccessibility(suppress.AccessibilityConfig{OwnPrefix: ingest.OwnTitlePrefix, OnError: onError}),
 		Location:   time.Local, OnError: onError,
 	})
@@ -162,5 +160,7 @@ func runDaemon(cfg config.Config) error {
 	return session.RunDaemon(ctx, session.DaemonConfig{
 		Worker: worker, Clock: clock.Real{}, SocketPath: cfg.Paths.Socket,
 		LockPath: filepath.Join(cfg.Paths.Dir, "shh.lock"), PIDPath: cfg.Paths.PID, OnError: onError,
+		// Banners stay until dismissed, and only this process can lay them out, so do not leave while any are up.
+		Busy: func() bool { return overlay.Active() > 0 },
 	})
 }

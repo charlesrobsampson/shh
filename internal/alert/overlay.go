@@ -1,13 +1,15 @@
 package alert
 
 import (
-	"bytes"
+	"bufio"
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
-	"sort"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -15,28 +17,55 @@ import (
 //go:embed overlay.js
 var overlayScript string
 
-// OverlayConfig configures the AppKit overlay backend. The zero value runs the real thing; tests replace Start and Open.
+// Process is one running banner. Go keeps the layout of everything on screen and tells each banner where to be by sending it
+// lines of JSON on its standard input; the banner reports what happens to it as event lines.
+type Process interface {
+	// Send writes one message to the banner: {"offset": n, "height": h} moves and resizes it. Errors are ignored by the caller,
+	// since a banner that is gone is about to be reported by Wait.
+	Send(message []byte) error
+	// Wait blocks until the banner ends and reports how: "opened" (Go to), "dismissed", "expired", or an error.
+	Wait() (string, error)
+}
+
+// OverlayConfig configures the AppKit overlay backend. The zero value runs the real thing; tests replace Start.
 type OverlayConfig struct {
-	// Start launches one banner process with the extra environment and returns a function that waits for it and reports how it
-	// ended: "opened" (Go to), "dismissed", "expired", or an error.
-	Start func(env []string) (wait func() (string, error), err error)
+	// Start launches one banner process with the extra environment. onEvent hears each event line the banner prints, from the
+	// goroutine that reads its output.
+	Start func(env []string, onEvent func(line string)) (Process, error)
 	// OnFailure receives alerts whose banner process died without showing them, so they can be shown another way.
 	OnFailure func(Request, error)
 }
 
 // Overlay draws each banner in its own osascript process (see docs/spikes/03-banner.md), in a window of its own that the banner
-// suppressor never touches. Banners that are on screen together are placed so they stack instead of overlapping, each in the
-// first free space that fits its height. The Go to button opens the source app from inside that process, so it works however long the
-// caller lives.
+// suppressor never touches, so a banner outlives the process that showed it. The Overlay owns the layout: banners at one screen
+// position form a stack in the order they arrived, and whenever one appears, disappears, or grows or shrinks (Preview and Collapse),
+// the ones after it are told their new place. The Go to button opens the source app from inside the banner's process.
 type Overlay struct {
 	cfg OverlayConfig
 
 	mu     sync.Mutex
-	active map[string][]*placed // banners on screen, by position
+	stacks map[string][]*banner // banners on screen, by position, nearest the screen edge first
+	// screen is the height banners can use, as reported by a banner; 0 until one has. A stack taller than that continues in a
+	// further column, next to the first and further in from the screen edge.
+	screen int
 }
 
-// placed is a banner's vertical extent, measured in points from the screen edge it hangs from.
-type placed struct{ offset, height int }
+// banner is what the overlay knows about one banner on screen.
+type banner struct {
+	req       Request
+	proc      Process
+	height    int // the current height, which Preview and Collapse change
+	sent      layoutMessage
+	maxHeight int
+}
+
+// layoutMessage is where a banner goes: Indent points in from its screen edge (it is in a further column when more than 0),
+// Offset points down (or up, at the bottom) from the screen edge, and Height tall.
+type layoutMessage struct {
+	Indent int `json:"indent"`
+	Offset int `json:"offset"`
+	Height int `json:"height"`
+}
 
 const stackGap = 10
 
@@ -44,7 +73,7 @@ func NewOverlay(cfg OverlayConfig) *Overlay {
 	if cfg.Start == nil {
 		cfg.Start = startOsascript
 	}
-	return &Overlay{cfg: cfg, active: map[string][]*placed{}}
+	return &Overlay{cfg: cfg, stacks: map[string][]*banner{}}
 }
 
 type bannerSpec struct {
@@ -57,7 +86,8 @@ type bannerSpec struct {
 	Width    int    `json:"width"`
 	Height   int    `json:"height"`
 	Position string `json:"position"`
-	// Offset is how far from its screen edge the banner sits, so banners shown together do not overlap.
+	// Indent and Offset say where the banner sits, so banners shown together do not overlap.
+	Indent   int    `json:"indent"`
 	Offset   int    `json:"offset"`
 	Duration int    `json:"duration"`
 	Sound    string `json:"sound"`
@@ -67,22 +97,29 @@ type bannerSpec struct {
 	DismissOnClick bool           `json:"dismissOnClick"`
 	// PreviewHeight is the height the banner grows to on Preview.
 	PreviewHeight int `json:"previewHeight"`
+	// Managed says Go is on the other end of the banner's standard input and output, sending layout changes and reading events.
+	Managed bool `json:"managed"`
+	// Parent is the process id of the Go process that started the banner. The banner compares it with its own parent to tell that Go
+	// has gone; it cannot learn it for itself, because Go may already be gone by the time the script starts.
+	Parent int `json:"parent"`
 }
 
 type bannerButton struct {
 	Type  string `json:"type"`
 	Label string `json:"label"`
+	// CollapseLabel is what the Preview button says while the banner is expanded.
+	CollapseLabel string `json:"collapseLabel,omitempty"`
 }
 
-func bannerEnv(r Request, offset int) []string {
+func bannerEnv(r Request, at layoutMessage) []string {
 	buttons := make([]bannerButton, 0, len(r.Buttons))
 	for _, b := range r.Buttons {
-		buttons = append(buttons, bannerButton{Type: b.Type, Label: b.Label})
+		buttons = append(buttons, bannerButton{Type: b.Type, Label: b.Label, CollapseLabel: b.CollapseLabel})
 	}
 	spec, _ := json.Marshal(bannerSpec{
 		Title: r.Title, Body: r.Body, Bundle: r.BundleID, Color: r.Style.Color, Width: r.Width, Height: r.Height,
-		Position: r.Style.Position, Offset: offset, Duration: r.Style.DurationSecs, Sound: r.Style.Sound,
-		Buttons: buttons, DismissOnClick: r.DismissOnClick, PreviewHeight: r.PreviewHeight,
+		Position: r.Style.Position, Indent: at.Indent, Offset: at.Offset, Duration: r.Style.DurationSecs, Sound: r.Style.Sound,
+		Buttons: buttons, DismissOnClick: r.DismissOnClick, PreviewHeight: r.PreviewHeight, Managed: true, Parent: os.Getpid(),
 	})
 	return []string{"SHH_BANNER=" + string(spec)}
 }
@@ -90,39 +127,91 @@ func bannerEnv(r Request, offset int) []string {
 // OverlayCommand builds the process that would draw r, without starting it.
 func OverlayCommand(r Request) *exec.Cmd {
 	cmd := exec.Command("osascript", "-l", "JavaScript", "-e", overlayScript)
-	cmd.Env = append(os.Environ(), bannerEnv(r, 0)...)
+	cmd.Env = append(os.Environ(), bannerEnv(r, layoutMessage{Height: r.Height})...)
 	return cmd
 }
 
-func startOsascript(env []string) (func() (string, error), error) {
+type osascriptProcess struct {
+	cmd    *exec.Cmd
+	stdin  io.WriteCloser
+	mu     sync.Mutex
+	output chan string // the last line the banner printed that was not an event, delivered once it has ended
+}
+
+func startOsascript(env []string, onEvent func(string)) (Process, error) {
 	cmd := exec.Command("osascript", "-l", "JavaScript", "-e", overlayScript)
 	cmd.Env = append(os.Environ(), env...)
-	var output bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &output, &output // JXA's console.log goes to stderr
-	if err := cmd.Start(); err != nil {
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
 		return nil, err
 	}
-	return func() (string, error) {
-		err := cmd.Wait()
-		lines := strings.Split(strings.TrimSpace(output.String()), "\n")
-		outcome := strings.TrimSpace(lines[len(lines)-1])
-		if err != nil {
-			return outcome, fmt.Errorf("%w: %s", err, strings.TrimSpace(output.String()))
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		return nil, err
+	}
+	cmd.Stdout, cmd.Stderr = writer, writer // JXA's console.log goes to stderr
+	if err := cmd.Start(); err != nil {
+		reader.Close()
+		writer.Close()
+		return nil, err
+	}
+	writer.Close() // the child holds its own copy; ours must go so the reader sees the end
+	p := &osascriptProcess{cmd: cmd, stdin: stdin, output: make(chan string, 1)}
+	go func() {
+		var all []string
+		scanner := bufio.NewScanner(reader)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if event, ok := strings.CutPrefix(line, "event "); ok {
+				onEvent(event)
+				continue
+			}
+			if line != "" {
+				all = append(all, line)
+			}
 		}
-		return outcome, nil
-	}, nil
+		reader.Close()
+		p.output <- strings.Join(all, "\n")
+	}()
+	return p, nil
+}
+
+func (p *osascriptProcess) Send(message []byte) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	_, err := p.stdin.Write(append(message, '\n'))
+	return err
+}
+
+func (p *osascriptProcess) Wait() (string, error) {
+	err := p.cmd.Wait()
+	output := <-p.output
+	lines := strings.Split(output, "\n")
+	outcome := strings.TrimSpace(lines[len(lines)-1])
+	if err != nil {
+		return outcome, fmt.Errorf("%w: %s", err, output)
+	}
+	return outcome, nil
 }
 
 func (o *Overlay) Show(r Request) error {
-	spot := o.place(r.Style.Position, r.Height)
-	wait, err := o.cfg.Start(bannerEnv(r, spot.offset))
+	b := &banner{req: r, height: r.Height, maxHeight: max(r.PreviewHeight, r.Height)}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.stacks[r.Style.Position] = append(o.stacks[r.Style.Position], b)
+	b.sent = o.slotOf(b)
+	proc, err := o.cfg.Start(bannerEnv(r, b.sent), func(line string) { o.onEvent(b, line) })
 	if err != nil {
-		o.remove(r.Style.Position, spot)
+		o.removeLocked(b)
 		return fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
+	b.proc = proc
 	go func() {
-		outcome, err := wait()
-		o.remove(r.Style.Position, spot)
+		outcome, err := proc.Wait()
+		o.mu.Lock()
+		o.removeLocked(b)
+		o.layoutLocked(r.Style.Position)
+		o.mu.Unlock()
 		if outcome != "opened" && outcome != "dismissed" && outcome != "expired" && err != nil && o.cfg.OnFailure != nil {
 			o.cfg.OnFailure(r, err)
 		}
@@ -130,40 +219,88 @@ func (o *Overlay) Show(r Request) error {
 	return nil
 }
 
-// place reserves the first space, from the screen edge outwards, where a banner of this height fits without touching another.
-func (o *Overlay) place(position string, height int) *placed {
+// onEvent handles what a banner reports. "screen N" is the height the screen offers banners; "height N" says Preview or Collapse changed its height; the banner has already resized
+// itself, and the overlay now moves the banners after it.
+func (o *Overlay) onEvent(b *banner, line string) {
+	field, value, _ := strings.Cut(line, " ")
+	n, err := strconv.Atoi(value)
+	if err != nil {
+		return
+	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	candidates := []int{0}
-	for _, other := range o.active[position] {
-		candidates = append(candidates, other.offset+other.height+stackGap)
-	}
-	sort.Ints(candidates)
-	for _, offset := range candidates {
-		clear := true
-		for _, other := range o.active[position] {
-			if offset < other.offset+other.height+stackGap && offset+height+stackGap > other.offset {
-				clear = false
-				break
+	switch field {
+	case "height":
+		if o.onScreenLocked(b) {
+			b.height = min(max(n, b.req.Height), b.maxHeight)
+			o.layoutLocked(b.req.Style.Position)
+		}
+	case "screen":
+		if n > 0 && n != o.screen {
+			o.screen = n
+			for position := range o.stacks {
+				o.layoutLocked(position)
 			}
 		}
-		if clear {
-			spot := &placed{offset: offset, height: height}
-			o.active[position] = append(o.active[position], spot)
-			return spot
-		}
 	}
-	panic("unreachable: the space past the last banner is always free")
 }
 
-func (o *Overlay) remove(position string, spot *placed) {
+func (o *Overlay) onScreenLocked(b *banner) bool {
+	return slices.Contains(o.stacks[b.req.Style.Position], b)
+}
+
+// slots places every banner at a position: down the screen edge in order, and when the next one would run past the bottom of
+// the screen, at the top of a new column further in. A column is as wide as its widest banner.
+func (o *Overlay) slots(position string) []layoutMessage {
+	stack := o.stacks[position]
+	out := make([]layoutMessage, len(stack))
+	indent, offset, widest := 0, 0, 0
+	for i, b := range stack {
+		if o.screen > 0 && offset > 0 && offset+b.height > o.screen {
+			indent += widest + stackGap
+			offset, widest = 0, 0
+		}
+		out[i] = layoutMessage{Indent: indent, Offset: offset, Height: b.height}
+		offset += b.height + stackGap
+		widest = max(widest, b.req.Width)
+	}
+	return out
+}
+
+// slotOf is where b goes now.
+func (o *Overlay) slotOf(b *banner) layoutMessage {
+	stack := o.stacks[b.req.Style.Position]
+	return o.slots(b.req.Style.Position)[slices.Index(stack, b)]
+}
+
+// layoutLocked tells every banner at a position whose place changed where it belongs now.
+func (o *Overlay) layoutLocked(position string) {
+	slots := o.slots(position)
+	for i, b := range o.stacks[position] {
+		want := slots[i]
+		if want == b.sent || b.proc == nil {
+			continue
+		}
+		b.sent = want
+		message, _ := json.Marshal(want)
+		_ = b.proc.Send(message)
+	}
+}
+
+// Active is how many banners are on screen.
+func (o *Overlay) Active() int {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	banners := o.active[position]
-	for i, b := range banners {
-		if b == spot {
-			o.active[position] = append(banners[:i], banners[i+1:]...)
-			return
-		}
+	n := 0
+	for _, stack := range o.stacks {
+		n += len(stack)
+	}
+	return n
+}
+
+func (o *Overlay) removeLocked(b *banner) {
+	stack := o.stacks[b.req.Style.Position]
+	if i := slices.Index(stack, b); i >= 0 {
+		o.stacks[b.req.Style.Position] = slices.Delete(stack, i, i+1)
 	}
 }

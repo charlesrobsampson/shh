@@ -17,7 +17,10 @@ type DaemonConfig struct {
 	Clock                         clock.Clock
 	SocketPath, LockPath, PIDPath string
 	IdleGrace                     time.Duration // DefaultIdleGrace when zero
-	OnError                       func(error)
+	// Busy, if set, says there is something on screen that only this process can manage (alert banners stay until dismissed, and
+	// the daemon moves them when others come and go). While it returns true the daemon does not count as idle.
+	Busy    func() bool
+	OnError func(error)
 }
 
 // RunDaemon is the background worker process: it takes the single-instance lock, serves the socket and runs the worker until ctx
@@ -74,7 +77,7 @@ func RunDaemon(ctx context.Context, cfg DaemonConfig) error {
 				report(cfg, err)
 				continue
 			}
-			if st.Level > 0 {
+			if st.Level > 0 || (cfg.Busy != nil && cfg.Busy()) {
 				offSince = time.Time{}
 				continue
 			}

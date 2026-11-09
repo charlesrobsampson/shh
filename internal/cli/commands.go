@@ -167,13 +167,12 @@ type alertTestCmd struct{}
 // Run shows one sample per kind of alert and one per app that has its own style, so changes to config.json can be previewed.
 // The first sample carries Calculator's bundle id: click it to check that clicking opens the source app.
 func (c *alertTestCmd) Run(env *Env) error {
-	if env.NewAlerter == nil {
-		return errors.New("this build cannot show alerts")
-	}
-	alerter, err := env.NewAlerter()
-	if err != nil {
+	// The samples are shown by the running worker (started if need be), so they share the screen with its other banners instead of
+	// being laid out by this short-lived process.
+	if err := env.ensureWorker(); err != nil {
 		return err
 	}
+	client := env.client()
 	samples := []alert.Alert{
 		{Kind: config.KindMessage, Source: "Teams", BundleID: "com.apple.calculator", Title: "Sample message", Body: "A message alert in the default style. Press Go to to open Calculator."},
 		{Kind: config.KindMessage, Source: "Teams", BundleID: "com.apple.calculator", Title: "Sample long message",
@@ -184,7 +183,7 @@ func (c *alertTestCmd) Run(env *Env) error {
 		samples = append(samples, alert.Alert{Kind: config.KindMessage, Source: source, Title: "Sample from " + source, Body: "A message alert styled for " + source})
 	}
 	for _, sample := range samples {
-		if err := alerter.Show(sample); err != nil {
+		if err := client.ShowAlert(sample); err != nil {
 			return fmt.Errorf("showing the %s sample: %w", sample.Kind, err)
 		}
 		fmt.Fprintf(env.Stdout, "showed a %s alert from %s\n", sample.Kind, sample.Source)
