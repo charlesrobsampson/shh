@@ -17,6 +17,8 @@ import (
 type routineCmd struct {
 	List    routineListCmd    `cmd:"" help:"List the saved routines."`
 	Example routineExampleCmd `cmd:"" help:"Print an example routines file to start from."`
+	Add     routineAddCmd     `cmd:"" help:"Save a routine: its name, then its steps as shh commands."`
+	Remove  routineRemoveCmd  `cmd:"" aliases:"rm" help:"Delete a saved routine."`
 	Run     routineRunCmd     `cmd:"" help:"Start a saved routine."`
 	Next    routineNextCmd    `cmd:"" help:"Start the step a routine is waiting on, or skip to the next step."`
 	Back    routineBackCmd    `cmd:"" help:"Restart the step before the one in focus."`
@@ -71,6 +73,90 @@ type routineExampleCmd struct{}
 func (c *routineExampleCmd) Run(env *Env) error {
 	_, err := io.WriteString(env.Stdout, routine.Example)
 	return err
+}
+
+// ---- writing the file ----
+
+type routineAddCmd struct {
+	Name        string   `arg:"" help:"The routine's name (quote it if it has spaces)."`
+	Steps       []string `arg:"" optional:"" help:"Each step as a shh command in quotes: \"75% 25m work --alert banner\", \"off 5m break\", \"baseline 30%\". Add --ask to a step to wait for approval before the next."`
+	Description string   `short:"d" help:"A line saying what the routine is for."`
+	Repeat      int      `short:"r" default:"1" help:"How many times the steps run."`
+	Finish      []string `short:"f" sep:"none" help:"A step to run once after the last round (repeat the flag for more than one)."`
+	Waiting     string   `short:"w" default:"stay" enum:"stay,next,baseline" help:"What focus does while the routine waits for you: stay (keep the level), next (the next step's level, timer held) or baseline."`
+	Summary     []string `default:"banner,ui" enum:"banner,menu,ui" help:"Where to show the summary of a finished run."`
+	Replace     bool     `help:"Overwrite a routine of the same name."`
+}
+
+func (c *routineAddCmd) Run(env *Env) error {
+	r := routine.Routine{Name: c.Name, Description: c.Description, Repeat: c.Repeat, Waiting: routine.Waiting(c.Waiting)}
+	for _, w := range c.Summary {
+		r.Summary = append(r.Summary, routine.Where(w))
+	}
+	for i, text := range c.Steps {
+		step, err := routine.ParseCommand(text)
+		if err != nil {
+			return fmt.Errorf("step %d (%q): %w", i+1, text, err)
+		}
+		r.Steps = append(r.Steps, step)
+	}
+	for i, text := range c.Finish {
+		step, err := routine.ParseCommand(text)
+		if err != nil {
+			return fmt.Errorf("--finish step %d (%q): %w", i+1, text, err)
+		}
+		r.Finish = append(r.Finish, step)
+	}
+	if len(r.Steps) == 0 {
+		return errors.New("a routine needs at least one step: give them after the name, each in quotes, such as \"75% 25m work\"")
+	}
+	if _, err := routine.Check(r); err != nil {
+		return err
+	}
+	if err := routine.Save(env.RoutinesPath, r, c.Replace); err != nil {
+		if errors.Is(err, routine.ErrExists) {
+			return fmt.Errorf("%w; add --replace to overwrite it", err)
+		}
+		return err
+	}
+	saved, _ := routine.Check(r)
+	fmt.Fprintf(env.Stdout, "Saved %s in %s\n", saved.Name, env.RoutinesPath)
+	fmt.Fprint(env.Stdout, describeRoutine(saved))
+	fmt.Fprintf(env.Stdout, "Start it with: shh routine run %s\n", saved.Name)
+	return nil
+}
+
+type routineRemoveCmd struct {
+	Name []string `arg:"" name:"name" help:"The routine to delete; a name with spaces needs no quotes."`
+	Yes  bool     `short:"y" help:"Do not ask first."`
+}
+
+func (c *routineRemoveCmd) Run(env *Env) error {
+	name := strings.Join(c.Name, " ")
+	routines, err := routine.Load(env.RoutinesPath)
+	if err != nil {
+		return err
+	}
+	found, ok := routine.Find(routines, name)
+	if !ok {
+		return fmt.Errorf("%w: %q", routine.ErrNotFound, name)
+	}
+	if !c.Yes {
+		if !env.IsTerminal || env.Stdin == nil {
+			return fmt.Errorf("add --yes to delete %q without being asked", found.Name)
+		}
+		fmt.Fprintf(env.Stdout, "Delete the routine %s? [y/N] ", found.Name)
+		answer, _ := bufio.NewReader(env.Stdin).ReadString('\n')
+		if a := strings.ToLower(strings.TrimSpace(answer)); a != "y" && a != "yes" {
+			fmt.Fprintln(env.Stdout, "Kept it.")
+			return nil
+		}
+	}
+	if err := routine.Remove(env.RoutinesPath, found.Name); err != nil {
+		return err
+	}
+	fmt.Fprintf(env.Stdout, "Deleted %s\n", found.Name)
+	return nil
 }
 
 // ---- controlling a run ----

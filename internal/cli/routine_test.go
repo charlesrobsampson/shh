@@ -324,3 +324,85 @@ func mustRules(t *testing.T) rules.Rules {
 	}
 	return r
 }
+
+func TestRoutineAddSavesARoutineFromCommandsAndListShowsIt(t *testing.T) {
+	r := newRig(t, false)
+	out := r.mustRun("routine", "add", "pomo", "75% 25m work --alert banner", "off 5m break", "-r", "4", "-d", "the classic",
+		"--finish", "off 15m long break", "--waiting", "next")
+	for _, want := range []string{"Saved pomo", r.routines, "75% 25m work --alert banner -> off 5m break, 4 times -> off 15m long break", "shh routine run pomo"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output is missing %q:\n%s", want, out)
+		}
+	}
+	rs, err := routine.Load(r.routines)
+	if err != nil || len(rs) != 1 {
+		t.Fatalf("%v %v", rs, err)
+	}
+	if got := rs[0]; got.Description != "the classic" || got.Repeat != 4 || got.Waiting != routine.WaitNext || len(got.Finish) != 1 || len(got.Steps) != 2 {
+		t.Errorf("saved = %+v", got)
+	}
+	if list := r.mustRun("routine", "list"); !strings.Contains(list, "pomo") {
+		t.Errorf("list:\n%s", list)
+	}
+}
+
+func TestRoutineAddKeepsTheRestOfTheFileAndRefusesAnExistingNameWithoutReplace(t *testing.T) {
+	r := newRig(t, false)
+	r.saveRoutines("// mine\n" + `{"routines": {"a": {"steps": ["75% 25m x"]}}}` + "\n")
+	r.mustRun("routine", "add", "b", "baseline 30%", "50% 10m y --ask", "--summary", "menu,ui")
+	text, _ := os.ReadFile(r.routines)
+	if !strings.Contains(string(text), "// mine") {
+		t.Errorf("a comment was lost:\n%s", text)
+	}
+	if code := r.run("routine", "add", "A", "75% 5m z"); code == 0 || !strings.Contains(r.err.String(), "--replace") {
+		t.Errorf("code %d, stderr %q: an existing name needs --replace", code, r.err.String())
+	}
+	r.mustRun("routine", "add", "A", "75% 5m z", "--replace")
+	rs, _ := routine.Load(r.routines)
+	if len(rs) != 2 || rs[0].Steps[0].Length != 5*time.Minute {
+		t.Errorf("rs = %+v", rs)
+	}
+	if rs[1].Summary[0] != routine.WhereMenu {
+		t.Errorf("summary = %v", rs[1].Summary)
+	}
+}
+
+func TestRoutineAddSaysWhichStepIsWrong(t *testing.T) {
+	r := newRig(t, false)
+	for _, tt := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"routine", "add", "x", "75% 25m ok", "75% oops"}, `step 2 ("75% oops")`},
+		{[]string{"routine", "add", "x"}, "at least one step"},
+		{[]string{"routine", "add", "x", "75% 25m a", "--finish", "off"}, "--finish step 1"},
+		{[]string{"routine", "add", "x", "75% 25m a", "-r", "500"}, "repeat"},
+		{[]string{"routine", "add", ".bad", "75% 25m a"}, "name"},
+		{[]string{"routine", "add", "x", "75% 25m a", "--waiting", "sideways"}, "sideways"},
+	} {
+		if code := r.run(tt.args...); code == 0 || !strings.Contains(r.err.String(), tt.want) {
+			t.Errorf("%v: code %d, stderr %q, want it to say %q", tt.args, code, r.err.String(), tt.want)
+		}
+	}
+	if _, err := os.Stat(r.routines); err == nil {
+		t.Error("nothing should have been written")
+	}
+}
+
+func TestRoutineRemoveNeedsYesWhenItCannotAsk(t *testing.T) {
+	r := newRig(t, false)
+	r.saveRoutines(lite)
+	if code := r.run("routine", "remove", "ask"); code == 0 || !strings.Contains(r.err.String(), "--yes") {
+		t.Errorf("code %d stderr %q", code, r.err.String())
+	}
+	if out := r.mustRun("routine", "rm", "ASK", "--yes"); !strings.Contains(out, "Deleted ask") {
+		t.Errorf("out = %q", out)
+	}
+	rs, _ := routine.Load(r.routines)
+	if len(rs) != 1 || rs[0].Name != "pomo" {
+		t.Errorf("rs = %+v", rs)
+	}
+	if code := r.run("routine", "remove", "nope", "-y"); code == 0 || !strings.Contains(r.err.String(), "no saved routine") {
+		t.Errorf("code %d stderr %q", code, r.err.String())
+	}
+}
