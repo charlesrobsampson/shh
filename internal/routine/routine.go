@@ -1,5 +1,6 @@
 // Package routine is the format of saved routines: named sequences of focus sessions, such as a pomodoro (work 25 minutes, break 5,
-// four times, then a long break). They live in routines.json next to config.json, as JSON that may have comments, and this package
+// four times, then a long break). They live in routines.json next to config.json, as JSON that may have comments, filed under their
+// names in an object so that each name can be there only once, and this package
 // reads and checks that file and lays a routine out as the flat list of steps a run goes through. Running one is the worker's job.
 package routine
 
@@ -156,7 +157,6 @@ type fileSchedule struct {
 }
 
 type fileRoutine struct {
-	Name        *string        `json:"name"`
 	Description *string        `json:"description"`
 	Repeat      *int           `json:"repeat"`
 	Steps       []fileStep     `json:"steps"`
@@ -166,8 +166,10 @@ type fileRoutine struct {
 	Schedule    []fileSchedule `json:"schedule"`
 }
 
+// file is routines.json: an object of routines keyed by name, so a name can only be there once (the decoder rejects a repeated key) and
+// a routine is found by its name directly.
 type file struct {
-	Routines []fileRoutine `json:"routines"`
+	Routines map[string]fileRoutine `json:"routines"`
 }
 
 // Load reads the routines file. A missing file means no routines. A problem in the file is an error that names the file, the line
@@ -184,27 +186,43 @@ func Load(path string) ([]Routine, error) {
 	return Parse(path, raw)
 }
 
-// Parse reads routines from the text of a routines file; name is shown in errors.
+// Parse reads routines from the text of a routines file; name is shown in errors. The routines come back in the order they are in the
+// file.
 func Parse(name string, raw []byte) ([]Routine, error) {
 	var f file
 	if err := jsonc.Decode(name, raw, &f); err != nil {
 		return nil, err
 	}
+	order, err := jsonc.Keys(name, raw, "routines")
+	if err != nil {
+		return nil, err
+	}
 	var out []Routine
-	seen := map[string]bool{}
-	for i, fr := range f.Routines {
-		r, err := build(fr, fmt.Sprintf("routines[%d]", i))
+	seen := map[string]string{} // lower-cased name -> the name as written
+	for _, key := range order {
+		r, err := build(f.Routines[key], key)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", name, err)
 		}
-		key := strings.ToLower(r.Name)
-		if seen[key] {
-			return nil, fmt.Errorf("%s: %q: the routine name %q is used twice", name, fmt.Sprintf("routines[%d].name", i), r.Name)
+		lower := strings.ToLower(key)
+		if first, dup := seen[lower]; dup {
+			return nil, fmt.Errorf("%s: %q: the routine name %q is the same as %q apart from case, and names are found ignoring case", name, routineKey(key), key, first)
 		}
-		seen[key] = true
+		seen[lower] = key
 		out = append(out, r)
 	}
 	return out, nil
+}
+
+var simpleKey = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// routineKey is how the routine called name is written in error messages: routines.pomodoro, or routines['deep work'] when the name
+// has characters that would be ambiguous in a dotted path (single quotes, so the key reads cleanly inside the message's own quotes).
+func routineKey(name string) string {
+	if simpleKey.MatchString(name) {
+		return "routines." + name
+	}
+	return "routines['" + name + "']"
 }
 
 var (
@@ -217,18 +235,17 @@ var (
 
 const maxRepeat = 99
 
-func build(fr fileRoutine, key string) (Routine, error) {
+func build(fr fileRoutine, name string) (Routine, error) {
+	key := routineKey(name)
 	bad := func(field, format string, args ...any) error {
 		return fmt.Errorf("%q: %s", key+"."+field, fmt.Sprintf(format, args...))
 	}
 	r := Routine{Repeat: 1, Waiting: WaitStay, Summary: []Where{WhereBanner, WhereUI}}
-	if fr.Name == nil || strings.TrimSpace(*fr.Name) == "" {
-		return r, bad("name", "a routine needs a name")
+	// The name is the key it is filed under, and it is typed on the command line.
+	if name != strings.TrimSpace(name) || !validName.MatchString(name) {
+		return r, fmt.Errorf("%q: the routine name %q should start with a letter or digit and use only letters, digits, spaces, dots, dashes and underscores (it is typed on the command line)", key, name)
 	}
-	r.Name = strings.TrimSpace(*fr.Name)
-	if !validName.MatchString(r.Name) {
-		return r, bad("name", "%q should start with a letter or digit and use only letters, digits, spaces, dots, dashes and underscores (it is typed on the command line)", r.Name)
-	}
+	r.Name = name
 	if fr.Description != nil {
 		r.Description = *fr.Description
 	}
@@ -359,11 +376,10 @@ func buildSchedule(f fileSchedule) (Schedule, error) {
 func DefaultPath(dir string) string { return filepath.Join(dir, FileName) }
 
 // Example is a routines file to start from: a pomodoro and a deep work block, with every option shown and explained.
-const Example = `// Routines: named sequences of focus sessions. Run one with: shh routine run pomodoro
+const Example = `// Routines: named sequences of focus sessions, filed under their names. Run one with: shh routine run pomodoro
 {
-  "routines": [
-    {
-      "name": "pomodoro",
+  "routines": {
+    "pomodoro": {
       "description": "25 minutes on, 5 off, four times, then a long break",
       "repeat": 4, // the steps below run this many times, then the finish steps once
       "steps": [
@@ -381,13 +397,12 @@ const Example = `// Routines: named sequences of focus sessions. Run one with: s
       "summary": ["banner", "ui"]
       // "schedule": [{"days": ["mon", "tue", "wed", "thu", "fri"], "at": "09:00"}] // reserved: not acted on yet
     },
-    {
-      "name": "deep work",
+    "deep work": {
       "steps": [
         {"name": "block", "level": "deep", "length": "90m", "note": "deep work", "alert": "banner", "advance": "ask"},
         {"name": "rest", "level": "off", "length": "20m"}
       ]
     }
-  ]
+  }
 }
 `

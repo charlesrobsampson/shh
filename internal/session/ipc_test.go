@@ -566,7 +566,7 @@ func TestRoutineErrorsKeepTheirKindAcrossTheSocket(t *testing.T) {
 }
 
 func TestTheStatusOfALastRunSurvivesWithNothingActive(t *testing.T) {
-	r := newRoutineIPCRig(t, `{"routines": [{"name": "r", "steps": [{"name": "a", "length": "5m"}]}]}`)
+	r := newRoutineIPCRig(t, `{"routines": {"r": {"steps": [{"name": "a", "length": "5m"}]}}}`)
 	if _, err := r.client.RoutineRun("r"); err != nil {
 		t.Fatal(err)
 	}

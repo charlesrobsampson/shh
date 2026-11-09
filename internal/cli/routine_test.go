@@ -10,12 +10,12 @@ import (
 	"github.com/charlesrobsampson/shh/internal/session"
 )
 
-const lite = `{"routines": [
-  {"name": "pomo", "description": "short and sweet", "repeat": 2,
+const lite = `{"routines": {
+  "pomo": {"description": "short and sweet", "repeat": 2,
    "steps": [{"name": "work", "level": "75%", "length": "25m", "alert": "banner"}, {"name": "break", "level": "off", "length": "5m"}],
    "finish": [{"name": "long break", "level": "off", "length": "15m"}]},
-  {"name": "ask", "waiting": "stay", "steps": [{"name": "work", "level": "75%", "length": "25m", "advance": "ask"}, {"name": "break", "level": "30%", "length": "5m"}]}
-]}`
+  "ask": {"waiting": "stay", "steps": [{"name": "work", "level": "75%", "length": "25m", "advance": "ask"}, {"name": "break", "level": "30%", "length": "5m"}]}
+}}`
 
 // view is the status as a client sees it, which carries the routine.
 func (r *rig) view() session.StatusView {
@@ -56,8 +56,8 @@ func TestRoutineListWithNoFileSaysWhereToPutOneAndHowToStart(t *testing.T) {
 
 func TestRoutineListReportsAProblemFileByKey(t *testing.T) {
 	r := newRig(t, false)
-	r.saveRoutines(`{"routines": [{"name": "x", "steps": [{"name": "a", "length": "5m", "level": "150%"}]}]}`)
-	if code := r.run("routine", "list"); code != 1 || !strings.Contains(r.err.String(), "routines[0].steps[0].level") {
+	r.saveRoutines(`{"routines": {"x": {"steps": [{"name": "a", "length": "5m", "level": "150%"}]}}}`)
+	if code := r.run("routine", "list"); code != 1 || !strings.Contains(r.err.String(), "routines.x.steps[0].level") {
 		t.Errorf("exit %d, stderr %q", code, r.err.String())
 	}
 }
@@ -146,7 +146,7 @@ func TestRoutineStatusNextBackAndStopSayWhereTheRunIs(t *testing.T) {
 
 func TestSkippingTheLastStepSaysTheRoutineFinished(t *testing.T) {
 	r := newRig(t, true)
-	r.saveRoutines(`{"routines": [{"name": "one", "steps": [{"name": "a", "level": "50%", "length": "30m"}]}]}`)
+	r.saveRoutines(`{"routines": {"one": {"steps": [{"name": "a", "level": "50%", "length": "30m"}]}}}`)
 	r.mustRun("routine", "run", "one")
 	if out := r.mustRun("routine", "next"); !strings.Contains(out, "Routine one finished.") || !strings.Contains(out, "1 of 1 steps") {
 		t.Errorf("next on the last step = %q", out)
@@ -259,5 +259,28 @@ func TestAnUnrelatedFailureIsNotMistakenForARoutine(t *testing.T) {
 	}
 	if strings.Contains(r.err.String(), "routine") {
 		t.Errorf("the message mentions a routine that is not there: %q", r.err.String())
+	}
+}
+
+func TestRoutineListKeepsTheOrderOfTheFile(t *testing.T) {
+	r := newRig(t, false)
+	step := `"steps": [{"name": "s", "length": "5m"}]`
+	r.saveRoutines(`{"routines": {"zeta": {` + step + `}, "alpha": {` + step + `}, "mid": {` + step + `}}}`)
+	out := r.mustRun("routine", "list")
+	z, a, m := strings.Index(out, "zeta"), strings.Index(out, "alpha"), strings.Index(out, "mid")
+	if !(z >= 0 && z < a && a < m) {
+		t.Errorf("list should follow the file's order (zeta, alpha, mid):\n%s", out)
+	}
+}
+
+func TestARoutineNameWrittenTwiceIsReportedByTheCommand(t *testing.T) {
+	r := newRig(t, false)
+	step := `"steps": [{"name": "s", "length": "5m"}]`
+	r.saveRoutines("{\n\"routines\": {\n\"pomo\": {" + step + "},\n\"pomo\": {" + step + "}\n}\n}\n")
+	if code := r.run("routine", "list"); code != 1 || !strings.Contains(r.err.String(), "duplicate key") || !strings.Contains(r.err.String(), "routines.json:4") {
+		t.Errorf("exit %d, stderr %q", code, r.err.String())
+	}
+	if code := r.run("routine", "run", "pomo"); code == 0 {
+		t.Error("a file with a duplicate name must not start anything")
 	}
 }

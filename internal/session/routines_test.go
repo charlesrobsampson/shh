@@ -11,14 +11,14 @@ import (
 )
 
 // pomodoroLite is a short routine: two rounds of work then break, and a long break at the end.
-const pomodoroLite = `{"routines": [{
-  "name": "pomo", "repeat": 2,
+const pomodoroLite = `{"routines": {"pomo": {
+  "repeat": 2,
   "steps": [
     {"name": "work", "level": "75%", "length": "25m", "note": "focus", "alert": "banner"},
     {"name": "break", "level": "off", "length": "5m", "alert": "banner"}
   ],
   "finish": [{"name": "long break", "level": "off", "length": "15m"}]
-}]}`
+}}}`
 
 // routineRig is a worker rig whose routines come from a text that tests can change.
 type routineRig struct {
@@ -182,7 +182,7 @@ func TestOnlyStepsThatAskForABannerAnnounceTheirEnd(t *testing.T) {
 }
 
 func TestAFinishedRoutineShowsASummaryOfWhatItHeldBack(t *testing.T) {
-	r := newRoutineRig(t, `{"routines": [{"name": "r", "steps": [{"name": "work", "level": "75%", "length": "10m"}]}]}`)
+	r := newRoutineRig(t, `{"routines": {"r": {"steps": [{"name": "work", "level": "75%", "length": "10m"}]}}}`)
 	r.start("r")
 	r.postAndTick(teams, "Ana", "lunch menu for friday")     // held back
 	r.postAndTick(teams, "Ops", "prod outage, need you now") // let through
@@ -202,7 +202,7 @@ func TestAFinishedRoutineShowsASummaryOfWhatItHeldBack(t *testing.T) {
 }
 
 func TestTheSummaryBannerFollowsTheRoutinesSummarySetting(t *testing.T) {
-	r := newRoutineRig(t, `{"routines": [{"name": "quiet", "summary": ["ui"], "steps": [{"name": "work", "length": "10m"}]}]}`)
+	r := newRoutineRig(t, `{"routines": {"quiet": {"summary": ["ui"], "steps": [{"name": "work", "length": "10m"}]}}}`)
 	r.start("quiet")
 	r.pass(10 * time.Minute)
 	if got := r.shown(); len(got) != 0 {
@@ -241,19 +241,19 @@ func TestARoutineWithNoLoaderOrABrokenFileCannotStart(t *testing.T) {
 	if err := r.worker.RoutineStart("pomo"); !errors.Is(err, session.ErrUnknownRoutine) {
 		t.Errorf("no loader: err = %v", err)
 	}
-	rr := newRoutineRig(t, `{"routines": [{"name": "x", "steps": []}]}`)
-	if err := rr.worker.RoutineStart("x"); err == nil || !strings.Contains(err.Error(), "routines[0].steps") {
+	rr := newRoutineRig(t, `{"routines": {"x": {"steps": []}}}`)
+	if err := rr.worker.RoutineStart("x"); err == nil || !strings.Contains(err.Error(), "routines.x.steps") {
 		t.Errorf("a broken file: err = %v, want the file's problem", err)
 	}
 }
 
 // askRoutine has a work step that waits for the user before the break, in the given waiting mode.
 func askRoutine(waiting string) string {
-	return `{"routines": [{"name": "ask", "waiting": "` + waiting + `",
+	return `{"routines": {"ask": {"waiting": "` + waiting + `",
 	  "steps": [
 	    {"name": "work", "level": "75%", "length": "25m", "advance": "ask", "alert": "banner"},
 	    {"name": "break", "level": "30%", "length": "5m"}
-	  ]}]}`
+	  ]}}}`
 }
 
 func TestAStepThatAsksWaitsForTheUserAndStayKeepsTheLevelUntimed(t *testing.T) {
@@ -352,7 +352,7 @@ func TestWaitingInBaselineModeWithNothingInForceKeepsTheWorkerAlive(t *testing.T
 }
 
 func TestWaitingDefaultsToStay(t *testing.T) {
-	r := newRoutineRig(t, `{"routines": [{"name": "d", "steps": [{"name": "a", "level": "60%", "length": "5m", "advance": "ask"}, {"name": "b", "length": "5m"}]}]}`)
+	r := newRoutineRig(t, `{"routines": {"d": {"steps": [{"name": "a", "level": "60%", "length": "5m", "advance": "ask"}, {"name": "b", "length": "5m"}]}}}`)
 	r.start("d")
 	r.pass(5 * time.Minute)
 	if top := r.top(); top.Percent != 60 || top.Timed {
@@ -378,7 +378,7 @@ func TestNextOnARunningStepSkipsStraightToTheNextWithoutWaitingOrAnnouncing(t *t
 }
 
 func TestSkippingTheLastStepFinishesTheRun(t *testing.T) {
-	r := newRoutineRig(t, `{"routines": [{"name": "one", "steps": [{"name": "a", "level": "50%", "length": "30m"}]}]}`)
+	r := newRoutineRig(t, `{"routines": {"one": {"steps": [{"name": "a", "level": "50%", "length": "30m"}]}}}`)
 	r.start("one")
 	r.pass(time.Minute)
 	must(t, r.worker.RoutineNext())
@@ -529,7 +529,7 @@ func TestAStepThatRanOutWhileTheWorkerWasDownMovesOnWhenItReturns(t *testing.T) 
 func TestARoutineThatVanishesFromTheFileEndsTheRunWithANote(t *testing.T) {
 	r := newRoutineRig(t, pomodoroLite)
 	r.start("pomo")
-	*r.text = `{"routines": []}`
+	*r.text = `{"routines": {}}`
 	r.pass(time.Minute)
 	if r.info().Active != nil {
 		t.Error("the run should have ended")
@@ -553,7 +553,7 @@ func TestEditingARoutineDuringARunFollowsTheNewSteps(t *testing.T) {
 	if top := r.top(); top.Remaining != 10*time.Minute {
 		t.Errorf("the break should take the edited length, got %v", top.Remaining)
 	}
-	*r.text = `{"routines": [{"name": "pomo", "steps": [{"name": "only", "length": "5m"}]}]}`
+	*r.text = `{"routines": {"pomo": {"steps": [{"name": "only", "length": "5m"}]}}}`
 	r.pass(time.Minute)
 	if r.info().Active != nil {
 		t.Error("a run whose position is past the end of the edited routine should end")
