@@ -353,12 +353,13 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Manual check: run `shh` against some stored rows; keys behave.
 
 ### 32 · TUI: preview/expand, read state, open in app
-- [ ] Done
-- Session: _(fill on start)_
+- [x] Done
 - Branch: `task/32-tui-read` · Depends: 31
 - Read: `plan.md` §6, §8
 - Build: truncated preview filling the pane; `e` expands/collapses without changing read state; `Enter`/`o` opens the original app and marks read; dismiss `d`/`x`.
 - Tests: expanding never sets `is_read`; opening does; dismiss hides from Notifications but not Train; long text truncates to pane size.
+- Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
+- Notes: `tui.Data` gained `SetRead` and `SetDismissed`; `tui.Config.Open` (default `open -b`) opens an app. `e` expands the selected notification to the whole screen (the list goes away) with j/k scrolling and a footer saying which lines are showing, `e` or Esc puts it back; collapsed, the body is cut to the pane with "… N more lines (e to read it all)". Expanding never touches `is_read`. `Enter` or `o` opens the notification's app and marks it read only if the open worked; with no bundle id, or if the open fails, it says why in the status bar and changes nothing. `d` or `x` dismisses (off Notifications, still on Train, on either tab). Rows not yet opened carry a `•`; the status bar shows what the last action did until the next key. The expanded view closes by itself when you change tab or when its row goes away. Help lists the new keys. After the first manual run: `alerted` and `blocked` looked alike in the list, so the status column now shows a coloured `✕ blocked` for blocked rows and nothing for alerted ones (a blocked notification never reached the user, so it is the one worth a glance; the detail pane still names the status in full, coloured), and the old `!` marker is gone. Colours come only from the terminal's own palette (ANSI colours 0 to 15, bold, faint, reverse), never fixed RGB or 256-colour values, so the UI follows whatever theme the terminal uses, light or dark; a test pins this. The selected row is drawn in reverse video cell by cell so the colours inside it survive. Macros: the body of a notification is exactly what the app put in it (Outlook shortens emails itself), so there is no more of it to show.
 - Manual check: run `shh`, expand a long message, confirm it stays unread; open one, confirm it flips.
 
 ### 33 · TUI: training with `y`/`n` and undo
