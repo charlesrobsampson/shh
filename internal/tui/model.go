@@ -2,8 +2,10 @@ package tui
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -54,6 +56,10 @@ func (t Tab) String() string {
 
 // maxRows bounds how many rows a list loads: the newest ones, which are the ones anyone looks at.
 const maxRows = 500
+
+// tabKeys are the keys that jump straight to a tab: shifted digits, which leaves the digits themselves free for training labels
+// (F1 to F3 work too).
+var tabKeys = [tabCount]string{"!", "@", "#"}
 
 // Model is the terminal UI as a Bubble Tea model.
 type Model struct {
@@ -190,11 +196,11 @@ func (m *Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.tab = (m.tab + 1) % tabCount
 	case "shift+tab", "h", "left":
 		m.tab = (m.tab + tabCount - 1) % tabCount
-	case "f1":
+	case "f1", "!":
 		m.tab = TabFocus
-	case "f2":
+	case "f2", "@":
 		m.tab = TabNotifications
-	case "f3":
+	case "f3", "#":
 		m.tab = TabTrain
 	case "j", "down":
 		m.move(1)
@@ -259,7 +265,7 @@ func (m *Model) View() string {
 func (m *Model) tabBar() string {
 	var parts []string
 	for t := Tab(0); t < tabCount; t++ {
-		label := fmt.Sprintf("F%d %s", int(t)+1, t)
+		label := fmt.Sprintf("%s %s", tabKeys[t], t)
 		if t == TabNotifications && len(m.lists[t]) > 0 {
 			label += fmt.Sprintf(" (%d)", len(m.lists[t]))
 		}
@@ -351,8 +357,8 @@ func (m *Model) row(n store.Notification, w int, selected bool) string {
 	} else {
 		marker += " "
 	}
-	return fmt.Sprintf("%s%-*s%-*s%-*s%*d %s", marker, colTime, m.when(n.Timestamp), colSource, runewidth.Truncate(n.Source, colSource-1, "…"),
-		senderWidth(w), runewidth.Truncate(n.Sender, senderWidth(w)-1, "…"), colScore, score(n.Score), n.Status)
+	return fmt.Sprintf("%s%-*s%-*s%-*s%*d %s", marker, colTime, m.when(n.Timestamp), colSource, runewidth.Truncate(oneLine(n.Source), colSource-1, "…"),
+		senderWidth(w), runewidth.Truncate(oneLine(n.Sender), senderWidth(w)-1, "…"), colScore, score(n.Score), n.Status)
 }
 
 // when is the time of day for today's rows and the date for older ones.
@@ -376,12 +382,12 @@ func (m *Model) detailView() string {
 		return pad([]string{dim.Render(fit(" Select a notification to see its details.", w))}, m.bodyHeight(), w)
 	}
 	var lines []string
-	title := n.Sender
-	if n.Title != "" && n.Title != n.Sender {
-		title += " — " + n.Title
+	title := oneLine(n.Sender)
+	if t := oneLine(n.Title); t != "" && t != title {
+		title += " — " + t
 	}
 	lines = append(lines, lipgloss.NewStyle().Bold(true).Width(w-2).Render(title))
-	lines = append(lines, dim.Render(fmt.Sprintf("%s · %s · %s", n.Source, n.Timestamp.In(m.cfg.Now().Location()).Format("Mon Jan 2 15:04"), n.Status)))
+	lines = append(lines, dim.Render(fmt.Sprintf("%s · %s · %s", oneLine(n.Source), n.Timestamp.In(m.cfg.Now().Location()).Format("Mon Jan 2 15:04"), n.Status)))
 	decision := fmt.Sprintf("score %d", score(n.Score))
 	if n.Boost > 0 {
 		decision += fmt.Sprintf(" +%d boost", score(n.Boost))
@@ -391,10 +397,10 @@ func (m *Model) detailView() string {
 	}
 	lines = append(lines, decision)
 	if n.Reason != "" {
-		lines = append(lines, dim.Render("why: "+n.Reason))
+		lines = append(lines, dim.Render("why: "+oneLine(n.Reason)))
 	}
 	lines = append(lines, "")
-	lines = append(lines, strings.Split(lipgloss.NewStyle().Width(w-2).Render(n.Body), "\n")...)
+	lines = append(lines, strings.Split(lipgloss.NewStyle().Width(w-2).Render(multiLine(n.Body)), "\n")...)
 	for i := range lines {
 		lines[i] = " " + lines[i]
 	}
@@ -433,7 +439,7 @@ func (m *Model) sessionText() string {
 func (m *Model) helpView() string {
 	keys := [][2]string{
 		{"Tab / Shift-Tab, h / l", "next / previous tab"},
-		{"F1 F2 F3", "Focus, Notifications, Train"},
+		{"! @ #  (Shift-1 2 3), F1 F2 F3", "Focus, Notifications, Train"},
 		{"j / k, ↓ / ↑", "move down / up"},
 		{"g / G, PgUp / PgDn", "first / last, page"},
 		{"?", "this help"},
@@ -441,7 +447,7 @@ func (m *Model) helpView() string {
 	}
 	lines := []string{"", "  shh keys", ""}
 	for _, k := range keys {
-		lines = append(lines, fmt.Sprintf("  %-26s %s", k[0], k[1]))
+		lines = append(lines, fmt.Sprintf("  %-32s %s", k[0], k[1]))
 	}
 	lines = append(lines, "", dim.Render("  Press any key to go back."))
 	return pad(lines, m.height, m.width)
@@ -461,10 +467,12 @@ func fit(s string, w int) string {
 func pad(lines []string, height, width int) string {
 	out := make([]string, 0, height)
 	for _, l := range lines {
-		if len(out) == height {
-			break
+		// A line with a newline inside would be two lines on screen, and one line too many scrolls the tab bar off the top.
+		for _, part := range strings.Split(l, "\n") {
+			if len(out) < height {
+				out = append(out, part)
+			}
 		}
-		out = append(out, l)
 	}
 	for len(out) < height {
 		out = append(out, "")
@@ -483,4 +491,62 @@ func pad(lines []string, height, width int) string {
 func Run(cfg Config) error {
 	_, err := tea.NewProgram(New(cfg), tea.WithAltScreen()).Run()
 	return err
+}
+
+// Text from notifications is untrusted and arbitrary: it can hold newlines, tabs, escape sequences that move the cursor or set the
+// window title, and other control characters. Drawn as it is, any of them breaks the layout, so everything that comes from a
+// notification passes through one of these two before it is drawn.
+
+var (
+	oscSequence = regexp.MustCompile(`\x1b\][^\x07\x1b]*(\x07|\x1b\\)?`)
+	csiSequence = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
+	escOther    = regexp.MustCompile(`\x1b.?`)
+)
+
+func stripEscapes(s string) string {
+	s = oscSequence.ReplaceAllString(s, "")
+	s = csiSequence.ReplaceAllString(s, "")
+	s = escOther.ReplaceAllString(s, "")
+	return invisibleJoiners.Replace(s)
+}
+
+// invisibleJoiners are zero-width characters that glue emoji together (👩‍💻) or pick their emoji or text form (✔️). Terminals and
+// width tables disagree about how wide the result is, and a line that is wider on screen than the layout thinks wraps and pushes
+// the tab bar off the top. Dropped, each part is drawn on its own with a width everyone agrees on.
+var invisibleJoiners = strings.NewReplacer("\u200d", "", "\ufe0f", "", "\ufe0e", "", "\u200b", "", "\u2060", "", "\ufeff", "")
+
+// oneLine makes s fit on a single line: every run of whitespace and control characters becomes one space.
+func oneLine(s string) string {
+	var b strings.Builder
+	space := false
+	for _, r := range stripEscapes(s) {
+		if unicode.IsSpace(r) || unicode.IsControl(r) {
+			space = true
+			continue
+		}
+		if space && b.Len() > 0 {
+			b.WriteByte(' ')
+		}
+		space = false
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// multiLine keeps the line breaks of s but removes anything else that would break the layout: tabs become spaces, carriage returns
+// and other control characters go.
+func multiLine(s string) string {
+	var b strings.Builder
+	for _, r := range stripEscapes(s) {
+		switch {
+		case r == '\n':
+			b.WriteRune(r)
+		case r == '\t':
+			b.WriteString("    ")
+		case unicode.IsControl(r):
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }

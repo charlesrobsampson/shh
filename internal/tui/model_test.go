@@ -473,3 +473,67 @@ func TestTheSelectedRowAndAlertedRowsAreMarked(t *testing.T) {
 		t.Errorf("selected plain row = %q, want it to start with >", l)
 	}
 }
+
+func TestAwkwardTextNeverMakesTheViewTallerThanTheTerminal(t *testing.T) {
+	// A view one line too tall pushes the tab bar off the top of the screen.
+	r := newRig(t)
+	r.add("Line\nBreak", "multi\nline\r\nbody\twith\ttabs", 1, func(n *store.Notification) {
+		n.Title = "Title\nwith\nbreaks"
+		n.Source = "Te\tams"
+		n.Reason = "why\nnot"
+	})
+	r.add("Escape\x1b[31mred\x1b[0m", "bell\x07 and \x1b]0;title\x07 and null\x00 and del\x7f", 2)
+	r.add("Emoji 🎉👩‍💻 ✔️", strings.Repeat("emoji 🎉 and wide 漢字 text ", 20), 3)
+	r.refresh()
+	for _, size := range [][2]int{{80, 24}, {100, 14}, {60, 10}} {
+		r.m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		for _, tab := range []string{"f2", "f3"} {
+			r.press(tab)
+			for i := 0; i < 3; i++ {
+				view := r.view()
+				if h := lipgloss.Height(view); h != size[1] {
+					t.Errorf("%dx%d %s row %d: the view is %d lines tall:\n%s", size[0], size[1], tab, i, h, view)
+				}
+				if strings.ContainsAny(view, "\x1b\x07\x00\x7f\t\r") {
+					t.Errorf("%dx%d %s row %d: the view contains control characters: %q", size[0], size[1], tab, i, view)
+				}
+				if !strings.HasPrefix(view, " ! Focus") && !strings.Contains(strings.SplitN(view, "\n", 2)[0], "Notifications") {
+					t.Errorf("the first line is not the tab bar: %q", strings.SplitN(view, "\n", 2)[0])
+				}
+				r.press("j")
+			}
+		}
+	}
+}
+
+func TestShiftedDigitsJumpStraightToATab(t *testing.T) {
+	r := newRig(t)
+	for _, step := range []struct {
+		key  string
+		want Tab
+	}{{"!", TabFocus}, {"#", TabTrain}, {"@", TabNotifications}, {"!", TabFocus}, {"@", TabNotifications}} {
+		r.press(step.key)
+		if r.m.Tab() != step.want {
+			t.Fatalf("after %q the tab is %v, want %v", step.key, r.m.Tab(), step.want)
+		}
+	}
+	got := r.view()
+	for _, want := range []string{"! Focus", "@ Notifications", "# Train"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the tab bar should show the key for each tab (%q):\n%s", want, got)
+		}
+	}
+	r.press("?")
+	if !strings.Contains(r.view(), "! @ #") {
+		t.Errorf("help does not mention the shifted digits:\n%s", r.view())
+	}
+}
+
+func TestEmojiJoinersAreDroppedSoWidthsAreSafe(t *testing.T) {
+	r := newRig(t)
+	r.add("Dev 👩\u200d💻 ✔\ufe0f", "text with a zero\u200bwidth space and a joiner 👨\u200d👩\u200d👧", 1)
+	r.refresh()
+	if got := r.view(); strings.ContainsAny(got, "\u200d\ufe0f\u200b") {
+		t.Errorf("invisible joiners reached the screen: %q", got)
+	}
+}
