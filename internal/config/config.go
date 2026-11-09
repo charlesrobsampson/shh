@@ -85,7 +85,9 @@ func (s Style) with(o StyleOverride) Style {
 }
 
 type Menubar struct {
-	Label string
+	// Enabled says whether the worker shows the status item in the menu bar.
+	Enabled bool
+	Label   string
 }
 
 type Summarizer struct {
@@ -114,7 +116,8 @@ type file struct {
 		Source   map[string]StyleOverride `json:"source,omitempty"`
 	} `json:"alert"`
 	Menubar struct {
-		Label *string `json:"label,omitempty"`
+		Enabled *bool   `json:"enabled,omitempty"`
+		Label   *string `json:"label,omitempty"`
 	} `json:"menubar"`
 	Summarizer struct {
 		Backend *string `json:"backend,omitempty"`
@@ -166,7 +169,7 @@ func Load(path string) (Config, error) {
 func build(f file, configDir string) (Config, error) {
 	cfg := Config{
 		Alert:      Alert{Base: Style{Position: "top-right", Size: "medium", Color: "#ff9f0a", DurationSecs: 0, Sound: "Glass"}},
-		Menubar:    Menubar{Label: "shh"},
+		Menubar:    Menubar{Enabled: true, Label: "shh"},
 		Summarizer: Summarizer{Backend: "none"},
 	}
 	if err := validateOverride("alert", f.Alert.StyleOverride); err != nil {
@@ -187,6 +190,9 @@ func build(f file, configDir string) (Config, error) {
 	}
 	cfg.Alert.Source = f.Alert.Source
 
+	if f.Menubar.Enabled != nil {
+		cfg.Menubar.Enabled = *f.Menubar.Enabled
+	}
 	if f.Menubar.Label != nil {
 		cfg.Menubar.Label = *f.Menubar.Label
 	}
@@ -275,7 +281,7 @@ func (c Config) Effective() ([]byte, error) {
 			f.Alert.Source[name] = override
 		}
 	}
-	f.Menubar.Label = &c.Menubar.Label
+	f.Menubar.Enabled, f.Menubar.Label = &c.Menubar.Enabled, &c.Menubar.Label
 	f.Summarizer.Backend = &c.Summarizer.Backend
 	f.Paths.Dir, f.Paths.DB, f.Paths.Socket, f.Paths.PID = &c.Paths.Dir, &c.Paths.DB, &c.Paths.Socket, &c.Paths.PID
 	out, err := json.MarshalIndent(f, "", "  ")

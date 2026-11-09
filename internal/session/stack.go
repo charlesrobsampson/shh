@@ -74,7 +74,10 @@ func (s *Stack) SetBaseline(level int) error {
 	})
 }
 
-// Escalate puts a new level on top of the stack and returns its id.
+// Escalate puts a new level on top of the stack and returns its id. A session with no timer that is asked for on top of another
+// one with no timer replaces it: nothing would ever bring the older one back except stopping the newer, so stacking them only
+// builds up a pile of sessions that all read "until stopped". A timed session always stacks, because falling back to what was
+// there before is what its timer is for.
 func (s *Stack) Escalate(e Escalation) (id int64, err error) {
 	if err := checkLevel(e.Level); err != nil {
 		return 0, err
@@ -87,7 +90,14 @@ func (s *Stack) Escalate(e Escalation) (id int64, err error) {
 	if e.Duration < 0 {
 		return 0, fmt.Errorf("%w: duration %v is negative", ErrInvalid, e.Duration)
 	}
-	err = s.act(func(now time.Time, _ []store.Level) error {
+	err = s.act(func(now time.Time, layers []store.Level) error {
+		if n := len(layers); e.Duration == 0 && n > 0 {
+			if top := layers[n-1]; top.Kind == store.LevelEscalation && top.TargetMinutes == 0 {
+				if err := s.store.CloseLevel(top.ID, now); err != nil {
+					return err
+				}
+			}
+		}
 		level := store.Level{Kind: store.LevelEscalation, Percent: e.Level, StartTime: now, ThenLevel: e.Then, Note: e.Note}
 		if e.Duration > 0 {
 			expires := now.Add(e.Duration)

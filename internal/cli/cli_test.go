@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/charlesrobsampson/shh/internal/cli"
 	"github.com/charlesrobsampson/shh/internal/config"
+	"github.com/charlesrobsampson/shh/internal/decide"
 	"github.com/charlesrobsampson/shh/internal/rules"
 	"github.com/charlesrobsampson/shh/internal/session"
 	"github.com/charlesrobsampson/shh/internal/store"
@@ -693,5 +695,182 @@ func TestAlertTestNeverRearmsFocus(t *testing.T) {
 	r.mustRun("alert", "test")
 	if r.spawns != 0 {
 		t.Errorf("%d spawns; the worker was already running", r.spawns)
+	}
+}
+
+func TestTheMenubarCommandRunsTheItemAndNeverStartsAWorker(t *testing.T) {
+	r := newRig(t, false)
+	r.env.PersistedFocus = func() bool { return true }
+	r.env.Spawn = func() error { r.spawns++; return nil }
+	ran := false
+	r.env.Menubar = func(context.Context) error { ran = true; return nil }
+	r.mustRun("menubar")
+	if !ran || r.spawns != 0 {
+		t.Errorf("ran=%v spawns=%d; the menu bar item belongs to a worker and must not start one", ran, r.spawns)
+	}
+	r.out.Reset()
+	r.run("--help")
+	if strings.Contains(r.out.String()+r.err.String(), "menubar") {
+		t.Error("the internal menubar command shows up in --help")
+	}
+}
+
+func TestTheMenubarCommandSaysSoWhenThereIsNone(t *testing.T) {
+	r := newRig(t, false)
+	if code := r.run("menubar"); code != 1 || !strings.Contains(r.err.String(), "menu bar") {
+		t.Errorf("exit %d, stderr %q", code, r.err.String())
+	}
+}
+
+func TestSettingABaselineUnderARunningSessionSaysWhichLevelIsInForce(t *testing.T) {
+	r := newRig(t, true)
+	r.mustRun("focus", "-f", "65%", "-t", "2m")
+	out := r.mustRun("baseline", "30%")
+	st := r.status()
+	if st.Level != 65 || st.Layers[0].Kind != "baseline" || st.Layers[0].Percent != 30 {
+		t.Fatalf("status = %+v, want a baseline of 30 under the 65 session", st)
+	}
+	for _, want := range []string{"Baseline set to 30%", "65%", "until"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output %q does not mention %q: it should say the baseline is 30 and the running session keeps focus at 65", out, want)
+		}
+	}
+}
+
+func TestSettingABaselineWithNothingOnTopJustConfirmsIt(t *testing.T) {
+	r := newRig(t, true)
+	out := r.mustRun("baseline", "30%")
+	if !strings.Contains(out, "Baseline set to 30%") || strings.Contains(out, "until") {
+		t.Errorf("output = %q", out)
+	}
+	if out := r.mustRun("baseline", "off"); !strings.Contains(out, "Baseline cleared") {
+		t.Errorf("output = %q, want the baseline reported as cleared", out)
+	}
+}
+
+func TestFocusReadsALeadingLevelAndLengthFromThePlainWords(t *testing.T) {
+	tests := []struct {
+		name      string
+		args      []string
+		wantLevel int
+		wantNote  string
+		wantTimed bool
+	}{
+		{"just a percentage", []string{"focus", "30%"}, 30, "", false},
+		{"a percentage then words", []string{"focus", "30%", "writing", "the", "report"}, 30, "writing the report", false},
+		{"a length", []string{"focus", "25m"}, 65, "", true},
+		{"a length and a level in either order", []string{"focus", "25m", "75%", "deep", "work"}, 75, "deep work", true},
+		{"the other order", []string{"focus", "75%", "1h30m"}, 75, "", true},
+		{"a lone tier name", []string{"focus", "deep"}, 90, "", false},
+		{"a tier then a length", []string{"focus", "deep", "5m"}, 90, "", true},
+		{"light then a length", []string{"focus", "light", "5m"}, 35, "", true},
+		{"lockdown then a length", []string{"focus", "lockdown", "5m"}, 99, "", true},
+		{"a length then a tier", []string{"focus", "5m", "deep"}, 90, "", true},
+		{"a tier, a length and a note", []string{"focus", "deep", "5m", "writing", "docs"}, 90, "writing docs", true},
+		{"off for a while is a break", []string{"focus", "off", "25m"}, 0, "", true},
+		{"a tier followed by words is a note", []string{"focus", "deep", "writing"}, 65, "deep writing", false},
+		{"a tier name that starts a note is a note", []string{"focus", "deep", "work"}, 65, "deep work", false},
+		{"words that only look a little like settings", []string{"focus", "meeting", "at", "30%"}, 65, "meeting at 30%", false},
+		{"the flag still works", []string{"focus", "-f", "40%", "write", "docs"}, 40, "write docs", false},
+		{"a flag and a plain word for different things", []string{"focus", "-f", "40%", "25m", "write"}, 40, "write", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := newRig(t, true)
+			r.mustRun(tt.args...)
+			st := r.status()
+			top := st.Layers[len(st.Layers)-1]
+			if st.Level != tt.wantLevel || top.Note != tt.wantNote || top.Timed != tt.wantTimed {
+				t.Errorf("level=%d note=%q timed=%v, want %d %q %v", st.Level, top.Note, top.Timed, tt.wantLevel, tt.wantNote, tt.wantTimed)
+			}
+		})
+	}
+}
+
+func TestFocusRejectsAGivenTwiceLevelOrLength(t *testing.T) {
+	for _, args := range [][]string{
+		{"focus", "-f", "40%", "30%"},
+		{"focus", "-t", "10m", "25m"},
+		{"focus", "30%", "40%"},
+	} {
+		r := newRig(t, true)
+		if code := r.run(args...); code != 2 || !strings.Contains(r.err.String(), "twice") {
+			t.Errorf("%v: exit %d, stderr %q; want a usage error about giving it twice", args, code, r.err.String())
+		}
+		if st := r.status(); st.Level != 0 {
+			t.Errorf("%v: a session was started anyway: %+v", args, st)
+		}
+	}
+}
+
+func TestShorthandStartsASessionFromALevelAndALength(t *testing.T) {
+	tests := []struct {
+		args      []string
+		wantLevel int
+		wantTimed bool
+		wantNote  string
+	}{
+		{[]string{"30%"}, 30, false, ""},
+		{[]string{"40%", "5m"}, 40, true, ""},
+		{[]string{"5m", "40%"}, 40, true, ""},
+		{[]string{"25m"}, 65, true, ""},
+		{[]string{"deep"}, 90, false, ""},
+		{[]string{"deep", "5m"}, 90, true, ""},
+		{[]string{"lockdown", "5m"}, 99, true, ""},
+		{[]string{"light", "5m", "reading"}, 35, true, "reading"},
+		{[]string{"75%", "writing", "docs"}, 75, false, "writing docs"},
+		{[]string{"75%", "--then", "off", "-m", "x"}, 75, false, "x"},
+	}
+	for _, tt := range tests {
+		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
+			r := newRig(t, true)
+			r.mustRun(tt.args...)
+			st := r.status()
+			top := st.Layers[len(st.Layers)-1]
+			if st.Level != tt.wantLevel || top.Timed != tt.wantTimed || top.Note != tt.wantNote {
+				t.Errorf("level=%d timed=%v note=%q, want %d %v %q", st.Level, top.Timed, top.Note, tt.wantLevel, tt.wantTimed, tt.wantNote)
+			}
+		})
+	}
+}
+
+func TestShorthandLeavesEveryOtherCommandAlone(t *testing.T) {
+	r := newRig(t, true)
+	r.mustRun("baseline", "30%")
+	r.mustRun("status")
+	if got := r.status(); got.Level != 30 || len(got.Layers) != 1 {
+		t.Errorf("status = %+v: baseline and status must not be read as shorthand", got)
+	}
+	r.mustRun("stop", "--all")
+	if r.status().Level != 0 {
+		t.Error("stop --all did not run as written")
+	}
+	// A bare "shh" is still the UI, and "off" is not a shorthand.
+	r.env.IsTerminal = true
+	opened := false
+	r.env.TUI = func() error { opened = true; return nil }
+	r.mustRun()
+	if !opened {
+		t.Error("bare shh did not open the UI")
+	}
+	if code := r.run("off"); code == 0 {
+		t.Error(`"shh off" should not be a shorthand`)
+	}
+}
+
+func TestHelpListsEveryTierWithItsValue(t *testing.T) {
+	for _, args := range [][]string{{"focus", "--help"}, {"baseline", "--help"}} {
+		r := newRig(t, false)
+		r.run(args...)
+		help := strings.Join(strings.Fields(r.out.String()+r.err.String()), " ")
+		for _, tier := range decide.Tiers() {
+			want := fmt.Sprintf("%s (%d%%)", tier.Name, tier.Level)
+			if tier.Level == 0 {
+				want = tier.Name + " (0)"
+			}
+			if !strings.Contains(help, want) {
+				t.Errorf("%v help does not say %q, so the tiers' values are not discoverable", args, want)
+			}
+		}
 	}
 }

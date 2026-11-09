@@ -3,6 +3,7 @@ package decide
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -19,6 +20,22 @@ var (
 	wholeNumber   = regexp.MustCompile(`^[0-9]+$`)
 	decimalNumber = regexp.MustCompile(`^[0-9]*\.[0-9]+$`)
 )
+
+// Tier is a named level.
+type Tier struct {
+	Name  string
+	Level int
+}
+
+// Tiers lists the named levels from lowest to highest, for help text and tests.
+func Tiers() []Tier {
+	out := make([]Tier, 0, len(tiers))
+	for name, level := range tiers {
+		out = append(out, Tier{name, level})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Level < out[j].Level })
+	return out
+}
 
 // ParseThreshold reads a focus threshold: a whole percentage such as "75%" or a tier name. "100%" means the maximum, 99.
 func ParseThreshold(input string) (int, error) {
@@ -91,4 +108,19 @@ func FormatLevel(level int) string {
 		}
 	}
 	return fmt.Sprintf("%d%%", level)
+}
+
+// FormatRemaining writes a countdown compactly: 30s, 38m, 2h, 1h05m. Minutes round up so a running timer never reads 0m.
+func FormatRemaining(secs int) string {
+	if secs < 60 {
+		return fmt.Sprintf("%ds", secs)
+	}
+	minutes := (secs + 59) / 60
+	if minutes < 60 {
+		return fmt.Sprintf("%dm", minutes)
+	}
+	if minutes%60 == 0 {
+		return fmt.Sprintf("%dh", minutes/60)
+	}
+	return fmt.Sprintf("%dh%02dm", minutes/60, minutes%60)
 }

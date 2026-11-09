@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -19,21 +20,76 @@ import (
 )
 
 type focusCmd struct {
-	Timer string   `short:"t" default:"0" help:"Session length such as 25m or 1h30m; 0 means until stopped."`
-	Focus string   `short:"f" default:"medium" help:"Threshold: a percentage like 75% or a tier (off, light, medium, deep, lockdown)."`
+	Timer string   `short:"t" help:"Session length such as 25m or 1h30m; 0 means until stopped (the default)."`
+	Focus string   `short:"f" help:"Threshold: a percentage like 75% or a tier: off (0), light (35%), medium (65%), deep (90%), lockdown (99%). Default: medium."`
 	Note  string   `short:"m" help:"A note about what you are doing."`
-	Then  string   `aliases:"clear" help:"What to fall back to when the timer ends: a percentage, a tier or off. Default: the layer beneath."`
-	Words []string `arg:"" optional:"" name:"note" help:"The note, as plain words (same as -m)."`
+	Then  string   `aliases:"clear" help:"What to fall back to when the timer ends: a percentage or a tier (see -f). Default: the layer beneath."`
+	Words []string `arg:"" optional:"" name:"note" help:"The note, as plain words (same as -m). A leading level or length is read as one, so \"shh focus deep 25m writing\" works; tiers: off (0), light (35%), medium (65%), deep (90%), lockdown (99%)."`
+}
+
+var (
+	percentWord  = regexp.MustCompile(`^[0-9]+%$`)
+	durationWord = regexp.MustCompile(`^([0-9]+(\.[0-9]+)?[hms])+$`)
+)
+
+// isSettingWord is true for a level or a length written the short way.
+func isSettingWord(w string) bool {
+	return percentWord.MatchString(w) || durationWord.MatchString(w) || isTierWord(w)
+}
+
+// isTierWord is true for a tier name, "off" included.
+func isTierWord(w string) bool {
+	_, err := decide.ParseThreshold(w)
+	return err == nil && !percentWord.MatchString(w)
+}
+
+// leadingSettings takes a level and a length off the front of the plain words, so "shh focus 30%" sets the level instead of
+// becoming a note that says "30%". A flag given as well is a mistake worth reporting rather than choosing between. A lone tier
+// name ("shh focus deep") is a level too, but "deep work" is a note.
+func (c *focusCmd) leadingSettings() (level, length string, words []string, err error) {
+	level, length, words = c.Focus, c.Timer, c.Words
+	for len(words) > 0 {
+		w := words[0]
+		switch {
+		case percentWord.MatchString(w):
+			if level != "" {
+				return "", "", nil, usagef("the level is given twice (%s and %s)", level, w)
+			}
+			level = w
+		case durationWord.MatchString(w):
+			if length != "" {
+				return "", "", nil, usagef("the length is given twice (%s and %s)", length, w)
+			}
+			length = w
+		case level == "" && isTierWord(w) && (len(words) == 1 || isSettingWord(words[1])):
+			// "deep" alone, or followed by another setting ("deep 5m"), is a level; "deep work" is a note.
+			level = w
+		default:
+			return level, length, words, nil
+		}
+		words = words[1:]
+	}
+	return level, length, words, nil
 }
 
 func (c *focusCmd) Run(env *Env) error {
-	level, err := decide.ParseThreshold(c.Focus)
+	levelText, timerText, words, err := c.leadingSettings()
 	if err != nil {
-		return usagef("-f: %w", err)
+		return err
 	}
-	duration, err := decide.ParseDuration(c.Timer)
+	if levelText == "" {
+		levelText = "medium"
+	}
+	if timerText == "" {
+		timerText = "0"
+	}
+	level, err := decide.ParseThreshold(levelText)
 	if err != nil {
-		return usagef("-t: %w", err)
+		return usagef("level: %w", err)
+	}
+	duration, err := decide.ParseDuration(timerText)
+	if err != nil {
+		return usagef("length: %w", err)
 	}
 	var then *int
 	if c.Then != "" {
@@ -44,11 +100,11 @@ func (c *focusCmd) Run(env *Env) error {
 		then = &v
 	}
 	note := c.Note
-	if words := strings.Join(c.Words, " "); words != "" {
+	if joined := strings.Join(words, " "); joined != "" {
 		if note != "" {
 			return usagef("give the note once, either with -m or as plain words")
 		}
-		note = words
+		note = joined
 	}
 	if err := env.ensureWorker(); err != nil {
 		return err
@@ -79,7 +135,7 @@ func (c *stopCmd) Run(env *Env) error {
 }
 
 type baselineCmd struct {
-	Level string `arg:"" name:"level" help:"A percentage like 30%, a tier (light, medium, deep, lockdown) or off."`
+	Level string `arg:"" name:"level" help:"A percentage like 30% or a tier: off (0), light (35%), medium (65%), deep (90%), lockdown (99%)."`
 }
 
 func (c *baselineCmd) Run(env *Env) error {
@@ -93,6 +149,21 @@ func (c *baselineCmd) Run(env *Env) error {
 	view, err := env.client().Baseline(level)
 	if err != nil {
 		return err
+	}
+	// Say what was set before showing the level in force: a session running on top of the baseline keeps the level at its own
+	// value, and reading "Focus is on at 65%" straight after typing 30% looks like the command did the wrong thing.
+	if level == 0 {
+		fmt.Fprintln(env.Stdout, "Baseline cleared.")
+	} else {
+		fmt.Fprintf(env.Stdout, "Baseline set to %s.\n", decide.FormatLevel(level))
+	}
+	if view.Level != level && len(view.Layers) > 0 {
+		top := view.Layers[len(view.Layers)-1]
+		until := "until it is stopped"
+		if top.Timed {
+			until = "until it ends in " + decide.FormatRemaining(top.RemainingSecs)
+		}
+		fmt.Fprintf(env.Stdout, "A session at %s is running on top of it, so focus stays at %s %s.\n", decide.FormatLevel(top.Percent), decide.FormatLevel(view.Level), until)
 	}
 	renderStatus(env.Stdout, view, true)
 	return nil
@@ -227,4 +298,14 @@ func (c *replayCmd) Run(env *Env) error {
 	}
 	defer in.Close()
 	return replay.Run(in, env.Stdout, replay.Options{Threshold: threshold, Rules: r, Embedder: embedder})
+}
+
+type menubarCmd struct{}
+
+// Run is the menu bar item's own process: it shows the worker's status until the worker is gone. It never starts a worker itself.
+func (c *menubarCmd) Run(env *Env) error {
+	if env.Menubar == nil {
+		return errors.New("this build has no menu bar item")
+	}
+	return env.Menubar(context.Background())
 }

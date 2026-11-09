@@ -38,6 +38,9 @@ type Env struct {
 	AlertSources []string
 	// Daemon runs the worker in the foreground until ctx ends; it is what `shh daemon` (the spawned process) does.
 	Daemon func(ctx context.Context) error
+	// Menubar runs the menu bar item in the foreground until ctx ends or the worker is gone; it is what `shh menubar` (started by
+	// the worker) does. Nil when the menu bar is not available.
+	Menubar func(ctx context.Context) error
 }
 
 type cli struct {
@@ -53,6 +56,7 @@ type cli struct {
 	Alert    alertCmd    `cmd:"" help:"Alert tools."`
 	Replay   replayCmd   `cmd:"" help:"Run the classifier over a file of notifications and print each decision."`
 	Daemon   daemonCmd   `cmd:"" hidden:"" help:"Run the background worker (started by shh itself)."`
+	Menubar  menubarCmd  `cmd:"" hidden:"" help:"Run the menu bar item (started by the worker)."`
 }
 
 type exitRequest int
@@ -78,6 +82,7 @@ func Run(args []string, env Env) (code int) {
 		}
 	}()
 
+	args = expandShorthand(args)
 	var root cli
 	parser, err := kong.New(&root,
 		kong.Name("shh"),
@@ -96,7 +101,7 @@ func Run(args []string, env Env) (code int) {
 		fmt.Fprintln(env.Stderr, "shh: error:", err)
 		return 2
 	}
-	if name := ctx.Command(); name != "daemon" && name != "replay <file>" && name != "alert test" {
+	if name := ctx.Command(); name != "daemon" && name != "menubar" && name != "replay <file>" && name != "alert test" {
 		env.rearmPersistedFocus()
 	}
 	if err := ctx.Run(); err != nil {
@@ -108,6 +113,30 @@ func Run(args []string, env Env) (code int) {
 		return 1
 	}
 	return 0
+}
+
+// expandShorthand turns "shh 30%", "shh 40% 5m" and "shh deep" into "shh focus ...", the quick way to start a session. Anything
+// that does not start with a level or a length is left alone, so every full command and flag still works as written, and bare
+// "shh" still opens the UI.
+func expandShorthand(args []string) []string {
+	if len(args) == 0 {
+		return args
+	}
+	first := args[0]
+	if percentWord.MatchString(first) || durationWord.MatchString(first) || isTierName(first) {
+		return append([]string{"focus"}, args...)
+	}
+	return args
+}
+
+// isTierName is true for the names that stand for a level, except "off", which would make "shh off" mean something other than
+// what it says.
+func isTierName(word string) bool {
+	switch word {
+	case "light", "medium", "deep", "lockdown":
+		return true
+	}
+	return false
 }
 
 func (e *Env) client() *session.Client { return session.NewClient(e.SocketPath) }
