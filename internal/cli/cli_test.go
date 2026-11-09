@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/charlesrobsampson/shh/internal/cli"
 	"github.com/charlesrobsampson/shh/internal/config"
+	"github.com/charlesrobsampson/shh/internal/decide"
 	"github.com/charlesrobsampson/shh/internal/rules"
 	"github.com/charlesrobsampson/shh/internal/session"
 	"github.com/charlesrobsampson/shh/internal/store"
@@ -760,6 +762,13 @@ func TestFocusReadsALeadingLevelAndLengthFromThePlainWords(t *testing.T) {
 		{"a length and a level in either order", []string{"focus", "25m", "75%", "deep", "work"}, 75, "deep work", true},
 		{"the other order", []string{"focus", "75%", "1h30m"}, 75, "", true},
 		{"a lone tier name", []string{"focus", "deep"}, 90, "", false},
+		{"a tier then a length", []string{"focus", "deep", "5m"}, 90, "", true},
+		{"light then a length", []string{"focus", "light", "5m"}, 35, "", true},
+		{"lockdown then a length", []string{"focus", "lockdown", "5m"}, 99, "", true},
+		{"a length then a tier", []string{"focus", "5m", "deep"}, 90, "", true},
+		{"a tier, a length and a note", []string{"focus", "deep", "5m", "writing", "docs"}, 90, "writing docs", true},
+		{"off for a while is a break", []string{"focus", "off", "25m"}, 0, "", true},
+		{"a tier followed by words is a note", []string{"focus", "deep", "writing"}, 65, "deep writing", false},
 		{"a tier name that starts a note is a note", []string{"focus", "deep", "work"}, 65, "deep work", false},
 		{"words that only look a little like settings", []string{"focus", "meeting", "at", "30%"}, 65, "meeting at 30%", false},
 		{"the flag still works", []string{"focus", "-f", "40%", "write", "docs"}, 40, "write docs", false},
@@ -806,6 +815,9 @@ func TestShorthandStartsASessionFromALevelAndALength(t *testing.T) {
 		{[]string{"5m", "40%"}, 40, true, ""},
 		{[]string{"25m"}, 65, true, ""},
 		{[]string{"deep"}, 90, false, ""},
+		{[]string{"deep", "5m"}, 90, true, ""},
+		{[]string{"lockdown", "5m"}, 99, true, ""},
+		{[]string{"light", "5m", "reading"}, 35, true, "reading"},
 		{[]string{"75%", "writing", "docs"}, 75, false, "writing docs"},
 		{[]string{"75%", "--then", "off", "-m", "x"}, 75, false, "x"},
 	}
@@ -843,5 +855,22 @@ func TestShorthandLeavesEveryOtherCommandAlone(t *testing.T) {
 	}
 	if code := r.run("off"); code == 0 {
 		t.Error(`"shh off" should not be a shorthand`)
+	}
+}
+
+func TestHelpListsEveryTierWithItsValue(t *testing.T) {
+	for _, args := range [][]string{{"focus", "--help"}, {"baseline", "--help"}} {
+		r := newRig(t, false)
+		r.run(args...)
+		help := strings.Join(strings.Fields(r.out.String()+r.err.String()), " ")
+		for _, tier := range decide.Tiers() {
+			want := fmt.Sprintf("%s (%d%%)", tier.Name, tier.Level)
+			if tier.Level == 0 {
+				want = tier.Name + " (0)"
+			}
+			if !strings.Contains(help, want) {
+				t.Errorf("%v help does not say %q, so the tiers' values are not discoverable", args, want)
+			}
+		}
 	}
 }
