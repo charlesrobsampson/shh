@@ -519,7 +519,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Manual check: send an invite for next week and one for ten minutes away at a 50% filter: only the near one alerts.
 
 ### 48 · Banner header: which app an alert is from
-- [ ] Done
+- [x] Done
 - Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/48-banner-header` · Depends: 44
 - Context: the user asked for a small header on each banner saying what app it came from, when that is known.
