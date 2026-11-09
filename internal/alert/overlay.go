@@ -34,9 +34,9 @@ type OverlayConfig struct {
 	Start func(env []string, onEvent func(line string)) (Process, error)
 	// OnFailure receives alerts whose banner process died without showing them, so they can be shown another way.
 	OnFailure func(Request, error)
-	// OnFlag hears that the Flag button of a banner was pressed, with the id of the notification it is about, so it can be marked for
-	// review. Called once per banner, from the goroutine that reads the banner's output. Optional.
-	OnFlag func(notificationID int64)
+	// OnFlag hears that the Flag button of a banner was switched on or off, with the id of the notification it is about, so it can be
+	// marked (or unmarked) for review. Called from the goroutine that reads the banner's output, only when the state changes. Optional.
+	OnFlag func(notificationID int64, flagged bool)
 }
 
 // Overlay draws each banner in its own osascript process (see docs/spikes/03-banner.md), in a window of its own that the banner
@@ -55,7 +55,7 @@ type Overlay struct {
 
 // banner is what the overlay knows about one banner on screen.
 type banner struct {
-	flagged   bool // the Flag button has been pressed
+	flagged   bool // the Flag button is on
 	req       Request
 	proc      Process
 	height    int // the current height, which Preview and Collapse change
@@ -232,7 +232,7 @@ func (o *Overlay) Show(r Request) error {
 func (o *Overlay) onEvent(b *banner, line string) {
 	field, value, _ := strings.Cut(line, " ")
 	if field == "flag" {
-		o.flag(b)
+		o.flag(b, value == "1")
 		return
 	}
 	n, err := strconv.Atoi(value)
@@ -257,18 +257,18 @@ func (o *Overlay) onEvent(b *banner, line string) {
 	}
 }
 
-// flag passes a banner's Flag press on to the hook, once, and only for a banner that is still on screen and is about a stored
-// notification.
-func (o *Overlay) flag(b *banner) {
+// flag passes a change of a banner's Flag button on to the hook: only a real change, and only for a banner that is still on screen
+// and is about a stored notification.
+func (o *Overlay) flag(b *banner, on bool) {
 	o.mu.Lock()
-	ok := o.onScreenLocked(b) && !b.flagged && b.req.NotificationID != 0
+	ok := o.onScreenLocked(b) && b.req.NotificationID != 0 && b.flagged != on
 	if ok {
-		b.flagged = true
+		b.flagged = on
 	}
 	id := b.req.NotificationID
 	o.mu.Unlock()
 	if ok && o.cfg.OnFlag != nil {
-		o.cfg.OnFlag(id)
+		o.cfg.OnFlag(id, on)
 	}
 }
 

@@ -129,7 +129,7 @@ func persistedFocus(dbPath string) bool {
 
 // newAlerter draws alerts in the AppKit overlay and falls back to a Notification Center notification (titled with the own-banner
 // prefix so the suppressor lets it through) if the overlay cannot run or dies.
-func newAlerter(cfg config.Config, onError func(error), onFlag func(notificationID int64)) (alert.Alerter, *alert.Overlay) {
+func newAlerter(cfg config.Config, onError func(error), onFlag func(notificationID int64, flagged bool)) (alert.Alerter, *alert.Overlay) {
 	fallback := alert.NewFallback(alert.FallbackConfig{OwnPrefix: ingest.OwnTitlePrefix})
 	overlay := alert.NewOverlay(alert.OverlayConfig{
 		OnFlag: onFlag,
@@ -174,13 +174,13 @@ func runDaemon(cfg config.Config) error {
 		return err
 	}
 
-	// A banner's Flag button marks its notification for review in the Train tab.
-	alerter, overlay := newAlerter(cfg, onError, func(id int64) {
+	// A banner's Flag button marks its notification for review in the Train tab (and pressing it again clears the mark).
+	alerter, overlay := newAlerter(cfg, onError, func(id int64, flagged bool) {
 		if id < 0 {
 			return // a sample from `shh alert test`: nothing real to mark
 		}
-		if err := db.SetFlagged(id, true); err != nil {
-			onError(fmt.Errorf("flagging notification %d: %w", id, err))
+		if err := db.SetFlagged(id, flagged); err != nil {
+			onError(fmt.Errorf("changing the flag on notification %d: %w", id, err))
 		}
 	})
 	worker, err := session.NewWorker(session.Config{

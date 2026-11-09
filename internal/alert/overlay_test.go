@@ -3,6 +3,7 @@ package alert_test
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -673,9 +674,16 @@ func flagReq(title string, notificationID int64) alert.Request {
 	return r
 }
 
-func TestPressingFlagTellsTheHookWhichNotificationOnceOnly(t *testing.T) {
+type flagCall struct {
+	id      int64
+	flagged bool
+}
+
+// flagRig is an overlay whose OnFlag calls are recorded.
+func flagRig(t *testing.T) (*overlayRig, func() []flagCall) {
+	t.Helper()
 	var mu sync.Mutex
-	var flagged []int64
+	var calls []flagCall
 	r := &overlayRig{t: t}
 	r.overlay = alert.NewOverlay(alert.OverlayConfig{
 		Start: func(env []string, onEvent func(string)) (alert.Process, error) {
@@ -685,48 +693,56 @@ func TestPressingFlagTellsTheHookWhichNotificationOnceOnly(t *testing.T) {
 			r.started = append(r.started, p)
 			return p, nil
 		},
-		OnFlag: func(id int64) { mu.Lock(); flagged = append(flagged, id); mu.Unlock() },
+		OnFlag: func(id int64, flagged bool) { mu.Lock(); calls = append(calls, flagCall{id, flagged}); mu.Unlock() },
 	})
+	return r, func() []flagCall { mu.Lock(); defer mu.Unlock(); return append([]flagCall(nil), calls...) }
+}
+
+func TestTheFlagButtonToggleReachesTheHookWithTheNewState(t *testing.T) {
+	r, calls := flagRig(t)
 	r.show(flagReq("a", 41))
 	r.show(flagReq("b", 42))
-	r.process(0).emit("flag")
-	r.process(0).emit("flag") // pressing it again does nothing more
-	r.process(1).emit("flag")
-	mu.Lock()
-	defer mu.Unlock()
-	if len(flagged) != 2 || flagged[0] != 41 || flagged[1] != 42 {
-		t.Errorf("flagged = %v, want each notification once, in order", flagged)
+	r.process(0).emit("flag 1")
+	r.process(1).emit("flag 1")
+	r.process(0).emit("flag 0") // pressed again: cleared
+	r.process(0).emit("flag 1") // and flagged once more
+	want := []flagCall{{41, true}, {42, true}, {41, false}, {41, true}}
+	if got := calls(); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("OnFlag calls = %v, want %v", got, want)
+	}
+}
+
+func TestRepeatedStatesAreNotPassedOnTwice(t *testing.T) {
+	r, calls := flagRig(t)
+	r.show(flagReq("a", 41))
+	r.process(0).emit("flag 1")
+	r.process(0).emit("flag 1")
+	r.process(0).emit("flag 0")
+	r.process(0).emit("flag 0")
+	r.process(0).emit("flag") // no state: treated as off, which changes nothing now
+	if got := calls(); fmt.Sprint(got) != fmt.Sprint([]flagCall{{41, true}, {41, false}}) {
+		t.Errorf("OnFlag calls = %v, want one call per real change", got)
 	}
 }
 
 func TestAFlagEventFromABannerWithNoNotificationOrThatHasGoneIsIgnored(t *testing.T) {
-	calls := 0
-	r := &overlayRig{t: t}
-	r.overlay = alert.NewOverlay(alert.OverlayConfig{
-		Start: func(env []string, onEvent func(string)) (alert.Process, error) {
-			r.mu.Lock()
-			defer r.mu.Unlock()
-			p := &fakeProcess{env: env, finish: make(chan string, 1), onEvent: onEvent}
-			r.started = append(r.started, p)
-			return p, nil
-		},
-		OnFlag: func(int64) { calls++ },
-	})
+	r, calls := flagRig(t)
 	r.show(flagReq("no notification", 0))
 	r.show(flagReq("goes away", 5))
-	r.process(0).emit("flag")
+	r.process(0).emit("flag 1")
 	r.process(1).finish <- "dismissed"
 	settle()
-	r.process(1).emit("flag")
-	if calls != 0 {
-		t.Errorf("OnFlag called %d times for a banner with nothing to mark or one that has gone", calls)
+	r.process(1).emit("flag 1")
+	if got := calls(); len(got) != 0 {
+		t.Errorf("OnFlag called %v for a banner with nothing to mark or one that has gone", got)
 	}
 }
 
 func TestAFlagEventWithNoHookIsHarmless(t *testing.T) {
 	r := newOverlayRig(t)
 	r.show(flagReq("a", 1))
-	r.process(0).emit("flag")
+	r.process(0).emit("flag 1")
+	r.process(0).emit("flag 0")
 }
 
 func TestTheFlaggedLabelTravelsWithTheBannerAndTheScriptHandlesTheButton(t *testing.T) {
@@ -749,7 +765,7 @@ func TestTheFlaggedLabelTravelsWithTheBannerAndTheScriptHandlesTheButton(t *test
 		t.Errorf("buttons = %+v", spec.Buttons)
 	}
 	script := strings.Join(alert.OverlayCommand(request("a", "top-right")).Args, " ")
-	for _, want := range []string{"'flag'", "spec.flaggedLabel", "emit('flag')", "setEnabled(false)"} {
+	for _, want := range []string{"'flag'", "spec.flaggedLabel", "emit('flag '", "flagged = !flagged"} {
 		if !strings.Contains(script, want) {
 			t.Errorf("the banner script does not mention %s", want)
 		}
