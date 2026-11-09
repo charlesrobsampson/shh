@@ -100,7 +100,9 @@ type Model struct {
 	// expandedID is the notification shown in full across the whole screen (e); 0 when none is. scroll is how far down its text is.
 	expandedID int64
 	scroll     int
-	// prompt is the label being typed after t or a digit; nil when there is none.
+	// count is the number typed before a motion (3 in 3k), vim style; 0 when none is pending.
+	count int
+	// prompt is the label being typed after t; nil when there is none.
 	prompt *prompt
 	// cursorOn is whether the prompt's cursor is showing right now; blinkGen identifies the current blink timer; restartBlink asks
 	// for a new one after the key that was just handled.
@@ -247,15 +249,31 @@ func (m *Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.showHelp = false
 		return m, nil
 	}
-	switch msg.String() {
+	// A number typed before a motion repeats it (6j, 3k) or says where to go (5G). Digits only build a count here; an exact label is
+	// typed after t, when the prompt is open and digits go into it.
+	key := msg.String()
+	if digit, ok := countDigit(key); ok {
+		if m.tab != TabFocus && (digit != 0 || m.count > 0) { // a lone 0 does nothing
+			m.count = min(m.count*10+digit, maxCount)
+		}
+		return m, nil
+	}
+	count := m.count
+	m.count = 0
+	if key == "esc" && count > 0 {
+		return m, nil // Esc drops a pending count before it does anything else
+	}
+	steps := max(1, count)
+
+	switch key {
 	case "ctrl+c", "q":
 		return m, tea.Quit
 	case "?":
 		m.showHelp = true
 	case "tab", "l", "right":
-		m.goTo((m.tab + 1) % tabCount)
+		m.goTo((m.tab + Tab(steps%int(tabCount))) % tabCount)
 	case "shift+tab", "h", "left":
-		m.goTo((m.tab + tabCount - 1) % tabCount)
+		m.goTo((m.tab + tabCount - Tab(steps%int(tabCount))) % tabCount)
 	case "f1", "!":
 		m.goTo(TabFocus)
 	case "f2", "@":
@@ -280,16 +298,18 @@ func (m *Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.openPrompt("")
 	case "u":
 		m.undoTraining()
-	case "0", "1", "2", "3", "4", "5", "6", "7", "8", "9":
-		m.openPrompt(msg.String()) // a digit starts typing a label, so a score can be given with one hand
 	case "j", "down":
-		m.move(1)
+		m.move(steps)
 	case "k", "up":
-		m.move(-1)
+		m.move(-steps)
 	case "g", "home":
-		m.move(-len(m.lists[m.tab]))
+		m.jumpTo(max(0, count-1)) // the top, or row N when a number came first
 	case "G", "end":
-		m.move(len(m.lists[m.tab]))
+		if count > 0 {
+			m.jumpTo(count - 1) // 5G goes to row 5, as in vim
+		} else {
+			m.jumpTo(1 << 30) // the bottom: jumpTo keeps it inside the list or the text
+		}
 	case "pgdown", "ctrl+d":
 		m.move(m.listHeight())
 	case "pgup", "ctrl+u":
@@ -427,7 +447,7 @@ func (m *Model) trainable() (store.Notification, bool) {
 	return n, true
 }
 
-// openPrompt (t, or a digit) starts typing an exact label (0 to 100, or a tier name) for the selected notification.
+// openPrompt (on t) starts typing an exact label (0 to 100, or a tier name) for the selected notification.
 func (m *Model) openPrompt(initial string) {
 	if n, ok := m.trainable(); ok {
 		m.prompt = &prompt{text: initial, target: n}
@@ -628,7 +648,7 @@ func sortMostInformativeFirst(rows []store.Notification) {
 	})
 }
 
-func abs(x float64) float64 {
+func abs[T int | float64](x T) T {
 	if x < 0 {
 		return -x
 	}
@@ -638,6 +658,31 @@ func abs(x float64) float64 {
 // openApp opens an app by bundle id, the same way the alert banners do.
 func openApp(bundleID string) error {
 	return exec.Command("open", "-b", bundleID).Run()
+}
+
+// maxCount bounds a typed count to four digits.
+const maxCount = 9999
+
+// countDigit says whether the key is a digit and which.
+func countDigit(key string) (int, bool) {
+	if len(key) == 1 && key[0] >= '0' && key[0] <= '9' {
+		return int(key[0] - '0'), true
+	}
+	return 0, false
+}
+
+// jumpTo goes to a row (counting from 0), or, in the expanded view, to a line of the text.
+func (m *Model) jumpTo(row int) {
+	if m.tab == TabFocus {
+		return
+	}
+	if m.expanded() {
+		m.scroll = max(0, row)
+		m.scrollBy(0)
+		return
+	}
+	m.cursor[m.tab] = row
+	m.clamp(m.tab)
 }
 
 // move changes the selected row by delta, staying inside the list.
@@ -677,14 +722,15 @@ func (m *Model) bodyHeight() int { return max(3, m.height-tabBarHeight-statusBar
 // listHeight is how many rows the list shows: the body without the header line of the list.
 func (m *Model) listHeight() int { return max(1, m.bodyHeight()-1) }
 
-func (m *Model) listWidth() int { return max(30, m.width*45/100) }
+func (m *Model) listWidth() int { return max(34, m.width*50/100) }
 
 var (
 	// Colours come only from the terminal's own palette (ANSI colours 0 to 15, bold, faint and reverse), never fixed RGB values, so the
 	// UI takes on whatever theme the terminal is using, light or dark.
-	blockedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true) // yellow in most themes: needs a look
-	alertedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))            // green: it got through
-	unreadStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
+	blockedStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true) // yellow in most themes: needs a look
+	alertedStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))            // green: it got through
+	unreadStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
+	lineNumberStyle = lipgloss.NewStyle().Faint(true)
 	// flaggedStyle marks a notification the user flagged from its alert to look at again: magenta and bold in most themes.
 	flaggedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Bold(true)
 	// inputStyle is the box a label is typed in. It is drawn in normal video inside the reversed bar, so it stands out from the text
@@ -787,12 +833,15 @@ func (m *Model) listView() string {
 	}
 	end := min(len(rows), m.offset[m.tab]+m.listHeight())
 	for i := m.offset[m.tab]; i < end; i++ {
-		lines = append(lines, fit(m.row(rows[i], w, i == m.cursor[m.tab]), w))
+		lines = append(lines, fit(m.lineNumber(i)+m.row(rows[i], w, i == m.cursor[m.tab]), w))
 	}
 	return pad(lines, m.bodyHeight(), w)
 }
 
 // Column widths of a list row: time, source, then the sender takes what is left, then the score and the blocked mark.
+// gutterWidth is the room for the line numbers beside each row: three digits and a space.
+const gutterWidth = 4
+
 const (
 	colTime   = 6
 	colSource = 9
@@ -805,10 +854,10 @@ const (
 const blockedMark = "✕ blocked"
 
 func listHeader(w int) string {
-	return fmt.Sprintf("   %-*s%-*s%-*s%*s  %s", colTime, "time", colSource, "app", senderWidth(w), "from", colScore, "score", "held back")
+	return fmt.Sprintf("%*s   %-*s%-*s%-*s%*s  %s", gutterWidth, "", colTime, "time", colSource, "app", senderWidth(w), "from", colScore, "score", "held back")
 }
 
-func senderWidth(w int) int { return max(6, w-3-colTime-colSource-colScore-2-colStatus) }
+func senderWidth(w int) int { return max(6, w-gutterWidth-3-colTime-colSource-colScore-2-colStatus) }
 
 // row writes one notification as a line of the list, in the terminal's own colours. The selected row is drawn in reverse video, so
 // each piece is styled with that already, instead of nesting styles inside a reversed line.
@@ -843,6 +892,16 @@ func (m *Model) row(n store.Notification, w int, selected bool) string {
 		cell(plain, fmt.Sprintf("%-*s%-*s%-*s%*d  ", colTime, m.when(n.Timestamp), colSource, runewidth.Truncate(oneLine(n.Source), colSource-1, "…"),
 			senderWidth(w), runewidth.Truncate(oneLine(n.Sender), senderWidth(w)-1, "…"), colScore, score(n.Score))) +
 		cell(statusStyle, status)
+}
+
+// lineNumber is the gutter beside row i, as in vim with number and relativenumber both on: the cursor's row shows its own number
+// (counting from 1) and every other row shows how far it is from the cursor, which is what a count like 6j needs.
+func (m *Model) lineNumber(i int) string {
+	cursor := m.cursor[m.tab]
+	if i == cursor {
+		return lineNumberStyle.Bold(true).Render(fmt.Sprintf("%-*d ", gutterWidth-1, min(i+1, 999)))
+	}
+	return lineNumberStyle.Render(fmt.Sprintf("%*d ", gutterWidth-1, min(abs(i-cursor), 999)))
 }
 
 // when is the time of day for today's rows and the date for older ones.
@@ -954,6 +1013,8 @@ func (m *Model) messageLine() string {
 	var text string
 	var style lipgloss.Style
 	switch {
+	case m.count > 0 && m.prompt == nil:
+		text, style = fmt.Sprintf("%d: j / k move that many rows, G goes to that row, Esc cancels", m.count), errStyle
 	case m.prompt != nil && m.prompt.err != "":
 		text, style = "✗ "+oneLine(m.prompt.err), errStyle
 	case m.prompt != nil:
@@ -974,9 +1035,9 @@ func (m *Model) keyHints() string {
 	case TabFocus:
 		return "! @ # or Tab switch tabs · ? help · q quit"
 	case TabTrain:
-		return "y shh got it right · n shh got it wrong · t type a score · u undo · f flag · e read · o open · ? help"
+		return "6j / 3k move · y shh got it right · n shh got it wrong · t type a score · u undo · f flag · e read · ? help"
 	}
-	return "e read · o open its app · d dismiss · f flag · y right call · n wrong call · t score · u undo · ? help"
+	return "6j / 3k move · e read · o open its app · d dismiss · f flag · y right call · n wrong call · t score · u undo · ? help"
 }
 
 // promptBar is the state line while an exact label is being typed: the question in the bar's own reverse video, then the box the
@@ -1013,14 +1074,14 @@ func (m *Model) helpView() string {
 	keys := [][2]string{
 		{"Tab / Shift-Tab, l / h, ← / →", "next / previous tab"},
 		{"! @ #  (Shift-1 2 3), F1 F2 F3", "Focus, Notifications, Train"},
-		{"j / k, ↓ / ↑", "move down / up"},
-		{"g / G, PgUp / PgDn", "first / last, page"},
+		{"j / k, ↓ / ↑", "move down / up; a number first repeats it (6j, 3k)"},
+		{"g / G, 5G, PgUp / PgDn", "first / last row, row 5, page"},
 		{"e", "read it all (j/k scroll); not marked read"},
 		{"Enter, o", "open its app and mark it read"},
 		{"d, x", "dismiss (it stays in Train)"},
 		{"f", "flag it to review later (flagged rows lead the Train tab)"},
 		{"y / n", "did shh do the right thing? yes / no"},
-		{"t, or a digit", "type an exact 0-100 score or a tier name"},
+		{"t", "type a 0-100 score or tier name (digits type into it)"},
 		{"u", "undo the last training"},
 		{"?", "this help"},
 		{"q, Ctrl-C", "quit"},

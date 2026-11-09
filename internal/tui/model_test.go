@@ -524,7 +524,9 @@ func TestTheSelectedRowIsMarkedAndOnlyBlockedRowsCarryTheBlockedMark(t *testing.
 		}
 		return ""
 	}
-	ana, bo := find("Ana"), find("Bo")
+	// Each row starts with the line-number gutter; the markers follow it.
+	afterGutter := func(l string) string { return l[min(len(l), gutterWidth):] }
+	ana, bo := afterGutter(find("Ana")), afterGutter(find("Bo"))
 	if !strings.HasPrefix(ana, ">") || strings.HasPrefix(bo, ">") {
 		t.Errorf("the selected row should start with >: %q / %q", ana, bo)
 	}
@@ -535,7 +537,7 @@ func TestTheSelectedRowIsMarkedAndOnlyBlockedRowsCarryTheBlockedMark(t *testing.
 		t.Errorf("a blocked row should carry the mark: %q", bo)
 	}
 	r.press("j")
-	if ana, bo = find("Ana"), find("Bo"); strings.HasPrefix(ana, ">") || !strings.HasPrefix(bo, ">") {
+	if ana, bo = afterGutter(find("Ana")), afterGutter(find("Bo")); strings.HasPrefix(ana, ">") || !strings.HasPrefix(bo, ">") {
 		t.Errorf("the > should follow the cursor: %q / %q", ana, bo)
 	}
 	if got := r.view(); !strings.Contains(got, "held back") {
@@ -991,17 +993,17 @@ func TestTTypesAnExactLabelAndEnterSavesIt(t *testing.T) {
 	}
 }
 
-func TestADigitStartsTheLabelPromptWithThatDigit(t *testing.T) {
+func TestDigitsOnlyTypeIntoThePromptOnceItIsOpen(t *testing.T) {
 	r := newRig(t)
 	r.add("Ana", "x", 1)
 	r.refresh()
 	r.press("f3", "9")
-	if r.m.prompt == nil || r.m.prompt.text != "9" {
-		t.Fatalf("prompt = %+v, want it open and holding 9", r.m.prompt)
+	if r.m.prompt != nil {
+		t.Fatalf("a digit opened the label prompt: it should only build a count now (%+v)", r.m.prompt)
 	}
-	r.press("0", "enter")
+	r.press("esc", "t", "9", "0", "enter")
 	if got := r.trainer.requests; len(got) != 1 || got[0].Label == nil || *got[0].Label != 90 {
-		t.Errorf("requests = %+v, want an exact label of 90", got)
+		t.Errorf("requests = %+v, want an exact label of 90 typed after t", got)
 	}
 }
 
@@ -1255,7 +1257,7 @@ func TestHelpListsTheTrainingKeys(t *testing.T) {
 	r := newRig(t)
 	r.press("?")
 	got := r.view()
-	for _, want := range []string{"y / n", "did shh do the right thing", "t, or a digit", "undo"} {
+	for _, want := range []string{"y / n", "did shh do the right thing", "6j, 3k", "5G", "digits type into it", "undo"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("help does not mention %q:\n%s", want, got)
 		}
@@ -1621,5 +1623,231 @@ func TestHelpAndHintsMentionTheFlag(t *testing.T) {
 	r.press("?")
 	if got := r.view(); !strings.Contains(got, "flag it to review later") {
 		t.Errorf("help:\n%s", got)
+	}
+}
+
+// gutterNumbers reads the line numbers beside the rows of the list, top to bottom.
+func gutterNumbers(r *rig) []int {
+	var out []int
+	for _, l := range strings.Split(r.view(), "\n") {
+		left, _, ok := strings.Cut(l, "│")
+		if !ok || !strings.Contains(left, "Teams") {
+			continue
+		}
+		var n int
+		fmt.Sscanf(strings.TrimSpace(left[:gutterWidth]), "%d", &n)
+		out = append(out, n)
+	}
+	return out
+}
+
+func fiveRows(t *testing.T) *rig {
+	r := newRig(t)
+	for i := 0; i < 5; i++ {
+		r.add(fmt.Sprintf("Row%d", i), "x", i+1)
+	}
+	r.refresh()
+	return r
+}
+
+func TestTheGutterShowsDistancesFromTheCursorAndItsOwnNumberOnTheCursorRow(t *testing.T) {
+	r := fiveRows(t)
+	if got := gutterNumbers(r); fmt.Sprint(got) != fmt.Sprint([]int{1, 1, 2, 3, 4}) {
+		t.Errorf("gutter with the cursor on the first row = %v, want its own number 1 then distances 1 2 3 4", got)
+	}
+	r.press("j", "j")
+	if got := gutterNumbers(r); fmt.Sprint(got) != fmt.Sprint([]int{2, 1, 3, 1, 2}) {
+		t.Errorf("gutter with the cursor on the third row = %v, want distances 2 1, the cursor's own number 3, then 1 2", got)
+	}
+	r.press("f3")
+	if got := gutterNumbers(r); len(got) != 5 || got[0] != 1 {
+		t.Errorf("the Train tab has the gutter too: %v", got)
+	}
+}
+
+func TestTheGutterStaysRightAfterTheListScrolls(t *testing.T) {
+	r := newRig(t)
+	for i := 0; i < 40; i++ {
+		r.add(fmt.Sprintf("Row%02d", i), "x", i+1)
+	}
+	r.m.Update(tea.WindowSizeMsg{Width: 100, Height: 12})
+	r.refresh()
+	r.press("2", "5", "j")
+	got := gutterNumbers(r)
+	cursor := -1
+	for i, n := range got {
+		if n == 26 {
+			cursor = i
+		}
+	}
+	if cursor < 0 {
+		t.Fatalf("the cursor row (26) is not on screen with its own number: %v", got)
+	}
+	for i, n := range got {
+		if i != cursor && n != abs(i-cursor) {
+			t.Errorf("row at screen line %d shows %d, want its distance %d from the cursor", i, n, abs(i-cursor))
+		}
+	}
+}
+
+func TestACountRepeatsJAndK(t *testing.T) {
+	r := fiveRows(t)
+	r.press("3", "j")
+	if r.selectedSender() != "Row3" {
+		t.Errorf("3j selected %q, want Row3", r.selectedSender())
+	}
+	r.press("2", "k")
+	if r.selectedSender() != "Row1" {
+		t.Errorf("2k selected %q, want Row1", r.selectedSender())
+	}
+	r.press("9", "j")
+	if r.selectedSender() != "Row4" {
+		t.Errorf("9j selected %q, want to stop at the last row", r.selectedSender())
+	}
+	r.press("9", "k")
+	if r.selectedSender() != "Row0" {
+		t.Errorf("9k selected %q, want to stop at the first row", r.selectedSender())
+	}
+	r.press("2", "down", "1", "up")
+	if r.selectedSender() != "Row1" {
+		t.Errorf("2 down then 1 up selected %q, want Row1: counts work with the arrow keys", r.selectedSender())
+	}
+}
+
+func TestCountsCanHaveSeveralDigitsAndAZeroNeedsADigitBeforeIt(t *testing.T) {
+	r := newRig(t)
+	for i := 0; i < 30; i++ {
+		r.add(fmt.Sprintf("Row%02d", i), "x", i+1)
+	}
+	r.refresh()
+	r.press("1", "2", "j")
+	if r.selectedSender() != "Row12" {
+		t.Errorf("12j selected %q", r.selectedSender())
+	}
+	r.press("1", "0", "j")
+	if r.selectedSender() != "Row22" {
+		t.Errorf("10j selected %q: the 0 continues the count", r.selectedSender())
+	}
+	r.press("0", "j")
+	if r.selectedSender() != "Row23" {
+		t.Errorf("0 then j selected %q: a lone 0 does nothing, so j moves one row", r.selectedSender())
+	}
+	if r.m.count != 0 {
+		t.Errorf("count = %d after a motion, want it used up", r.m.count)
+	}
+	for i := 0; i < 8; i++ {
+		r.press("9")
+	}
+	if r.m.count != maxCount {
+		t.Errorf("count = %d after many digits, want it capped at %d", r.m.count, maxCount)
+	}
+}
+
+func TestNGGoesToThatRow(t *testing.T) {
+	r := fiveRows(t)
+	r.press("4", "G")
+	if r.selectedSender() != "Row3" {
+		t.Errorf("4G selected %q, want the fourth row", r.selectedSender())
+	}
+	r.press("1", "g")
+	if r.selectedSender() != "Row0" {
+		t.Errorf("1g selected %q, want the first row", r.selectedSender())
+	}
+	r.press("9", "9", "G")
+	if r.selectedSender() != "Row4" {
+		t.Errorf("99G selected %q, want the last row", r.selectedSender())
+	}
+	r.press("g")
+	if r.selectedSender() != "Row0" {
+		t.Errorf("g selected %q, want the top", r.selectedSender())
+	}
+	r.press("G")
+	if r.selectedSender() != "Row4" {
+		t.Errorf("G selected %q, want the bottom", r.selectedSender())
+	}
+}
+
+func TestAnyOtherKeyOrEscDropsAPendingCount(t *testing.T) {
+	r := fiveRows(t)
+	r.press("3", "esc")
+	if r.m.count != 0 {
+		t.Error("Esc should drop the count")
+	}
+	r.press("j")
+	if r.selectedSender() != "Row1" {
+		t.Errorf("selected %q, want a plain one-row j after the count was dropped", r.selectedSender())
+	}
+	r.press("3", "d") // a key that is not a motion uses up the count without repeating
+	if r.m.count != 0 {
+		t.Error("a non-motion key should drop the count")
+	}
+	if len(r.trainer.requests) != 0 {
+		t.Error("a count must not repeat training")
+	}
+	r.press("2", "f3", "j")
+	if r.m.Tab() != TabTrain || r.m.cursor[TabTrain] != 1 {
+		t.Errorf("tab %v cursor %d: switching tabs drops the count so j moves one row", r.m.Tab(), r.m.cursor[TabTrain])
+	}
+}
+
+func TestAPendingCountIsShownOnTheMessageLine(t *testing.T) {
+	r := fiveRows(t)
+	r.press("1", "4")
+	if got := r.messageLine(); !strings.Contains(got, "14") || !strings.Contains(got, "Esc cancels") {
+		t.Errorf("message line = %q, want the pending count and how to cancel it", got)
+	}
+	r.press("esc")
+	if got := r.messageLine(); strings.Contains(got, "Esc cancels") {
+		t.Errorf("the count message should go with the count: %q", got)
+	}
+}
+
+func TestDigitsDoNothingOnTheFocusTab(t *testing.T) {
+	r := fiveRows(t)
+	r.press("f1", "5", "9")
+	if r.m.count != 0 || r.m.prompt != nil {
+		t.Errorf("count %d prompt %v on the Focus tab", r.m.count, r.m.prompt)
+	}
+}
+
+func TestACountScrollsTheExpandedMessageAndNGJumpsToALine(t *testing.T) {
+	r := newRig(t)
+	r.add("Ana", longText, 1)
+	r.m.Update(tea.WindowSizeMsg{Width: 100, Height: 14})
+	r.refresh()
+	r.press("e", "5", "j")
+	if r.m.scroll != 5 {
+		t.Errorf("scroll = %d after 5j, want 5", r.m.scroll)
+	}
+	r.press("2", "k")
+	if r.m.scroll != 3 {
+		t.Errorf("scroll = %d after 2k, want 3", r.m.scroll)
+	}
+	r.press("9", "G")
+	if r.m.scroll != 8 {
+		t.Errorf("scroll = %d after 9G, want line 9 at the top (8)", r.m.scroll)
+	}
+	r.press("g")
+	if r.m.scroll != 0 {
+		t.Errorf("scroll = %d after g", r.m.scroll)
+	}
+}
+
+func TestTheGutterNeverMakesALineWiderThanTheTerminal(t *testing.T) {
+	r := fiveRows(t)
+	for _, size := range [][2]int{{80, 24}, {60, 10}, {40, 12}} {
+		r.m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		for _, tab := range []string{"f2", "f3"} {
+			r.press(tab)
+			view := r.view()
+			if h := lipgloss.Height(view); h != size[1] {
+				t.Errorf("%dx%d %s: %d lines tall", size[0], size[1], tab, h)
+			}
+			for i, line := range strings.Split(view, "\n") {
+				if w := lipgloss.Width(line); w > size[0] {
+					t.Errorf("%dx%d %s: line %d is %d wide: %q", size[0], size[1], tab, i, w, line)
+				}
+			}
+		}
 	}
 }
