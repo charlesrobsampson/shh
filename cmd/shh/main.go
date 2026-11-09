@@ -29,6 +29,7 @@ import (
 	"github.com/charlesrobsampson/shh/internal/session"
 	"github.com/charlesrobsampson/shh/internal/store"
 	"github.com/charlesrobsampson/shh/internal/suppress"
+	"github.com/charlesrobsampson/shh/internal/tui"
 )
 
 var version = "dev"
@@ -68,6 +69,7 @@ func realEnv() cli.Env {
 	env.PersistedFocus = func() bool { return persistedFocus(cfg.Paths.DB) }
 	env.Daemon = func(context.Context) error { return runDaemon(cfg) }
 	env.Menubar = func(ctx context.Context) error { return runMenubar(ctx, cfg) }
+	env.TUI = func() error { return runTUI(cfg) }
 	for source := range cfg.Alert.Source {
 		env.AlertSources = append(env.AlertSources, source)
 	}
@@ -240,4 +242,18 @@ func openUI() error {
 	do script ` + strconv.Quote(quoted) + `
 end tell`
 	return exec.Command("osascript", "-e", script).Run()
+}
+
+// runTUI opens the terminal UI. It reads the same database as the worker (SQLite allows that) and asks the worker for the session
+// status, which it does without: with no worker the UI is for review and training.
+func runTUI(cfg config.Config) error {
+	if err := os.MkdirAll(cfg.Paths.Dir, 0o700); err != nil {
+		return err
+	}
+	db, err := store.Open(cfg.Paths.DB)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	return tui.Run(tui.Config{Data: db, Worker: session.NewClient(cfg.Paths.Socket), Label: cfg.Menubar.Label})
 }

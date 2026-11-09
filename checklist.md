@@ -344,11 +344,12 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 ### 31 · TUI skeleton and tabs
 - [ ] Done
-- Session: _(fill on start)_
 - Branch: `task/31-tui-skeleton` · Depends: 08, 26
 - Read: `manifest.md` §5, `plan.md` §8
 - Build: Bubble Tea app opened by bare `shh` (and `shh ui`) with three tabs: **Focus**, **Notifications**, **Train** (switch with `Tab`/`Shift-Tab` and `F1`–`F3`, so digit keys stay free for training labels). List rows show time, source, sender, score (0–100) and alerted/blocked; detail pane beside it. Status bar with session info from IPC (works without a worker too), `j/k/h/l`, `?` help. Focus tab is a placeholder here (built in 34).
 - Tests (drive the model with key messages, assert state/view text): tab switching; navigation bounds; Notifications shows only non-dismissed, Train only untrained; status bar shows time left.
+- Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
+- Notes: `internal/tui` (Bubble Tea v1.3 and Lipgloss v1.1, added to go.mod). `tui.Run(Config{Data, Worker, Label, Now, Refresh})`; `Data` is the store's `ListNotifications`, `Worker` is `session.Client.Status` (an error just means "not running": the UI works for review and training with no worker). `Model` has three tabs (Focus placeholder, Notifications = not dismissed, Train = not trained), switched with Tab/Shift-Tab, `h`/`l`, F1 to F3 (digits stay free for training labels). It opens on Notifications. Left column is the list (time, app, sender, score 0 to 100 as the model's base score, alerted/blocked; `>` marks the selected row and `!` alerted ones), right column is the detail pane (sender and title, source, time, status, score and boost, the focus level it was decided at, the reason, the body); `j/k`, arrows, `g/G`, PgUp/PgDn, `?` help (any key closes it), `q`/Ctrl-C quit. The status bar shows the session from IPC (`shh 28m · 65%` and how many it held back and let through, `focus off`, or `shh is not running`), the list counts, and `? help`. The lists and status refresh every second; the selection stays on the same notification when new ones arrive and stays in range when its row goes away. Wired as `env.TUI` in `cmd/shh`, so bare `shh` and `shh ui` open it on a terminal. The Focus tab only lists the stack for now (task 34); expand, read state, open and dismiss are task 32, training task 33.
 - Manual check: run `shh` against some stored rows; keys behave.
 
 ### 32 · TUI: preview/expand, read state, open in app
