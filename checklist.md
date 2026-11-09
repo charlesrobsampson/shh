@@ -529,7 +529,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Manual check: `shh alert test` shows the header on each sample.
 
 ### 49 · Calendar alerts: Go to opens the app the reminder came from
-- [ ] Done
+- [x] Done
 - Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/49-calendar-goto` · Depends: 17, 44
 - Context: the user asked for a Join button on meeting alerts, like the one in Outlook's own notification. Outlook reminders carry no meeting link (the only metadata is an opaque event identifier, and Outlook's Join action is handled by Outlook itself), and this Outlook has no scripting interface, so shh cannot do the join itself. The agreed step: the calendar alert's Go to button opens the app the reminder came from, where Join is one click. Later options, not built: a `join` button shown only when the alert text contains a meeting link, and looking the meeting up through Microsoft Graph for a real Join (needs sign-in and probably tenant consent).
