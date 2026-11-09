@@ -29,11 +29,13 @@ type fakeWorker struct {
 func (w *fakeWorker) Status() (session.StatusView, error) { return w.view, w.err }
 
 type rig struct {
-	t      *testing.T
-	store  *store.Store
-	worker *fakeWorker
-	m      *Model
-	next   int64
+	t       *testing.T
+	store   *store.Store
+	worker  *fakeWorker
+	m       *Model
+	next    int64
+	opened  []string
+	openErr error
 }
 
 func newRig(t *testing.T) *rig {
@@ -44,7 +46,10 @@ func newRig(t *testing.T) *rig {
 	}
 	t.Cleanup(func() { s.Close() })
 	r := &rig{t: t, store: s, worker: &fakeWorker{err: session.ErrNotRunning}}
-	r.m = New(Config{Data: s, Worker: r.worker, Now: func() time.Time { return now }})
+	r.m = New(Config{Data: s, Worker: r.worker, Now: func() time.Time { return now }, Open: func(bundle string) error {
+		r.opened = append(r.opened, bundle)
+		return r.openErr
+	}})
 	return r
 }
 
@@ -97,6 +102,10 @@ func key(k string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyCtrlC}
 	case "pgdown":
 		return tea.KeyMsg{Type: tea.KeyPgDown}
+	case "enter":
+		return tea.KeyMsg{Type: tea.KeyEnter}
+	case "esc":
+		return tea.KeyMsg{Type: tea.KeyEsc}
 	}
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
 }
@@ -535,5 +544,236 @@ func TestEmojiJoinersAreDroppedSoWidthsAreSafe(t *testing.T) {
 	r.refresh()
 	if got := r.view(); strings.ContainsAny(got, "\u200d\ufe0f\u200b") {
 		t.Errorf("invisible joiners reached the screen: %q", got)
+	}
+}
+
+func (r *rig) row(id int64) store.Notification {
+	r.t.Helper()
+	n, err := r.store.GetNotification(id)
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	return n
+}
+
+const longText = "line one\nline two\nline three\nline four\nline five\nline six\nline seven\nline eight\nline nine\nline ten\n" +
+	"line eleven\nline twelve\nline thirteen\nline fourteen\nline fifteen\nline sixteen\nline seventeen\nline eighteen\nline nineteen\nTHE END"
+
+func TestExpandingNeverMarksTheNotificationRead(t *testing.T) {
+	r := newRig(t)
+	id := r.add("Ana", longText, 1)
+	r.refresh()
+	r.press("e")
+	if !r.m.expanded() {
+		t.Fatal("e did not expand the notification")
+	}
+	r.press("j", "j", "e")
+	if r.m.expanded() {
+		t.Error("a second e should collapse it")
+	}
+	r.press("e", "esc")
+	if r.m.expanded() {
+		t.Error("esc should collapse it")
+	}
+	if r.row(id).IsRead {
+		t.Error("expanding and collapsing marked the notification read: only opening it does")
+	}
+	if len(r.opened) != 0 {
+		t.Errorf("expanding opened an app: %v", r.opened)
+	}
+}
+
+func TestEnterAndOOpenTheAppAndMarkItRead(t *testing.T) {
+	for _, k := range []string{"enter", "o"} {
+		r := newRig(t)
+		id := r.add("Ana", "hello", 1)
+		other := r.add("Bo", "hi", 2)
+		r.refresh()
+		if !strings.Contains(r.view(), "•") {
+			t.Fatalf("%s: unread rows should be marked", k)
+		}
+		r.press(k)
+		if len(r.opened) != 1 || r.opened[0] != "com.microsoft.teams2" {
+			t.Fatalf("%s: opened %v, want the notification's app", k, r.opened)
+		}
+		if !r.row(id).IsRead || r.row(other).IsRead {
+			t.Errorf("%s: read flags are %v and %v, want only the opened one read", k, r.row(id).IsRead, r.row(other).IsRead)
+		}
+		if got := r.view(); strings.Count(got, "•") != 1 {
+			t.Errorf("%s: want one unread marker left (Bo), got view:\n%s", k, got)
+		}
+		if !strings.Contains(r.view(), "opened Teams") {
+			t.Errorf("%s: the status bar should say what happened:\n%s", k, r.view())
+		}
+		r.press("j")
+		if strings.Contains(r.view(), "opened Teams") {
+			t.Errorf("%s: the notice should go at the next key", k)
+		}
+	}
+}
+
+func TestAFailedOpenDoesNotMarkItRead(t *testing.T) {
+	r := newRig(t)
+	id := r.add("Ana", "hello", 1)
+	r.refresh()
+	r.openErr = errors.New("no such app")
+	r.press("o")
+	if r.row(id).IsRead {
+		t.Error("marked read although the app did not open")
+	}
+	if got := r.view(); !strings.Contains(got, "could not open Teams: no such app") {
+		t.Errorf("the failure should show in the status bar:\n%s", got)
+	}
+}
+
+func TestANotificationWithNoAppCannotBeOpenedOrMarkedRead(t *testing.T) {
+	r := newRig(t)
+	id := r.add("Ana", "hello", 1, func(n *store.Notification) { n.BundleID = "" })
+	r.refresh()
+	r.press("enter")
+	if len(r.opened) != 0 || r.row(id).IsRead {
+		t.Errorf("opened %v, read %v: with no app there is nothing to open", r.opened, r.row(id).IsRead)
+	}
+	if got := r.view(); !strings.Contains(got, "nothing to open") {
+		t.Errorf("status bar:\n%s", got)
+	}
+}
+
+func TestDismissingHidesFromNotificationsButNotFromTrain(t *testing.T) {
+	for _, k := range []string{"d", "x"} {
+		r := newRig(t)
+		gone := r.add("Gone", "x", 1)
+		stay := r.add("Stay", "x", 2)
+		r.refresh()
+		r.press(k)
+		if !r.row(gone).IsDismissedInbox || r.row(stay).IsDismissedInbox {
+			t.Fatalf("%s: dismissed flags wrong", k)
+		}
+		if got := r.view(); strings.Contains(got, "Gone") || !strings.Contains(got, "Stay") {
+			t.Errorf("%s: Notifications should show Stay only:\n%s", k, got)
+		}
+		if r.selectedSender() != "Stay" {
+			t.Errorf("%s: the cursor is on %q, want it on the row that took the dismissed one's place", k, r.selectedSender())
+		}
+		r.press("f3")
+		if got := r.view(); !strings.Contains(got, "Gone") || !strings.Contains(got, "Stay") {
+			t.Errorf("%s: Train should still list both (dismissing is not training):\n%s", k, got)
+		}
+		if r.row(gone).IsTrained {
+			t.Errorf("%s: dismissing trained the notification", k)
+		}
+	}
+}
+
+func TestDismissingFromTheTrainTabKeepsTheRowThereToo(t *testing.T) {
+	r := newRig(t)
+	id := r.add("Ana", "x", 1)
+	r.refresh()
+	r.press("f3", "d")
+	if !r.row(id).IsDismissedInbox {
+		t.Error("d on the Train tab should dismiss it from Notifications")
+	}
+	if !strings.Contains(r.view(), "Ana") {
+		t.Errorf("the row should stay on the Train tab:\n%s", r.view())
+	}
+	r.press("f2")
+	if strings.Contains(r.view(), "Ana") {
+		t.Errorf("it should be gone from Notifications:\n%s", r.view())
+	}
+}
+
+func TestALongMessageIsCutToThePaneWithAHintAndFullyReadableExpanded(t *testing.T) {
+	r := newRig(t)
+	r.add("Ana", longText, 1)
+	r.m.Update(tea.WindowSizeMsg{Width: 100, Height: 14})
+	r.refresh()
+	view := r.view()
+	if h := lipgloss.Height(view); h != 14 {
+		t.Errorf("the collapsed view is %d lines tall in a 14 line terminal", h)
+	}
+	if strings.Contains(view, "THE END") || !strings.Contains(view, "line one") {
+		t.Errorf("the collapsed preview should show the start and cut the end:\n%s", view)
+	}
+	if !strings.Contains(view, "more lines (e to read it all)") {
+		t.Errorf("a cut preview should say so:\n%s", view)
+	}
+	r.press("e")
+	view = r.view()
+	if h := lipgloss.Height(view); h != 14 {
+		t.Errorf("the expanded view is %d lines tall", h)
+	}
+	if strings.Contains(view, "from  score") {
+		t.Errorf("expanded should replace the list with the full-width message:\n%s", view)
+	}
+	for i := 0; i < 20; i++ {
+		r.press("j")
+	}
+	view = r.view()
+	if !strings.Contains(view, "THE END") {
+		t.Errorf("scrolling down should reach the end of the message:\n%s", view)
+	}
+	if strings.Contains(view, "line one") {
+		t.Errorf("the start should have scrolled off:\n%s", view)
+	}
+	if !strings.Contains(view, "of 20") {
+		t.Errorf("the footer should say where we are:\n%s", view)
+	}
+	for i := 0; i < 30; i++ {
+		r.press("k")
+	}
+	if !strings.Contains(r.view(), "line one") {
+		t.Errorf("scrolling back up should return to the start:\n%s", r.view())
+	}
+}
+
+func TestAShortMessageShowsInFullWithNoHint(t *testing.T) {
+	r := newRig(t)
+	r.add("Ana", "just this", 1)
+	r.refresh()
+	if got := r.view(); !strings.Contains(got, "just this") || strings.Contains(got, "more lines") {
+		t.Errorf("view:\n%s", got)
+	}
+}
+
+func TestExpandedViewGoesAwayWithTheTabOrTheRow(t *testing.T) {
+	r := newRig(t)
+	a := r.add("Ana", longText, 1)
+	r.add("Bo", "x", 2)
+	r.refresh()
+	r.press("e", "f3")
+	if r.m.expanded() {
+		t.Error("changing tab should collapse")
+	}
+	r.press("f2", "e")
+	must(t, r.store.SetDismissed(a, true))
+	r.refresh()
+	if r.m.expanded() {
+		t.Error("when the expanded notification goes away, so does the expanded view")
+	}
+}
+
+func TestTheNewKeysDoNothingOnTheFocusTabOrAnEmptyList(t *testing.T) {
+	r := newRig(t)
+	r.press("e", "o", "d", "x", "enter", "esc") // empty list
+	r.add("Ana", "x", 1)
+	r.refresh()
+	r.press("f1", "e", "o", "d", "x", "enter")
+	if len(r.opened) != 0 {
+		t.Errorf("opened %v from the Focus tab", r.opened)
+	}
+	r.press("f2")
+	if !strings.Contains(r.view(), "Ana") {
+		t.Error("the Focus tab dismissed something")
+	}
+}
+
+func TestWhenTheDatabaseRefusesAnActionTheStatusBarSaysSo(t *testing.T) {
+	r := newRig(t)
+	r.add("Ana", "x", 1)
+	r.refresh()
+	r.store.Close()
+	r.press("d")
+	if got := r.view(); !strings.Contains(got, "could not dismiss") {
+		t.Errorf("status bar:\n%s", got)
 	}
 }

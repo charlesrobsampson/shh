@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"os/exec"
 	"regexp"
 	"strings"
 	"time"
@@ -17,9 +18,11 @@ import (
 	"github.com/charlesrobsampson/shh/internal/store"
 )
 
-// Data is the part of the store the lists read.
+// Data is the part of the store the lists read and the actions change.
 type Data interface {
 	ListNotifications(store.Filter) ([]store.Notification, error)
+	SetRead(id int64, read bool) error
+	SetDismissed(id int64, dismissed bool) error
 }
 
 // Worker is the part of the worker's client the status bar reads. An error (the usual one being session.ErrNotRunning) just
@@ -34,6 +37,8 @@ type Config struct {
 	Worker Worker
 	// Label starts the session text in the status bar, for example "shh".
 	Label string
+	// Open opens the app with the given bundle id, for Enter and o; `open -b` when nil.
+	Open func(bundleID string) error
 	// Now is the clock; time.Now when nil.
 	Now func() time.Time
 	// Refresh is how often the lists and status are re-read; one second when zero.
@@ -75,6 +80,12 @@ type Model struct {
 
 	status     session.StatusView
 	haveStatus bool // whether the worker answered the last time it was asked
+
+	// expandedID is the notification shown in full across the whole screen (e); 0 when none is. scroll is how far down its text is.
+	expandedID int64
+	scroll     int
+	// notice is what the last action did or why it could not, shown in the status bar until the next key.
+	notice string
 }
 
 type tickMsg time.Time
@@ -83,6 +94,9 @@ type tickMsg time.Time
 func New(cfg Config) *Model {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
+	}
+	if cfg.Open == nil {
+		cfg.Open = openApp
 	}
 	if cfg.Refresh == 0 {
 		cfg.Refresh = time.Second
@@ -179,6 +193,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.notice = ""
 	if m.showHelp {
 		// Any key closes the help, except the ones that quit.
 		if k := msg.String(); k == "ctrl+c" || k == "q" {
@@ -193,15 +208,23 @@ func (m *Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "?":
 		m.showHelp = true
 	case "tab", "l", "right":
-		m.tab = (m.tab + 1) % tabCount
+		m.goTo((m.tab + 1) % tabCount)
 	case "shift+tab", "h", "left":
-		m.tab = (m.tab + tabCount - 1) % tabCount
+		m.goTo((m.tab + tabCount - 1) % tabCount)
 	case "f1", "!":
-		m.tab = TabFocus
+		m.goTo(TabFocus)
 	case "f2", "@":
-		m.tab = TabNotifications
+		m.goTo(TabNotifications)
 	case "f3", "#":
-		m.tab = TabTrain
+		m.goTo(TabTrain)
+	case "e":
+		m.toggleExpand()
+	case "esc":
+		m.collapse()
+	case "enter", "o":
+		m.open()
+	case "d", "x":
+		m.dismiss()
 	case "j", "down":
 		m.move(1)
 	case "k", "up":
@@ -218,13 +241,96 @@ func (m *Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// goTo switches tab, closing any expanded notification.
+func (m *Model) goTo(tab Tab) {
+	m.tab = tab
+	m.collapse()
+}
+
+func (m *Model) collapse() { m.expandedID, m.scroll = 0, 0 }
+
+// expanded says whether the selected notification is the one shown in full.
+func (m *Model) expanded() bool {
+	n, ok := m.Selected()
+	return ok && m.expandedID != 0 && n.ID == m.expandedID
+}
+
+// toggleExpand shows the selected notification across the whole screen, or puts it back. Reading a notification here does not mark
+// it read: only opening it in its own app does (plan.md section 8).
+func (m *Model) toggleExpand() {
+	n, ok := m.Selected()
+	switch {
+	case !ok:
+	case m.expanded():
+		m.collapse()
+	default:
+		m.expandedID, m.scroll = n.ID, 0
+	}
+}
+
+// open opens the selected notification's app and, only if that worked, marks it read.
+func (m *Model) open() {
+	n, ok := m.Selected()
+	switch {
+	case !ok:
+		return
+	case n.BundleID == "":
+		m.notice = "nothing to open: this notification does not say which app it came from"
+		return
+	}
+	if err := m.cfg.Open(n.BundleID); err != nil {
+		m.notice = fmt.Sprintf("could not open %s: %v", oneLine(n.Source), err)
+		return
+	}
+	if err := m.cfg.Data.SetRead(n.ID, true); err != nil {
+		m.notice = "opened, but could not mark it read: " + err.Error()
+		return
+	}
+	m.notice = "opened " + oneLine(n.Source)
+	m.reload()
+}
+
+// dismiss takes the selected notification off the Notifications list. It stays on the Train list: dismissing is not training.
+func (m *Model) dismiss() {
+	n, ok := m.Selected()
+	if !ok {
+		return
+	}
+	if err := m.cfg.Data.SetDismissed(n.ID, true); err != nil {
+		m.notice = "could not dismiss: " + err.Error()
+		return
+	}
+	m.notice = "dismissed"
+	m.reload()
+}
+
+// openApp opens an app by bundle id, the same way the alert banners do.
+func openApp(bundleID string) error {
+	return exec.Command("open", "-b", bundleID).Run()
+}
+
 // move changes the selected row by delta, staying inside the list.
 func (m *Model) move(delta int) {
 	if m.tab == TabFocus {
 		return
 	}
+	if m.expanded() {
+		m.scrollBy(delta)
+		return
+	}
 	m.cursor[m.tab] += delta
 	m.clamp(m.tab)
+}
+
+// scrollBy moves the text of the expanded notification up or down, staying inside it.
+func (m *Model) scrollBy(delta int) {
+	n, ok := m.Selected()
+	if !ok {
+		return
+	}
+	meta, body := m.detailParts(n, m.width)
+	room := m.bodyHeight() - len(meta) - 1 // one line is kept for the footer
+	m.scroll = max(0, min(m.scroll+delta, len(body)-room))
 }
 
 // ---- layout ----
@@ -256,7 +362,11 @@ func (m *Model) View() string {
 		return m.helpView()
 	}
 	body := m.focusView()
-	if m.tab != TabFocus {
+	switch {
+	case m.tab == TabFocus:
+	case m.expanded():
+		body = m.detailView()
+	default:
 		body = lipgloss.JoinHorizontal(lipgloss.Top, m.listView(), m.separator(), m.detailView())
 	}
 	return strings.Join([]string{m.tabBar(), body, m.statusBar()}, "\n")
@@ -340,14 +450,15 @@ const (
 )
 
 func listHeader(w int) string {
-	return fmt.Sprintf("  %-*s%-*s%-*s%*s %s", colTime, "time", colSource, "app", senderWidth(w), "from", colScore, "score", "status")
+	return fmt.Sprintf("   %-*s%-*s%-*s%*s %s", colTime, "time", colSource, "app", senderWidth(w), "from", colScore, "score", "status")
 }
 
-func senderWidth(w int) int { return max(6, w-2-colTime-colSource-colScore-1-colStatus) }
+func senderWidth(w int) int { return max(6, w-3-colTime-colSource-colScore-1-colStatus) }
 
 // row writes one notification as a line of the list.
 func (m *Model) row(n store.Notification, w int, selected bool) string {
-	// Two marker columns: ">" for the selected row (as well as its highlight, for terminals without colour) and "!" for alerted.
+	// Three marker columns: ">" for the selected row (as well as its highlight, for terminals without colour), "!" for alerted and
+	// "•" for one not yet opened.
 	marker := " "
 	if selected {
 		marker = ">"
@@ -356,6 +467,11 @@ func (m *Model) row(n store.Notification, w int, selected bool) string {
 		marker += "!"
 	} else {
 		marker += " "
+	}
+	if n.IsRead {
+		marker += " "
+	} else {
+		marker += "•"
 	}
 	return fmt.Sprintf("%s%-*s%-*s%-*s%*d %s", marker, colTime, m.when(n.Timestamp), colSource, runewidth.Truncate(oneLine(n.Source), colSource-1, "…"),
 		senderWidth(w), runewidth.Truncate(oneLine(n.Sender), senderWidth(w)-1, "…"), colScore, score(n.Score), n.Status)
@@ -374,20 +490,49 @@ func (m *Model) when(t time.Time) string {
 // score is the model's base score on the 0 to 100 scale people see.
 func score(s float64) int { return int(s*100 + 0.5) }
 
-// detailView is the right column: everything known about the selected notification.
+// detailView is the right column, or the whole screen when a notification is expanded: everything known about the selected
+// notification. Collapsed, the body is cut to fit the pane; expanded, all of it can be scrolled through.
 func (m *Model) detailView() string {
 	w := m.width - m.listWidth() - 1
+	expanded := m.expanded()
+	if expanded {
+		w = m.width
+	}
 	n, ok := m.Selected()
 	if !ok {
 		return pad([]string{dim.Render(fit(" Select a notification to see its details.", w))}, m.bodyHeight(), w)
 	}
-	var lines []string
+	meta, body := m.detailParts(n, w)
+	room := m.bodyHeight() - len(meta)
+	lines := append([]string{}, meta...)
+	switch {
+	case expanded:
+		room-- // the footer
+		first := max(0, min(m.scroll, len(body)-room))
+		last := min(len(body), first+room)
+		lines = append(lines, body[first:last]...)
+		for len(lines) < m.bodyHeight()-1 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, dim.Render(fmt.Sprintf(" lines %d-%d of %d · j/k scroll · e or esc closes · o opens the app", first+1, last, len(body))))
+	case len(body) > room:
+		keep := max(0, room-1)
+		lines = append(lines, body[:keep]...)
+		lines = append(lines, dim.Render(fmt.Sprintf(" … %d more lines (e to read it all)", len(body)-keep)))
+	default:
+		lines = append(lines, body...)
+	}
+	return pad(lines, m.bodyHeight(), w)
+}
+
+// detailParts splits the detail pane into its fixed top (who, when, why) and the wrapped body text, for a pane w cells wide.
+func (m *Model) detailParts(n store.Notification, w int) (meta, body []string) {
 	title := oneLine(n.Sender)
 	if t := oneLine(n.Title); t != "" && t != title {
 		title += " — " + t
 	}
-	lines = append(lines, lipgloss.NewStyle().Bold(true).Width(w-2).Render(title))
-	lines = append(lines, dim.Render(fmt.Sprintf("%s · %s · %s", oneLine(n.Source), n.Timestamp.In(m.cfg.Now().Location()).Format("Mon Jan 2 15:04"), n.Status)))
+	meta = append(meta, " "+lipgloss.NewStyle().Bold(true).Width(w-2).Render(title))
+	meta = append(meta, " "+dim.Render(fmt.Sprintf("%s · %s · %s", oneLine(n.Source), n.Timestamp.In(m.cfg.Now().Location()).Format("Mon Jan 2 15:04"), n.Status)))
 	decision := fmt.Sprintf("score %d", score(n.Score))
 	if n.Boost > 0 {
 		decision += fmt.Sprintf(" +%d boost", score(n.Boost))
@@ -395,24 +540,26 @@ func (m *Model) detailView() string {
 	if n.ThresholdAtDecision != nil {
 		decision += fmt.Sprintf(" · focus was %d%%", *n.ThresholdAtDecision)
 	}
-	lines = append(lines, decision)
+	meta = append(meta, " "+decision)
 	if n.Reason != "" {
-		lines = append(lines, dim.Render("why: "+oneLine(n.Reason)))
+		meta = append(meta, " "+dim.Render("why: "+oneLine(n.Reason)))
 	}
-	lines = append(lines, "")
-	lines = append(lines, strings.Split(lipgloss.NewStyle().Width(w-2).Render(multiLine(n.Body)), "\n")...)
-	for i := range lines {
-		lines[i] = " " + lines[i]
+	meta = append(meta, "")
+	for _, line := range strings.Split(lipgloss.NewStyle().Width(w-2).Render(multiLine(n.Body)), "\n") {
+		body = append(body, " "+line)
 	}
-	return pad(lines, m.bodyHeight(), w)
+	return meta, body
 }
 
 // statusBar is the line along the bottom: the focus session, then what the lists hold, then the way to the help.
 func (m *Model) statusBar() string {
 	left := m.sessionText()
 	right := "? help"
-	if m.err != "" {
+	switch {
+	case m.err != "":
 		left = errStyle.Render(m.err)
+	case m.notice != "":
+		left = errStyle.Render(oneLine(m.notice))
 	}
 	counts := fmt.Sprintf("%d notifications · %d to train", len(m.lists[TabNotifications]), len(m.lists[TabTrain]))
 	text := " " + left + "  │  " + counts
@@ -442,6 +589,9 @@ func (m *Model) helpView() string {
 		{"! @ #  (Shift-1 2 3), F1 F2 F3", "Focus, Notifications, Train"},
 		{"j / k, ↓ / ↑", "move down / up"},
 		{"g / G, PgUp / PgDn", "first / last, page"},
+		{"e", "read it all (j/k scroll); not marked read"},
+		{"Enter, o", "open its app and mark it read"},
+		{"d, x", "dismiss (it stays in Train)"},
 		{"?", "this help"},
 		{"q, Ctrl-C", "quit"},
 	}
