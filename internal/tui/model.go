@@ -701,7 +701,7 @@ func (m *Model) scrollBy(delta int) {
 		return
 	}
 	meta, body := m.detailParts(n, m.width)
-	room := m.bodyHeight() - len(meta) - 1 // one line is kept for the footer
+	room := max(0, m.bodyHeight()-len(meta)-1) // one line is kept for the footer
 	m.scroll = max(0, min(m.scroll+delta, len(body)-room))
 }
 
@@ -926,11 +926,11 @@ func (m *Model) detailView() string {
 		return pad([]string{dim.Render(fit(" Select a notification to see its details.", w))}, m.bodyHeight(), w)
 	}
 	meta, body := m.detailParts(n, w)
-	room := m.bodyHeight() - len(meta)
+	room := max(0, m.bodyHeight()-len(meta)) // on a very small terminal the top of the pane can fill it all
 	lines := append([]string{}, meta...)
 	switch {
 	case expanded:
-		room-- // the footer
+		room = max(0, room-1) // the footer
 		first := max(0, min(m.scroll, len(body)-room))
 		last := min(len(body), first+room)
 		lines = append(lines, body[first:last]...)
@@ -946,6 +946,19 @@ func (m *Model) detailView() string {
 		lines = append(lines, body...)
 	}
 	return pad(lines, m.bodyHeight(), w)
+}
+
+// trainQuestion is what the Train tab's detail pane shows under the score, on two lines to fit the pane: the question, with what shh
+// did with this notification, and the keys that answer it, so none of it needs working out.
+func trainQuestion(n store.Notification) []string {
+	did := "shh held it back"
+	if n.Status == store.StatusAlerted {
+		did = "shh alerted you"
+	}
+	return []string{
+		lipgloss.NewStyle().Bold(true).Render("Was this correct?") + dim.Render(" "+did),
+		dim.Render("y yes · n no · t type a score"),
+	}
 }
 
 // detailParts splits the detail pane into its fixed top (who, when, why) and the wrapped body text, for a pane w cells wide.
@@ -968,6 +981,11 @@ func (m *Model) detailParts(n store.Notification, w int) (meta, body []string) {
 		decision += fmt.Sprintf(" · focus was %d%%", *n.ThresholdAtDecision)
 	}
 	meta = append(meta, " "+decision)
+	if m.tab == TabTrain && !n.IsTrained {
+		for _, line := range trainQuestion(n) {
+			meta = append(meta, " "+line)
+		}
+	}
 	if n.IsFlagged {
 		meta = append(meta, " "+flaggedStyle.Render("⚑ flagged for review")+dim.Render(" (f clears it; labelling it clears it too)"))
 	}
@@ -1117,7 +1135,7 @@ var helpSections = []struct {
 		{"f", "Flag it to look at again later. Flagged rows lead the Train tab, so a notification you noticed was wrong is easy to find. Press f again to clear the flag. The Flag button on an alert banner does the same thing; labelling a notification clears its flag."},
 	}},
 	{"Training (Notifications and Train tabs)", []helpTopic{
-		{"y / n", "Answer \"did shh do the right thing?\" The row shows what shh did: ✕ blocked means it held the notification back, no mark means it alerted you. y says the call was right (a blocked one should stay blocked, an alerted one should have alerted); n says it was wrong. A right call close to the line also teaches the model something, by pushing the score further from it. The row then leaves the Train list, and when you label it from Notifications it is archived from there too."},
+		{"y / n", "Answer \"did shh do the right thing?\" The row shows what shh did: ✕ blocked means it held the notification back, no mark means it alerted you. y says the call was right (a blocked one should stay blocked, an alerted one should have alerted); n says it was wrong. A right call close to the line also teaches the model something, by pushing the score further from it. On the Train tab the question \"Was this correct?\" sits under each notification's score and says what shh did. The row then leaves the Train list, and when you label it from Notifications it is archived from there too."},
 		{"t", "Type an exact score instead, from 0 to 100 or light, medium, deep or lockdown, and press Enter. Esc cancels. While the box is open, digits and letters are typed into it."},
 		{"u", "Undo the last training exactly: the model goes back to how it was and the row returns to the list."},
 		{"order", "The Train list shows flagged rows first, then those whose score is closest to a common threshold (35, 65, 90 or 99), because a label there changes what gets through the most."},

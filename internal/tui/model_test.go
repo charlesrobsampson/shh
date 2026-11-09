@@ -1971,3 +1971,79 @@ func TestTheGutterNeverMakesALineWiderThanTheTerminal(t *testing.T) {
 		}
 	}
 }
+
+func TestTheTrainTabAsksWhetherEachCallWasCorrectSayingWhatShhDid(t *testing.T) {
+	r := newRig(t)
+	r.add("Held", "x", 2)
+	r.add("Alerted", "x", 1, func(n *store.Notification) { n.Status = store.StatusAlerted })
+	r.refresh()
+	r.press("f3")
+	for _, tt := range []struct{ sender, did string }{{"Alerted", "shh alerted you"}, {"Held", "shh held it back"}} {
+		r.m.selectID(idOf(t, r, tt.sender))
+		view := r.view()
+		if !strings.Contains(view, "Was this correct?") || !strings.Contains(view, tt.did) {
+			t.Errorf("%s: the detail pane should ask %q and say %q:\n%s", tt.sender, "Was this correct?", tt.did, view)
+		}
+		if !strings.Contains(view, "y yes · n no · t type a score") {
+			t.Errorf("%s: the question should say which keys answer it:\n%s", tt.sender, view)
+		}
+		// it comes straight after the score line
+		lines := strings.Split(view, "\n")
+		for i, l := range lines {
+			if strings.Contains(l, "score 42") && (!strings.Contains(lines[i+1], "Was this correct?") || !strings.Contains(lines[i+2], "y yes")) {
+				t.Errorf("%s: the question and its keys should be right under the score line, got %q / %q", tt.sender, lines[i+1], lines[i+2])
+			}
+		}
+	}
+}
+
+func idOf(t *testing.T, r *rig, sender string) int64 {
+	t.Helper()
+	for _, n := range r.m.lists[r.m.tab] {
+		if n.Sender == sender {
+			return n.ID
+		}
+	}
+	t.Fatalf("no %q on the list", sender)
+	return 0
+}
+
+func TestTheQuestionIsOnlyOnTheTrainTab(t *testing.T) {
+	r := newRig(t)
+	r.add("Ana", "x", 1)
+	r.refresh()
+	if got := r.view(); strings.Contains(got, "Was this correct?") {
+		t.Errorf("the Notifications tab is for reading, not asking:\n%s", got)
+	}
+	r.press("f3")
+	if got := r.view(); !strings.Contains(got, "Was this correct?") {
+		t.Errorf("the Train tab should ask:\n%s", got)
+	}
+	r.press("f1")
+	if got := r.view(); strings.Contains(got, "Was this correct?") {
+		t.Errorf("the Focus tab should not ask:\n%s", got)
+	}
+}
+
+func TestTheQuestionDoesNotBreakTheLayoutAtSmallSizes(t *testing.T) {
+	r := newRig(t)
+	r.add("Ana", "a long message "+strings.Repeat("with words ", 30), 1)
+	r.refresh()
+	r.press("f3")
+	for _, size := range [][2]int{{120, 30}, {80, 20}, {60, 12}, {40, 10}} {
+		r.m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		view := r.view()
+		if h := lipgloss.Height(view); h != size[1] {
+			t.Errorf("%dx%d: %d lines tall", size[0], size[1], h)
+		}
+		for n, line := range strings.Split(view, "\n") {
+			if w := lipgloss.Width(line); w > size[0] {
+				t.Errorf("%dx%d: line %d is %d wide", size[0], size[1], n, w)
+			}
+		}
+	}
+	r.press("e") // expanded too
+	if got := r.view(); !strings.Contains(got, "Was this correct?") {
+		t.Errorf("the expanded view should keep the question:\n%s", got)
+	}
+}
