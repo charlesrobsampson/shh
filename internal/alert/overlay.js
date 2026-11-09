@@ -57,15 +57,18 @@ const color = $.NSColor.colorWithSRGBRedGreenBlueAlpha(channel(0), channel(2), c
 const area = $.NSScreen.mainScreen.visibleFrame;
 const margin = 16;
 const [vertical, horizontal] = cfg.position.split('-');
-const x = horizontal === 'left' ? area.origin.x + margin
+const baseX = horizontal === 'left' ? area.origin.x + margin
   : horizontal === 'center' ? area.origin.x + (area.size.width - cfg.width) / 2
   : area.origin.x + area.size.width - cfg.width - margin;
-// Where the window goes for a given distance from its screen edge and height. The banners at one position form a stack and Go says
-// how far down it each one sits (offset); stay on screen if there are very many. A top banner keeps its top edge when it grows, a
-// bottom one its bottom edge.
+// Where the window goes. The banners at one position form a stack and Go says how far down it each one sits (offset) and, when the
+// stack is too tall for the screen and continues in another column, how far in from the screen edge (indent). A top banner keeps its
+// top edge when it grows, a bottom one its bottom edge.
+let indent = cfg.indent;
 let offset = cfg.offset;
 let height = cfg.height;
-function frameFor(off, h) {
+function frameFor(ind, off, h) {
+  // Further columns go towards the middle of the screen; a centred stack grows to the right.
+  const x = horizontal === 'left' || horizontal === 'center' ? baseX + ind : baseX - ind;
   const lowest = area.origin.y + margin;
   const y = vertical === 'bottom' ? Math.min(lowest + off, area.origin.y + area.size.height - h - margin)
     : Math.max(area.origin.y + area.size.height - h - margin - off, lowest);
@@ -73,7 +76,7 @@ function frameFor(off, h) {
 }
 
 const win = $.NSWindow.alloc.initWithContentRectStyleMaskBackingDefer(
-  frameFor(offset, height), $.NSWindowStyleMaskBorderless, $.NSBackingStoreBuffered, false);
+  frameFor(indent, offset, height), $.NSWindowStyleMaskBorderless, $.NSBackingStoreBuffered, false);
 win.setLevel($.NSScreenSaverWindowLevel);
 win.setOpaque(false);
 win.setBackgroundColor($.NSColor.clearColor);
@@ -151,14 +154,18 @@ function attached() { return cfg.managed && $.getppid() === cfg.parent; }
 function emit(line) { if (attached()) console.log('event ' + line); }
 
 // Moves and resizes the window in place, with the banner's contents following it.
-function layoutTo(newOffset, newHeight) {
-  if (newOffset === offset && newHeight === height) return;
+function layoutTo(newIndent, newOffset, newHeight) {
+  if (newIndent === indent && newOffset === offset && newHeight === height) return;
+  indent = newIndent;
   offset = newOffset;
   height = newHeight;
-  win.setFrameDisplayAnimate(frameFor(offset, height), true, true);
+  win.setFrameDisplayAnimate(frameFor(indent, offset, height), true, true);
   view.setFrame($.NSMakeRect(0, 0, cfg.width, height));
   layoutText();
 }
+
+// Tell Go how much height the screen offers, so it can start a new column when a stack would run off the bottom.
+emit('screen ' + Math.round(area.size.height - 2 * margin));
 
 let expanded = false;
 function press(spec) {
@@ -171,7 +178,7 @@ function press(spec) {
     const button = buttons[cfg.buttons.indexOf(spec)];
     button.setTitle($(expanded ? (spec.collapseLabel || 'Collapse') : spec.label));
     // Resize at once, then tell Go so it can move the banners after this one; Go answers with the same height and so changes nothing.
-    layoutTo(offset, expanded ? Math.max(cfg.previewHeight, cfg.height) : cfg.height);
+    layoutTo(indent, offset, expanded ? Math.max(cfg.previewHeight, cfg.height) : cfg.height);
     emit('height ' + height);
   }
 }
@@ -194,7 +201,7 @@ if (cfg.managed) {
           while ((end = pending.indexOf('\n')) >= 0) {
             const line = pending.slice(0, end);
             pending = pending.slice(end + 1);
-            try { const m = JSON.parse(line); layoutTo(m.offset, m.height); } catch (e) { /* ignore a malformed line */ }
+            try { const m = JSON.parse(line); layoutTo(m.indent || 0, m.offset, m.height); } catch (e) { /* ignore a malformed line */ }
           }
           stdin.waitForDataInBackgroundAndNotify;
         },

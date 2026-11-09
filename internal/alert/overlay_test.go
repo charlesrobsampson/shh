@@ -22,7 +22,7 @@ type fakeProcess struct {
 	sent    []layout
 }
 
-type layout struct{ Offset, Height int }
+type layout struct{ Indent, Offset, Height int }
 
 func (p *fakeProcess) Send(message []byte) error {
 	var l layout
@@ -125,6 +125,7 @@ type banner struct {
 	Offset   int    `json:"offset"`
 	Duration int    `json:"duration"`
 	Sound    string `json:"sound"`
+	Indent   int    `json:"indent"`
 }
 
 func decode(t *testing.T, p *fakeProcess) banner {
@@ -540,5 +541,96 @@ func TestTheBannerIsToldWhichProcessStartedIt(t *testing.T) {
 	script := strings.Join(alert.OverlayCommand(request("a", "top-right")).Args, " ")
 	if !strings.Contains(script, "cfg.parent") || strings.Contains(script, "const parent = $.getppid()") {
 		t.Error("the script must compare its parent with cfg.parent, not with whatever its parent is when it starts")
+	}
+}
+
+func TestAFullColumnContinuesInANewOneNextToIt(t *testing.T) {
+	r := newOverlayRig(t)
+	for _, name := range []string{"a", "b", "c", "d"} {
+		r.show(request(name, "top-right")) // each 64 high with a 10 point gap: 0, 74, 148, 222
+	}
+	r.process(0).emit("screen 220") // room for three: 148+64 = 212 fits, 222+64 does not
+	if got := lastMessage(t, r.process(3)); got != (layout{Indent: 360 + 10, Offset: 0, Height: 64}) {
+		t.Errorf("d was told %+v, want the top of a second column, one banner width and a gap in from the edge", got)
+	}
+	if n := len(r.process(2).messages()); n != 0 {
+		t.Errorf("c still fits in the first column but was sent %d messages", n)
+	}
+}
+
+func TestAColumnIsAsWideAsItsWidestBanner(t *testing.T) {
+	r := newOverlayRig(t)
+	wide := request("wide", "top-right")
+	wide.Width = 460
+	r.show(wide)
+	r.show(request("b", "top-right"))
+	r.show(request("c", "top-right"))
+	r.process(0).emit("screen 140") // two fit (74+64 = 138), the third does not
+	if got := lastMessage(t, r.process(2)); got.Indent != 460+10 || got.Offset != 0 {
+		t.Errorf("c was told %+v, want a second column 470 in, past the 460 wide banner", got)
+	}
+}
+
+func TestDismissingBringsBannersBackIntoTheFirstColumn(t *testing.T) {
+	r := newOverlayRig(t)
+	for _, name := range []string{"a", "b", "c", "d"} {
+		r.show(request(name, "top-right"))
+	}
+	r.process(0).emit("screen 220")
+	r.process(0).finish <- "dismissed"
+	settle()
+	if got := lastMessage(t, r.process(3)); got != (layout{Indent: 0, Offset: 148, Height: 64}) {
+		t.Errorf("d was told %+v, want to be back in the first column now that there is room", got)
+	}
+}
+
+func TestPreviewCanPushABannerIntoANewColumn(t *testing.T) {
+	r := newOverlayRig(t)
+	a := request("a", "top-right")
+	a.PreviewHeight = 200
+	r.show(a)
+	r.show(request("b", "top-right"))
+	r.process(0).emit("screen 200")
+	r.process(0).emit("height 200") // 200 + 10 + 64 does not fit
+	if got := lastMessage(t, r.process(1)); got.Indent != 370 || got.Offset != 0 {
+		t.Errorf("b was told %+v, want a new column when the preview takes the room", got)
+	}
+}
+
+func TestNewBannersStartInTheRightColumnOnceTheScreenIsKnown(t *testing.T) {
+	r := newOverlayRig(t)
+	r.show(request("a", "top-right"))
+	r.show(request("b", "top-right"))
+	r.process(0).emit("screen 140")
+	r.show(request("c", "top-right"))
+	if got := decode(t, r.process(2)); got.Indent != 370 || got.Offset != 0 {
+		t.Errorf("c started at indent %d, offset %d, want the top of the second column at once", got.Indent, got.Offset)
+	}
+}
+
+func TestWithoutAScreenHeightEverythingStaysInOneColumn(t *testing.T) {
+	r := newOverlayRig(t)
+	for i := 0; i < 30; i++ {
+		r.show(request("x", "top-right"))
+	}
+	if got := decode(t, r.process(29)); got.Indent != 0 {
+		t.Errorf("indent = %d before any screen height was reported", got.Indent)
+	}
+	r.process(0).emit("screen 0")
+	r.process(0).emit("screen -5")
+	r.process(0).emit("screen lots")
+	for i := 0; i < 30; i++ {
+		if n := len(r.process(i).messages()); n != 0 {
+			t.Fatalf("banner %d was sent %d messages for screen heights that mean nothing", i, n)
+		}
+	}
+}
+
+func TestTheScriptReportsTheScreenAndHonoursTheIndent(t *testing.T) {
+	script := strings.Join(alert.OverlayCommand(request("Ana", "top-right")).Args, " ")
+	for _, want := range []string{"emit('screen '", "m.indent", "cfg.indent"} {
+		if !strings.Contains(script, want) {
+			t.Errorf("the banner script does not mention %s", want)
+		}
 	}
 }

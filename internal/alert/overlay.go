@@ -45,6 +45,9 @@ type Overlay struct {
 
 	mu     sync.Mutex
 	stacks map[string][]*banner // banners on screen, by position, nearest the screen edge first
+	// screen is the height banners can use, as reported by a banner; 0 until one has. A stack taller than that continues in a
+	// further column, next to the first and further in from the screen edge.
+	screen int
 }
 
 // banner is what the overlay knows about one banner on screen.
@@ -56,7 +59,10 @@ type banner struct {
 	maxHeight int
 }
 
+// layoutMessage is where a banner goes: Indent points in from its screen edge (it is in a further column when more than 0),
+// Offset points down (or up, at the bottom) from the screen edge, and Height tall.
 type layoutMessage struct {
+	Indent int `json:"indent"`
 	Offset int `json:"offset"`
 	Height int `json:"height"`
 }
@@ -80,7 +86,8 @@ type bannerSpec struct {
 	Width    int    `json:"width"`
 	Height   int    `json:"height"`
 	Position string `json:"position"`
-	// Offset is how far from its screen edge the banner sits, so banners shown together do not overlap.
+	// Indent and Offset say where the banner sits, so banners shown together do not overlap.
+	Indent   int    `json:"indent"`
 	Offset   int    `json:"offset"`
 	Duration int    `json:"duration"`
 	Sound    string `json:"sound"`
@@ -104,14 +111,14 @@ type bannerButton struct {
 	CollapseLabel string `json:"collapseLabel,omitempty"`
 }
 
-func bannerEnv(r Request, offset int) []string {
+func bannerEnv(r Request, at layoutMessage) []string {
 	buttons := make([]bannerButton, 0, len(r.Buttons))
 	for _, b := range r.Buttons {
 		buttons = append(buttons, bannerButton{Type: b.Type, Label: b.Label, CollapseLabel: b.CollapseLabel})
 	}
 	spec, _ := json.Marshal(bannerSpec{
 		Title: r.Title, Body: r.Body, Bundle: r.BundleID, Color: r.Style.Color, Width: r.Width, Height: r.Height,
-		Position: r.Style.Position, Offset: offset, Duration: r.Style.DurationSecs, Sound: r.Style.Sound,
+		Position: r.Style.Position, Indent: at.Indent, Offset: at.Offset, Duration: r.Style.DurationSecs, Sound: r.Style.Sound,
 		Buttons: buttons, DismissOnClick: r.DismissOnClick, PreviewHeight: r.PreviewHeight, Managed: true, Parent: os.Getpid(),
 	})
 	return []string{"SHH_BANNER=" + string(spec)}
@@ -120,7 +127,7 @@ func bannerEnv(r Request, offset int) []string {
 // OverlayCommand builds the process that would draw r, without starting it.
 func OverlayCommand(r Request) *exec.Cmd {
 	cmd := exec.Command("osascript", "-l", "JavaScript", "-e", overlayScript)
-	cmd.Env = append(os.Environ(), bannerEnv(r, 0)...)
+	cmd.Env = append(os.Environ(), bannerEnv(r, layoutMessage{Height: r.Height})...)
 	return cmd
 }
 
@@ -192,9 +199,8 @@ func (o *Overlay) Show(r Request) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.stacks[r.Style.Position] = append(o.stacks[r.Style.Position], b)
-	offset := o.offsetOf(b)
-	b.sent = layoutMessage{Offset: offset, Height: b.height}
-	proc, err := o.cfg.Start(bannerEnv(r, offset), func(line string) { o.onEvent(b, line) })
+	b.sent = o.slotOf(b)
+	proc, err := o.cfg.Start(bannerEnv(r, b.sent), func(line string) { o.onEvent(b, line) })
 	if err != nil {
 		o.removeLocked(b)
 		return fmt.Errorf("%w: %v", ErrUnavailable, err)
@@ -213,48 +219,65 @@ func (o *Overlay) Show(r Request) error {
 	return nil
 }
 
-// onEvent handles what a banner reports. "height N" says Preview or Collapse changed its height; the banner has already resized
+// onEvent handles what a banner reports. "screen N" is the height the screen offers banners; "height N" says Preview or Collapse changed its height; the banner has already resized
 // itself, and the overlay now moves the banners after it.
 func (o *Overlay) onEvent(b *banner, line string) {
 	field, value, _ := strings.Cut(line, " ")
-	if field != "height" {
-		return
-	}
-	height, err := strconv.Atoi(value)
+	n, err := strconv.Atoi(value)
 	if err != nil {
 		return
 	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if !o.onScreenLocked(b) {
-		return
+	switch field {
+	case "height":
+		if o.onScreenLocked(b) {
+			b.height = min(max(n, b.req.Height), b.maxHeight)
+			o.layoutLocked(b.req.Style.Position)
+		}
+	case "screen":
+		if n > 0 && n != o.screen {
+			o.screen = n
+			for position := range o.stacks {
+				o.layoutLocked(position)
+			}
+		}
 	}
-	b.height = min(max(height, b.req.Height), b.maxHeight)
-	o.layoutLocked(b.req.Style.Position)
 }
 
 func (o *Overlay) onScreenLocked(b *banner) bool {
 	return slices.Contains(o.stacks[b.req.Style.Position], b)
 }
 
-// offsetOf is how far b sits from its screen edge: the heights of the banners before it plus a gap after each.
-func (o *Overlay) offsetOf(b *banner) int {
-	offset := 0
-	for _, other := range o.stacks[b.req.Style.Position] {
-		if other == b {
-			break
+// slots places every banner at a position: down the screen edge in order, and when the next one would run past the bottom of
+// the screen, at the top of a new column further in. A column is as wide as its widest banner.
+func (o *Overlay) slots(position string) []layoutMessage {
+	stack := o.stacks[position]
+	out := make([]layoutMessage, len(stack))
+	indent, offset, widest := 0, 0, 0
+	for i, b := range stack {
+		if o.screen > 0 && offset > 0 && offset+b.height > o.screen {
+			indent += widest + stackGap
+			offset, widest = 0, 0
 		}
-		offset += other.height + stackGap
+		out[i] = layoutMessage{Indent: indent, Offset: offset, Height: b.height}
+		offset += b.height + stackGap
+		widest = max(widest, b.req.Width)
 	}
-	return offset
+	return out
+}
+
+// slotOf is where b goes now.
+func (o *Overlay) slotOf(b *banner) layoutMessage {
+	stack := o.stacks[b.req.Style.Position]
+	return o.slots(b.req.Style.Position)[slices.Index(stack, b)]
 }
 
 // layoutLocked tells every banner at a position whose place changed where it belongs now.
 func (o *Overlay) layoutLocked(position string) {
-	offset := 0
-	for _, b := range o.stacks[position] {
-		want := layoutMessage{Offset: offset, Height: b.height}
-		offset += b.height + stackGap
+	slots := o.slots(position)
+	for i, b := range o.stacks[position] {
+		want := slots[i]
 		if want == b.sent || b.proc == nil {
 			continue
 		}
