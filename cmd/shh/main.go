@@ -267,6 +267,8 @@ func runTUI(cfg config.Config) error {
 	client := session.NewClient(cfg.Paths.Socket)
 	return tui.Run(tui.Config{
 		Data: db, Worker: client, Label: cfg.Menubar.Label,
+		// The Focus tab does everything the command line does, through the worker.
+		Control: client,
 		// Training goes through the worker, which owns the model; start one if none is running.
 		Trainer: client,
 		Ensure: func() error {

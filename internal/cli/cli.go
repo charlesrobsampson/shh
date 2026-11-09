@@ -10,6 +10,7 @@ import (
 
 	"github.com/alecthomas/kong"
 
+	"github.com/charlesrobsampson/shh/internal/decide"
 	"github.com/charlesrobsampson/shh/internal/session"
 )
 
@@ -126,7 +127,7 @@ func expandShorthand(args []string) []string {
 		return args
 	}
 	first := args[0]
-	if percentWord.MatchString(first) || durationWord.MatchString(first) || isTierName(first) {
+	if decide.IsPercentWord(first) || decide.IsDurationWord(first) || isTierName(first) {
 		return append([]string{"focus"}, args...)
 	}
 	return args
