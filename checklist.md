@@ -539,3 +539,12 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Tests: the alert carries the source app's bundle id; none when there is no source notification; the immediate and the timed paths both do; a restart that re-arms pending events keeps it.
 - Manual check: the next real meeting reminder: the shh alert has Go to and it opens Outlook.
 
+### 50 · Flag button on alerts, flagged rows in the Train tab
+- [ ] Done
+- Session: _(fill on start)_
+- Branch: `task/50-alert-flag` · Depends: 33, 44
+- Context: the user's idea: a **Flag** button on the alert banner for when you can tell an alert was wrong but cannot stop to think about it. Pressing it does not train anything; it marks the notification so that it stands out in the Train tab (highlighted, and sorted to the top) for review and training later. Shares its plumbing with task 45 (the Train button): alerts carry the stored notification's id, and banners send events back to the worker.
+- Build: a `flag` button type in the config registry (shown only when the alert has a notification id; on by default, in the list after Dismiss; the label is configurable like the others); `alert.Alert.NotificationID` and `Request.NotificationID`; the banner script sends `event flag` and the overlay hands it to the worker (an `OnFlag` hook, like `OnFailure`); the worker sets a new `notifications.flagged` column (migration, plus `store.SetFlagged`); the banner shows the button as pressed ("Flagged") and cannot flag twice; the TUI Train tab marks flagged rows (a `⚑` and a highlight), sorts them first, and a key (`f`) toggles the flag so it can be cleared or set from the TUI too; training a row clears its flag.
+- Tests: config (button registered, hidden without a notification id); overlay (event reaches the hook once); worker sets the flag; store round trip; TUI marks and sorts flagged rows, toggles with `f`, training clears it; script pins.
+- Manual check: flag an alert from its banner, then see it highlighted at the top of the Train tab.
+
