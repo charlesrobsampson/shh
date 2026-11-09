@@ -719,3 +719,29 @@ func TestTheMenubarCommandSaysSoWhenThereIsNone(t *testing.T) {
 		t.Errorf("exit %d, stderr %q", code, r.err.String())
 	}
 }
+
+func TestSettingABaselineUnderARunningSessionSaysWhichLevelIsInForce(t *testing.T) {
+	r := newRig(t, true)
+	r.mustRun("focus", "-f", "65%", "-t", "2m")
+	out := r.mustRun("baseline", "30%")
+	st := r.status()
+	if st.Level != 65 || st.Layers[0].Kind != "baseline" || st.Layers[0].Percent != 30 {
+		t.Fatalf("status = %+v, want a baseline of 30 under the 65 session", st)
+	}
+	for _, want := range []string{"Baseline set to 30%", "65%", "until"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output %q does not mention %q: it should say the baseline is 30 and the running session keeps focus at 65", out, want)
+		}
+	}
+}
+
+func TestSettingABaselineWithNothingOnTopJustConfirmsIt(t *testing.T) {
+	r := newRig(t, true)
+	out := r.mustRun("baseline", "30%")
+	if !strings.Contains(out, "Baseline set to 30%") || strings.Contains(out, "until") {
+		t.Errorf("output = %q", out)
+	}
+	if out := r.mustRun("baseline", "off"); !strings.Contains(out, "Baseline cleared") {
+		t.Errorf("output = %q, want the baseline reported as cleared", out)
+	}
+}

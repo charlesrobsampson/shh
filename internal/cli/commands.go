@@ -94,6 +94,21 @@ func (c *baselineCmd) Run(env *Env) error {
 	if err != nil {
 		return err
 	}
+	// Say what was set before showing the level in force: a session running on top of the baseline keeps the level at its own
+	// value, and reading "Focus is on at 65%" straight after typing 30% looks like the command did the wrong thing.
+	if level == 0 {
+		fmt.Fprintln(env.Stdout, "Baseline cleared.")
+	} else {
+		fmt.Fprintf(env.Stdout, "Baseline set to %s.\n", decide.FormatLevel(level))
+	}
+	if view.Level != level && len(view.Layers) > 0 {
+		top := view.Layers[len(view.Layers)-1]
+		until := "until it is stopped"
+		if top.Timed {
+			until = "until it ends in " + decide.FormatRemaining(top.RemainingSecs)
+		}
+		fmt.Fprintf(env.Stdout, "A session at %s is running on top of it, so focus stays at %s %s.\n", decide.FormatLevel(top.Percent), decide.FormatLevel(view.Level), until)
+	}
 	renderStatus(env.Stdout, view, true)
 	return nil
 }
