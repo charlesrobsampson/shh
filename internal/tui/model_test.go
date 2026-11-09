@@ -449,15 +449,36 @@ func TestWhenTheSelectedRowDisappearsTheCursorStaysInRange(t *testing.T) {
 	r.press("j", "k", "G", "g") // must not panic on an empty list
 }
 
-func TestHelpOpensAndAnyKeyClosesIt(t *testing.T) {
+func TestHelpOpensJKScrollItAndAnyOtherKeyCloses(t *testing.T) {
 	r := newRig(t)
+	r.m.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
 	r.press("?")
-	if got := r.view(); !strings.Contains(got, "shh keys") || !strings.Contains(got, "F1 F2 F3") {
+	if got := r.view(); !strings.Contains(got, "shh keys") || !strings.Contains(got, "Moving around") {
 		t.Errorf("help:\n%s", got)
 	}
-	r.press("j")
-	if got := r.view(); strings.Contains(got, "shh keys") {
-		t.Errorf("help is still open:\n%s", got)
+	r.press("j", "j", "j")
+	if r.m.helpScroll != 3 || !r.m.showHelp {
+		t.Errorf("scroll %d open %v: j should scroll the help, not close it", r.m.helpScroll, r.m.showHelp)
+	}
+	r.press("k")
+	if r.m.helpScroll != 2 {
+		t.Errorf("scroll = %d after k", r.m.helpScroll)
+	}
+	r.press("G")
+	if got := r.view(); !strings.Contains(got, "Quit.") {
+		t.Errorf("G should scroll to the end of the help:\n%s", got)
+	}
+	r.press("g")
+	if r.m.helpScroll != 0 {
+		t.Errorf("g should scroll back to the top, scroll = %d", r.m.helpScroll)
+	}
+	r.press("x")
+	if got := r.view(); strings.Contains(got, "shh keys") || r.m.showHelp {
+		t.Errorf("another key should close the help:\n%s", got)
+	}
+	r.press("?")
+	if r.m.helpScroll != 0 {
+		t.Errorf("the help should open at the top, not where it was left (scroll %d)", r.m.helpScroll)
 	}
 }
 
@@ -524,7 +545,9 @@ func TestTheSelectedRowIsMarkedAndOnlyBlockedRowsCarryTheBlockedMark(t *testing.
 		}
 		return ""
 	}
-	ana, bo := find("Ana"), find("Bo")
+	// Each row starts with the line-number gutter; the markers follow it.
+	afterGutter := func(l string) string { return l[min(len(l), gutterWidth):] }
+	ana, bo := afterGutter(find("Ana")), afterGutter(find("Bo"))
 	if !strings.HasPrefix(ana, ">") || strings.HasPrefix(bo, ">") {
 		t.Errorf("the selected row should start with >: %q / %q", ana, bo)
 	}
@@ -535,7 +558,7 @@ func TestTheSelectedRowIsMarkedAndOnlyBlockedRowsCarryTheBlockedMark(t *testing.
 		t.Errorf("a blocked row should carry the mark: %q", bo)
 	}
 	r.press("j")
-	if ana, bo = find("Ana"), find("Bo"); strings.HasPrefix(ana, ">") || !strings.HasPrefix(bo, ">") {
+	if ana, bo = afterGutter(find("Ana")), afterGutter(find("Bo")); strings.HasPrefix(ana, ">") || !strings.HasPrefix(bo, ">") {
 		t.Errorf("the > should follow the cursor: %q / %q", ana, bo)
 	}
 	if got := r.view(); !strings.Contains(got, "held back") {
@@ -991,17 +1014,17 @@ func TestTTypesAnExactLabelAndEnterSavesIt(t *testing.T) {
 	}
 }
 
-func TestADigitStartsTheLabelPromptWithThatDigit(t *testing.T) {
+func TestDigitsOnlyTypeIntoThePromptOnceItIsOpen(t *testing.T) {
 	r := newRig(t)
 	r.add("Ana", "x", 1)
 	r.refresh()
 	r.press("f3", "9")
-	if r.m.prompt == nil || r.m.prompt.text != "9" {
-		t.Fatalf("prompt = %+v, want it open and holding 9", r.m.prompt)
+	if r.m.prompt != nil {
+		t.Fatalf("a digit opened the label prompt: it should only build a count now (%+v)", r.m.prompt)
 	}
-	r.press("0", "enter")
+	r.press("esc", "t", "9", "0", "enter")
 	if got := r.trainer.requests; len(got) != 1 || got[0].Label == nil || *got[0].Label != 90 {
-		t.Errorf("requests = %+v, want an exact label of 90", got)
+		t.Errorf("requests = %+v, want an exact label of 90 typed after t", got)
 	}
 }
 
@@ -1251,14 +1274,112 @@ func TestTheBoostCountsWhenRankingBecauseThatIsWhatWasCompared(t *testing.T) {
 	}
 }
 
-func TestHelpListsTheTrainingKeys(t *testing.T) {
-	r := newRig(t)
-	r.press("?")
-	got := r.view()
-	for _, want := range []string{"y / n", "did shh do the right thing", "t, or a digit", "undo"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("help does not mention %q:\n%s", want, got)
+// helpText gathers everything the help shows, scrolling through it.
+func helpText(r *rig) string {
+	r.m.helpScroll = 0
+	var all []string
+	for i := 0; i < 200; i++ {
+		all = append(all, strings.Join(strings.Fields(r.view()), " "))
+		before := r.m.helpScroll
+		r.press("j")
+		if r.m.helpScroll == before {
+			break
 		}
+	}
+	return strings.Join(all, " ")
+}
+
+func TestHelpExplainsEveryKeyInSentences(t *testing.T) {
+	r := newRig(t)
+	r.m.Update(tea.WindowSizeMsg{Width: 100, Height: 80}) // tall enough that every sentence is whole in one view
+	r.press("?")
+	text := helpText(r)
+	r.press("x")
+	// and a small terminal can still reach all of it by scrolling
+	r.m.Update(tea.WindowSizeMsg{Width: 100, Height: 14})
+	r.press("?")
+	small := helpText(r)
+	r.press("x")
+	for _, want := range []string{"Moving around", "Reading", "Training", "What the marks mean", "Other", "Quit."} {
+		if !strings.Contains(small, want) {
+			t.Errorf("scrolling a small terminal never reaches %q", want)
+		}
+	}
+	for _, want := range []string{
+		"6j goes down six rows", "3k up three", "how far it is from the cursor", "5G",
+		"does not mark the notification as read", "not marked", "dismissing is not training", "Flag button on an alert banner",
+		"did shh do the right thing", "✕ blocked", "no mark means it alerted you", "pushing the score further", "digits and letters are typed into it",
+		"Undo the last training exactly", "closest to a common threshold", "Not opened yet", "Flagged for review", "Quit.",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the help never says %q", want)
+		}
+	}
+}
+
+func TestHelpFitsEveryTerminalSize(t *testing.T) {
+	r := newRig(t)
+	for _, size := range [][2]int{{120, 40}, {80, 24}, {60, 12}, {40, 8}} {
+		r.m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		r.press("?")
+		for i := 0; i < 80; i++ {
+			view := r.view()
+			if h := lipgloss.Height(view); h != size[1] {
+				t.Fatalf("%dx%d: the help is %d lines tall", size[0], size[1], h)
+			}
+			for n, line := range strings.Split(view, "\n") {
+				if w := lipgloss.Width(line); w > size[0] {
+					t.Fatalf("%dx%d: help line %d is %d wide: %q", size[0], size[1], n, w, line)
+				}
+			}
+			before := r.m.helpScroll
+			r.press("j")
+			if r.m.helpScroll == before {
+				break
+			}
+		}
+		r.press("x")
+	}
+}
+
+func TestTheFooterHintsAreBriefButCoverEveryKeyOnThePage(t *testing.T) {
+	r := newRig(t)
+	for _, tt := range []struct {
+		tab  string
+		want []string
+	}{
+		{"f2", []string{"j/k move", "e read", "o open", "d dismiss", "f flag", "y/n right/wrong", "t score", "u undo", "q quit"}},
+		{"f3", []string{"j/k move", "y/n right/wrong", "t score", "u undo", "f flag", "e read", "o open", "d dismiss", "q quit"}},
+		{"f1", []string{"switch tabs", "q quit"}},
+	} {
+		r.press(tt.tab)
+		hints := r.messageLine()
+		for _, want := range tt.want {
+			if !strings.Contains(hints, want) {
+				t.Errorf("%s: the hints %q do not mention %q", tt.tab, hints, want)
+			}
+		}
+		if strings.Contains(hints, "6j") || strings.Contains(hints, "3k") || strings.Contains(hints, "5G") {
+			t.Errorf("%s: the hints should stay basic; counts are explained in the help: %q", tt.tab, hints)
+		}
+		if lipgloss.Width(hints) > 100 {
+			t.Errorf("%s: the hints are %d wide, more than fits a 100 column terminal: %q", tt.tab, lipgloss.Width(hints), hints)
+		}
+		if state := r.promptBar(); !strings.Contains(state, "? help") {
+			t.Errorf("%s: the way to the help belongs on the state line above the hints: %q", tt.tab, state)
+		}
+	}
+}
+
+func TestOnANarrowTerminalTheStateLineStillPointsToTheHelpAndTheHintsAreCutCleanly(t *testing.T) {
+	r := newRig(t)
+	r.m.Update(tea.WindowSizeMsg{Width: 50, Height: 12})
+	r.press("f3")
+	if state := r.promptBar(); !strings.Contains(state, "? help") {
+		t.Errorf("state line on 50 columns: %q", state)
+	}
+	if got := r.messageLine(); lipgloss.Width(got) > 50 || !strings.Contains(got, "j/k move") {
+		t.Errorf("hints on a 50 column terminal: %q", got)
 	}
 }
 
@@ -1404,11 +1525,11 @@ func TestTheFooterIsTwoLinesAndTheMessageLineCarriesAnythingToSay(t *testing.T) 
 	if !strings.Contains(lines[len(lines)-2], "notifications") || !strings.Contains(lines[len(lines)-2], "? help") {
 		t.Errorf("the first footer line should be the state: %q", lines[len(lines)-2])
 	}
-	if got := r.messageLine(); !strings.Contains(got, "e read") || !strings.Contains(got, "y right call") {
+	if got := r.messageLine(); !strings.Contains(got, "e read") || !strings.Contains(got, "y/n right/wrong") {
 		t.Errorf("with nothing to report the message line should list the keys: %q", got)
 	}
 	r.press("f3")
-	if got := r.messageLine(); !strings.Contains(got, "y shh got it right") || !strings.Contains(got, "n shh got it wrong") {
+	if got := r.messageLine(); !strings.Contains(got, "y/n right/wrong") || !strings.Contains(got, "t score") {
 		t.Errorf("the Train tab has its own hints: %q", got)
 	}
 	r.press("f1")
@@ -1618,8 +1739,311 @@ func TestHelpAndHintsMentionTheFlag(t *testing.T) {
 	if got := r.messageLine(); !strings.Contains(got, "f flag") {
 		t.Errorf("Train hints: %q", got)
 	}
+	r.m.Update(tea.WindowSizeMsg{Width: 100, Height: 80})
 	r.press("?")
-	if got := r.view(); !strings.Contains(got, "flag it to review later") {
+	if got := helpText(r); !strings.Contains(got, "Flag it to look at again later") {
 		t.Errorf("help:\n%s", got)
+	}
+}
+
+// gutterNumbers reads the line numbers beside the rows of the list, top to bottom.
+func gutterNumbers(r *rig) []int {
+	var out []int
+	for _, l := range strings.Split(r.view(), "\n") {
+		left, _, ok := strings.Cut(l, "│")
+		if !ok || !strings.Contains(left, "Teams") {
+			continue
+		}
+		var n int
+		fmt.Sscanf(strings.TrimSpace(left[:gutterWidth]), "%d", &n)
+		out = append(out, n)
+	}
+	return out
+}
+
+func fiveRows(t *testing.T) *rig {
+	r := newRig(t)
+	for i := 0; i < 5; i++ {
+		r.add(fmt.Sprintf("Row%d", i), "x", i+1)
+	}
+	r.refresh()
+	return r
+}
+
+func TestTheGutterShowsDistancesFromTheCursorAndItsOwnNumberOnTheCursorRow(t *testing.T) {
+	r := fiveRows(t)
+	if got := gutterNumbers(r); fmt.Sprint(got) != fmt.Sprint([]int{1, 1, 2, 3, 4}) {
+		t.Errorf("gutter with the cursor on the first row = %v, want its own number 1 then distances 1 2 3 4", got)
+	}
+	r.press("j", "j")
+	if got := gutterNumbers(r); fmt.Sprint(got) != fmt.Sprint([]int{2, 1, 3, 1, 2}) {
+		t.Errorf("gutter with the cursor on the third row = %v, want distances 2 1, the cursor's own number 3, then 1 2", got)
+	}
+	r.press("f3")
+	if got := gutterNumbers(r); len(got) != 5 || got[0] != 1 {
+		t.Errorf("the Train tab has the gutter too: %v", got)
+	}
+}
+
+func TestTheGutterStaysRightAfterTheListScrolls(t *testing.T) {
+	r := newRig(t)
+	for i := 0; i < 40; i++ {
+		r.add(fmt.Sprintf("Row%02d", i), "x", i+1)
+	}
+	r.m.Update(tea.WindowSizeMsg{Width: 100, Height: 12})
+	r.refresh()
+	r.press("2", "5", "j")
+	got := gutterNumbers(r)
+	cursor := -1
+	for i, n := range got {
+		if n == 26 {
+			cursor = i
+		}
+	}
+	if cursor < 0 {
+		t.Fatalf("the cursor row (26) is not on screen with its own number: %v", got)
+	}
+	for i, n := range got {
+		if i != cursor && n != abs(i-cursor) {
+			t.Errorf("row at screen line %d shows %d, want its distance %d from the cursor", i, n, abs(i-cursor))
+		}
+	}
+}
+
+func TestACountRepeatsJAndK(t *testing.T) {
+	r := fiveRows(t)
+	r.press("3", "j")
+	if r.selectedSender() != "Row3" {
+		t.Errorf("3j selected %q, want Row3", r.selectedSender())
+	}
+	r.press("2", "k")
+	if r.selectedSender() != "Row1" {
+		t.Errorf("2k selected %q, want Row1", r.selectedSender())
+	}
+	r.press("9", "j")
+	if r.selectedSender() != "Row4" {
+		t.Errorf("9j selected %q, want to stop at the last row", r.selectedSender())
+	}
+	r.press("9", "k")
+	if r.selectedSender() != "Row0" {
+		t.Errorf("9k selected %q, want to stop at the first row", r.selectedSender())
+	}
+	r.press("2", "down", "1", "up")
+	if r.selectedSender() != "Row1" {
+		t.Errorf("2 down then 1 up selected %q, want Row1: counts work with the arrow keys", r.selectedSender())
+	}
+}
+
+func TestCountsCanHaveSeveralDigitsAndAZeroNeedsADigitBeforeIt(t *testing.T) {
+	r := newRig(t)
+	for i := 0; i < 30; i++ {
+		r.add(fmt.Sprintf("Row%02d", i), "x", i+1)
+	}
+	r.refresh()
+	r.press("1", "2", "j")
+	if r.selectedSender() != "Row12" {
+		t.Errorf("12j selected %q", r.selectedSender())
+	}
+	r.press("1", "0", "j")
+	if r.selectedSender() != "Row22" {
+		t.Errorf("10j selected %q: the 0 continues the count", r.selectedSender())
+	}
+	r.press("0", "j")
+	if r.selectedSender() != "Row23" {
+		t.Errorf("0 then j selected %q: a lone 0 does nothing, so j moves one row", r.selectedSender())
+	}
+	if r.m.count != 0 {
+		t.Errorf("count = %d after a motion, want it used up", r.m.count)
+	}
+	for i := 0; i < 8; i++ {
+		r.press("9")
+	}
+	if r.m.count != maxCount {
+		t.Errorf("count = %d after many digits, want it capped at %d", r.m.count, maxCount)
+	}
+}
+
+func TestNGGoesToThatRow(t *testing.T) {
+	r := fiveRows(t)
+	r.press("4", "G")
+	if r.selectedSender() != "Row3" {
+		t.Errorf("4G selected %q, want the fourth row", r.selectedSender())
+	}
+	r.press("1", "g")
+	if r.selectedSender() != "Row0" {
+		t.Errorf("1g selected %q, want the first row", r.selectedSender())
+	}
+	r.press("9", "9", "G")
+	if r.selectedSender() != "Row4" {
+		t.Errorf("99G selected %q, want the last row", r.selectedSender())
+	}
+	r.press("g")
+	if r.selectedSender() != "Row0" {
+		t.Errorf("g selected %q, want the top", r.selectedSender())
+	}
+	r.press("G")
+	if r.selectedSender() != "Row4" {
+		t.Errorf("G selected %q, want the bottom", r.selectedSender())
+	}
+}
+
+func TestAnyOtherKeyOrEscDropsAPendingCount(t *testing.T) {
+	r := fiveRows(t)
+	r.press("3", "esc")
+	if r.m.count != 0 {
+		t.Error("Esc should drop the count")
+	}
+	r.press("j")
+	if r.selectedSender() != "Row1" {
+		t.Errorf("selected %q, want a plain one-row j after the count was dropped", r.selectedSender())
+	}
+	r.press("3", "d") // a key that is not a motion uses up the count without repeating
+	if r.m.count != 0 {
+		t.Error("a non-motion key should drop the count")
+	}
+	if len(r.trainer.requests) != 0 {
+		t.Error("a count must not repeat training")
+	}
+	r.press("2", "f3", "j")
+	if r.m.Tab() != TabTrain || r.m.cursor[TabTrain] != 1 {
+		t.Errorf("tab %v cursor %d: switching tabs drops the count so j moves one row", r.m.Tab(), r.m.cursor[TabTrain])
+	}
+}
+
+func TestAPendingCountIsShownOnTheMessageLine(t *testing.T) {
+	r := fiveRows(t)
+	r.press("1", "4")
+	if got := r.messageLine(); !strings.Contains(got, "14") || !strings.Contains(got, "Esc cancels") {
+		t.Errorf("message line = %q, want the pending count and how to cancel it", got)
+	}
+	r.press("esc")
+	if got := r.messageLine(); strings.Contains(got, "Esc cancels") {
+		t.Errorf("the count message should go with the count: %q", got)
+	}
+}
+
+func TestDigitsDoNothingOnTheFocusTab(t *testing.T) {
+	r := fiveRows(t)
+	r.press("f1", "5", "9")
+	if r.m.count != 0 || r.m.prompt != nil {
+		t.Errorf("count %d prompt %v on the Focus tab", r.m.count, r.m.prompt)
+	}
+}
+
+func TestACountScrollsTheExpandedMessageAndNGJumpsToALine(t *testing.T) {
+	r := newRig(t)
+	r.add("Ana", longText, 1)
+	r.m.Update(tea.WindowSizeMsg{Width: 100, Height: 14})
+	r.refresh()
+	r.press("e", "5", "j")
+	if r.m.scroll != 5 {
+		t.Errorf("scroll = %d after 5j, want 5", r.m.scroll)
+	}
+	r.press("2", "k")
+	if r.m.scroll != 3 {
+		t.Errorf("scroll = %d after 2k, want 3", r.m.scroll)
+	}
+	r.press("9", "G")
+	if r.m.scroll != 8 {
+		t.Errorf("scroll = %d after 9G, want line 9 at the top (8)", r.m.scroll)
+	}
+	r.press("g")
+	if r.m.scroll != 0 {
+		t.Errorf("scroll = %d after g", r.m.scroll)
+	}
+}
+
+func TestTheGutterNeverMakesALineWiderThanTheTerminal(t *testing.T) {
+	r := fiveRows(t)
+	for _, size := range [][2]int{{80, 24}, {60, 10}, {40, 12}} {
+		r.m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		for _, tab := range []string{"f2", "f3"} {
+			r.press(tab)
+			view := r.view()
+			if h := lipgloss.Height(view); h != size[1] {
+				t.Errorf("%dx%d %s: %d lines tall", size[0], size[1], tab, h)
+			}
+			for i, line := range strings.Split(view, "\n") {
+				if w := lipgloss.Width(line); w > size[0] {
+					t.Errorf("%dx%d %s: line %d is %d wide: %q", size[0], size[1], tab, i, w, line)
+				}
+			}
+		}
+	}
+}
+
+func TestTheTrainTabAsksWhetherEachCallWasCorrectSayingWhatShhDid(t *testing.T) {
+	r := newRig(t)
+	r.add("Held", "x", 2)
+	r.add("Alerted", "x", 1, func(n *store.Notification) { n.Status = store.StatusAlerted })
+	r.refresh()
+	r.press("f3")
+	for _, tt := range []struct{ sender, did string }{{"Alerted", "shh alerted you"}, {"Held", "shh held it back"}} {
+		r.m.selectID(idOf(t, r, tt.sender))
+		view := r.view()
+		if !strings.Contains(view, "Was this correct?") || !strings.Contains(view, tt.did) {
+			t.Errorf("%s: the detail pane should ask %q and say %q:\n%s", tt.sender, "Was this correct?", tt.did, view)
+		}
+		if !strings.Contains(view, "y yes · n no · t type a score") {
+			t.Errorf("%s: the question should say which keys answer it:\n%s", tt.sender, view)
+		}
+		// it comes straight after the score line
+		lines := strings.Split(view, "\n")
+		for i, l := range lines {
+			if strings.Contains(l, "score 42") && (!strings.Contains(lines[i+1], "Was this correct?") || !strings.Contains(lines[i+2], "y yes")) {
+				t.Errorf("%s: the question and its keys should be right under the score line, got %q / %q", tt.sender, lines[i+1], lines[i+2])
+			}
+		}
+	}
+}
+
+func idOf(t *testing.T, r *rig, sender string) int64 {
+	t.Helper()
+	for _, n := range r.m.lists[r.m.tab] {
+		if n.Sender == sender {
+			return n.ID
+		}
+	}
+	t.Fatalf("no %q on the list", sender)
+	return 0
+}
+
+func TestTheQuestionIsOnlyOnTheTrainTab(t *testing.T) {
+	r := newRig(t)
+	r.add("Ana", "x", 1)
+	r.refresh()
+	if got := r.view(); strings.Contains(got, "Was this correct?") {
+		t.Errorf("the Notifications tab is for reading, not asking:\n%s", got)
+	}
+	r.press("f3")
+	if got := r.view(); !strings.Contains(got, "Was this correct?") {
+		t.Errorf("the Train tab should ask:\n%s", got)
+	}
+	r.press("f1")
+	if got := r.view(); strings.Contains(got, "Was this correct?") {
+		t.Errorf("the Focus tab should not ask:\n%s", got)
+	}
+}
+
+func TestTheQuestionDoesNotBreakTheLayoutAtSmallSizes(t *testing.T) {
+	r := newRig(t)
+	r.add("Ana", "a long message "+strings.Repeat("with words ", 30), 1)
+	r.refresh()
+	r.press("f3")
+	for _, size := range [][2]int{{120, 30}, {80, 20}, {60, 12}, {40, 10}} {
+		r.m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		view := r.view()
+		if h := lipgloss.Height(view); h != size[1] {
+			t.Errorf("%dx%d: %d lines tall", size[0], size[1], h)
+		}
+		for n, line := range strings.Split(view, "\n") {
+			if w := lipgloss.Width(line); w > size[0] {
+				t.Errorf("%dx%d: line %d is %d wide", size[0], size[1], n, w)
+			}
+		}
+	}
+	r.press("e") // expanded too
+	if got := r.view(); !strings.Contains(got, "Was this correct?") {
+		t.Errorf("the expanded view should keep the question:\n%s", got)
 	}
 }

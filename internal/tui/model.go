@@ -88,6 +88,7 @@ type Model struct {
 	tab           Tab
 	width, height int
 	showHelp      bool
+	helpScroll    int    // how far down the help text is
 	err           string // a problem to show in the status bar, such as the database failing to read
 
 	lists  [tabCount][]store.Notification // the rows of the Notifications and Train tabs
@@ -100,7 +101,9 @@ type Model struct {
 	// expandedID is the notification shown in full across the whole screen (e); 0 when none is. scroll is how far down its text is.
 	expandedID int64
 	scroll     int
-	// prompt is the label being typed after t or a digit; nil when there is none.
+	// count is the number typed before a motion (3 in 3k), vim style; 0 when none is pending.
+	count int
+	// prompt is the label being typed after t; nil when there is none.
 	prompt *prompt
 	// cursorOn is whether the prompt's cursor is showing right now; blinkGen identifies the current blink timer; restartBlink asks
 	// for a new one after the key that was just handled.
@@ -240,22 +243,33 @@ func (m *Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.takeBlink()
 	}
 	if m.showHelp {
-		// Any key closes the help, except the ones that quit.
-		if k := msg.String(); k == "ctrl+c" || k == "q" {
-			return m, tea.Quit
+		return m.helpKey(msg)
+	}
+	// A number typed before a motion repeats it (6j, 3k) or says where to go (5G). Digits only build a count here; an exact label is
+	// typed after t, when the prompt is open and digits go into it.
+	key := msg.String()
+	if digit, ok := countDigit(key); ok {
+		if m.tab != TabFocus && (digit != 0 || m.count > 0) { // a lone 0 does nothing
+			m.count = min(m.count*10+digit, maxCount)
 		}
-		m.showHelp = false
 		return m, nil
 	}
-	switch msg.String() {
+	count := m.count
+	m.count = 0
+	if key == "esc" && count > 0 {
+		return m, nil // Esc drops a pending count before it does anything else
+	}
+	steps := max(1, count)
+
+	switch key {
 	case "ctrl+c", "q":
 		return m, tea.Quit
 	case "?":
-		m.showHelp = true
+		m.showHelp, m.helpScroll = true, 0
 	case "tab", "l", "right":
-		m.goTo((m.tab + 1) % tabCount)
+		m.goTo((m.tab + Tab(steps%int(tabCount))) % tabCount)
 	case "shift+tab", "h", "left":
-		m.goTo((m.tab + tabCount - 1) % tabCount)
+		m.goTo((m.tab + tabCount - Tab(steps%int(tabCount))) % tabCount)
 	case "f1", "!":
 		m.goTo(TabFocus)
 	case "f2", "@":
@@ -280,16 +294,18 @@ func (m *Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.openPrompt("")
 	case "u":
 		m.undoTraining()
-	case "0", "1", "2", "3", "4", "5", "6", "7", "8", "9":
-		m.openPrompt(msg.String()) // a digit starts typing a label, so a score can be given with one hand
 	case "j", "down":
-		m.move(1)
+		m.move(steps)
 	case "k", "up":
-		m.move(-1)
+		m.move(-steps)
 	case "g", "home":
-		m.move(-len(m.lists[m.tab]))
+		m.jumpTo(max(0, count-1)) // the top, or row N when a number came first
 	case "G", "end":
-		m.move(len(m.lists[m.tab]))
+		if count > 0 {
+			m.jumpTo(count - 1) // 5G goes to row 5, as in vim
+		} else {
+			m.jumpTo(1 << 30) // the bottom: jumpTo keeps it inside the list or the text
+		}
 	case "pgdown", "ctrl+d":
 		m.move(m.listHeight())
 	case "pgup", "ctrl+u":
@@ -427,7 +443,7 @@ func (m *Model) trainable() (store.Notification, bool) {
 	return n, true
 }
 
-// openPrompt (t, or a digit) starts typing an exact label (0 to 100, or a tier name) for the selected notification.
+// openPrompt (on t) starts typing an exact label (0 to 100, or a tier name) for the selected notification.
 func (m *Model) openPrompt(initial string) {
 	if n, ok := m.trainable(); ok {
 		m.prompt = &prompt{text: initial, target: n}
@@ -628,7 +644,7 @@ func sortMostInformativeFirst(rows []store.Notification) {
 	})
 }
 
-func abs(x float64) float64 {
+func abs[T int | float64](x T) T {
 	if x < 0 {
 		return -x
 	}
@@ -638,6 +654,31 @@ func abs(x float64) float64 {
 // openApp opens an app by bundle id, the same way the alert banners do.
 func openApp(bundleID string) error {
 	return exec.Command("open", "-b", bundleID).Run()
+}
+
+// maxCount bounds a typed count to four digits.
+const maxCount = 9999
+
+// countDigit says whether the key is a digit and which.
+func countDigit(key string) (int, bool) {
+	if len(key) == 1 && key[0] >= '0' && key[0] <= '9' {
+		return int(key[0] - '0'), true
+	}
+	return 0, false
+}
+
+// jumpTo goes to a row (counting from 0), or, in the expanded view, to a line of the text.
+func (m *Model) jumpTo(row int) {
+	if m.tab == TabFocus {
+		return
+	}
+	if m.expanded() {
+		m.scroll = max(0, row)
+		m.scrollBy(0)
+		return
+	}
+	m.cursor[m.tab] = row
+	m.clamp(m.tab)
 }
 
 // move changes the selected row by delta, staying inside the list.
@@ -660,7 +701,7 @@ func (m *Model) scrollBy(delta int) {
 		return
 	}
 	meta, body := m.detailParts(n, m.width)
-	room := m.bodyHeight() - len(meta) - 1 // one line is kept for the footer
+	room := max(0, m.bodyHeight()-len(meta)-1) // one line is kept for the footer
 	m.scroll = max(0, min(m.scroll+delta, len(body)-room))
 }
 
@@ -677,14 +718,15 @@ func (m *Model) bodyHeight() int { return max(3, m.height-tabBarHeight-statusBar
 // listHeight is how many rows the list shows: the body without the header line of the list.
 func (m *Model) listHeight() int { return max(1, m.bodyHeight()-1) }
 
-func (m *Model) listWidth() int { return max(30, m.width*45/100) }
+func (m *Model) listWidth() int { return max(34, m.width*50/100) }
 
 var (
 	// Colours come only from the terminal's own palette (ANSI colours 0 to 15, bold, faint and reverse), never fixed RGB values, so the
 	// UI takes on whatever theme the terminal is using, light or dark.
-	blockedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true) // yellow in most themes: needs a look
-	alertedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))            // green: it got through
-	unreadStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
+	blockedStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true) // yellow in most themes: needs a look
+	alertedStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))            // green: it got through
+	unreadStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
+	lineNumberStyle = lipgloss.NewStyle().Faint(true)
 	// flaggedStyle marks a notification the user flagged from its alert to look at again: magenta and bold in most themes.
 	flaggedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Bold(true)
 	// inputStyle is the box a label is typed in. It is drawn in normal video inside the reversed bar, so it stands out from the text
@@ -787,12 +829,15 @@ func (m *Model) listView() string {
 	}
 	end := min(len(rows), m.offset[m.tab]+m.listHeight())
 	for i := m.offset[m.tab]; i < end; i++ {
-		lines = append(lines, fit(m.row(rows[i], w, i == m.cursor[m.tab]), w))
+		lines = append(lines, fit(m.lineNumber(i)+m.row(rows[i], w, i == m.cursor[m.tab]), w))
 	}
 	return pad(lines, m.bodyHeight(), w)
 }
 
 // Column widths of a list row: time, source, then the sender takes what is left, then the score and the blocked mark.
+// gutterWidth is the room for the line numbers beside each row: three digits and a space.
+const gutterWidth = 4
+
 const (
 	colTime   = 6
 	colSource = 9
@@ -805,10 +850,10 @@ const (
 const blockedMark = "✕ blocked"
 
 func listHeader(w int) string {
-	return fmt.Sprintf("   %-*s%-*s%-*s%*s  %s", colTime, "time", colSource, "app", senderWidth(w), "from", colScore, "score", "held back")
+	return fmt.Sprintf("%*s   %-*s%-*s%-*s%*s  %s", gutterWidth, "", colTime, "time", colSource, "app", senderWidth(w), "from", colScore, "score", "held back")
 }
 
-func senderWidth(w int) int { return max(6, w-3-colTime-colSource-colScore-2-colStatus) }
+func senderWidth(w int) int { return max(6, w-gutterWidth-3-colTime-colSource-colScore-2-colStatus) }
 
 // row writes one notification as a line of the list, in the terminal's own colours. The selected row is drawn in reverse video, so
 // each piece is styled with that already, instead of nesting styles inside a reversed line.
@@ -845,6 +890,16 @@ func (m *Model) row(n store.Notification, w int, selected bool) string {
 		cell(statusStyle, status)
 }
 
+// lineNumber is the gutter beside row i, as in vim with number and relativenumber both on: the cursor's row shows its own number
+// (counting from 1) and every other row shows how far it is from the cursor, which is what a count like 6j needs.
+func (m *Model) lineNumber(i int) string {
+	cursor := m.cursor[m.tab]
+	if i == cursor {
+		return lineNumberStyle.Bold(true).Render(fmt.Sprintf("%-*d ", gutterWidth-1, min(i+1, 999)))
+	}
+	return lineNumberStyle.Render(fmt.Sprintf("%*d ", gutterWidth-1, min(abs(i-cursor), 999)))
+}
+
 // when is the time of day for today's rows and the date for older ones.
 func (m *Model) when(t time.Time) string {
 	now := m.cfg.Now()
@@ -871,11 +926,11 @@ func (m *Model) detailView() string {
 		return pad([]string{dim.Render(fit(" Select a notification to see its details.", w))}, m.bodyHeight(), w)
 	}
 	meta, body := m.detailParts(n, w)
-	room := m.bodyHeight() - len(meta)
+	room := max(0, m.bodyHeight()-len(meta)) // on a very small terminal the top of the pane can fill it all
 	lines := append([]string{}, meta...)
 	switch {
 	case expanded:
-		room-- // the footer
+		room = max(0, room-1) // the footer
 		first := max(0, min(m.scroll, len(body)-room))
 		last := min(len(body), first+room)
 		lines = append(lines, body[first:last]...)
@@ -891,6 +946,19 @@ func (m *Model) detailView() string {
 		lines = append(lines, body...)
 	}
 	return pad(lines, m.bodyHeight(), w)
+}
+
+// trainQuestion is what the Train tab's detail pane shows under the score, on two lines to fit the pane: the question, with what shh
+// did with this notification, and the keys that answer it, so none of it needs working out.
+func trainQuestion(n store.Notification) []string {
+	did := "shh held it back"
+	if n.Status == store.StatusAlerted {
+		did = "shh alerted you"
+	}
+	return []string{
+		lipgloss.NewStyle().Bold(true).Render("Was this correct?") + dim.Render(" "+did),
+		dim.Render("y yes · n no · t type a score"),
+	}
 }
 
 // detailParts splits the detail pane into its fixed top (who, when, why) and the wrapped body text, for a pane w cells wide.
@@ -913,6 +981,11 @@ func (m *Model) detailParts(n store.Notification, w int) (meta, body []string) {
 		decision += fmt.Sprintf(" · focus was %d%%", *n.ThresholdAtDecision)
 	}
 	meta = append(meta, " "+decision)
+	if m.tab == TabTrain && !n.IsTrained {
+		for _, line := range trainQuestion(n) {
+			meta = append(meta, " "+line)
+		}
+	}
 	if n.IsFlagged {
 		meta = append(meta, " "+flaggedStyle.Render("⚑ flagged for review")+dim.Render(" (f clears it; labelling it clears it too)"))
 	}
@@ -937,14 +1010,17 @@ func (m *Model) stateLine() string {
 	if m.prompt != nil {
 		return m.promptBar()
 	}
-	right := "? help"
+	// "? help" is always shown. When the line is too narrow the counts go first, then the session text is shortened.
+	right := "? help "
+	room := max(0, m.width-lipgloss.Width(right))
 	counts := fmt.Sprintf("%d notifications · %d to train", len(m.lists[TabNotifications]), len(m.lists[TabTrain]))
-	text := " " + m.sessionText() + "  │  " + counts
-	gap := m.width - lipgloss.Width(text) - lipgloss.Width(right) - 1
-	if gap < 1 {
-		return statusStyle.Render(fit(text, m.width))
+	left := " " + m.sessionText() + "  │  " + counts
+	if lipgloss.Width(left) > room {
+		left = " " + m.sessionText()
 	}
-	return statusStyle.Render(text + strings.Repeat(" ", gap) + right + " ")
+	left = fit(left, room)
+	gap := max(0, m.width-lipgloss.Width(left)-lipgloss.Width(right))
+	return statusStyle.Render(left + strings.Repeat(" ", gap) + right)
 }
 
 // messageLine is the second line of the footer, where anything to say goes so that it is never squeezed into the state line: what
@@ -954,6 +1030,8 @@ func (m *Model) messageLine() string {
 	var text string
 	var style lipgloss.Style
 	switch {
+	case m.count > 0 && m.prompt == nil:
+		text, style = fmt.Sprintf("%d: j / k move that many rows, G goes to that row, Esc cancels", m.count), errStyle
 	case m.prompt != nil && m.prompt.err != "":
 		text, style = "✗ "+oneLine(m.prompt.err), errStyle
 	case m.prompt != nil:
@@ -968,15 +1046,16 @@ func (m *Model) messageLine() string {
 	return style.Render(fit(" "+text, m.width))
 }
 
-// keyHints are the keys worth knowing on the current tab.
+// keyHints are the keys that work on the current tab, briefly and all of them: the help screen (?, shown at the right of the line above)
+// explains each in full.
 func (m *Model) keyHints() string {
 	switch m.tab {
 	case TabFocus:
-		return "! @ # or Tab switch tabs · ? help · q quit"
+		return "Tab or ! @ # switch tabs · q quit"
 	case TabTrain:
-		return "y shh got it right · n shh got it wrong · t type a score · u undo · f flag · e read · o open · ? help"
+		return "j/k move · y/n right/wrong · t score · u undo · f flag · e read · o open · d dismiss · q quit"
 	}
-	return "e read · o open its app · d dismiss · f flag · y right call · n wrong call · t score · u undo · ? help"
+	return "j/k move · e read · o open · d dismiss · f flag · y/n right/wrong · t score · u undo · q quit"
 }
 
 // promptBar is the state line while an exact label is being typed: the question in the bar's own reverse video, then the box the
@@ -1009,29 +1088,103 @@ func (m *Model) sessionText() string {
 	return fmt.Sprintf("%s  (%d held back, %d let through)", title, top.Blocked, top.Allowed)
 }
 
+// helpKey handles a key while the help is showing: the motion keys scroll it, quit keys quit, and anything else closes it.
+func (m *Model) helpKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	page := max(1, m.height-2)
+	switch msg.String() {
+	case "ctrl+c", "q":
+		return m, tea.Quit
+	case "j", "down":
+		m.helpScroll++
+	case "k", "up":
+		m.helpScroll--
+	case "pgdown", "ctrl+d", " ":
+		m.helpScroll += page
+	case "pgup", "ctrl+u":
+		m.helpScroll -= page
+	case "g", "home":
+		m.helpScroll = 0
+	case "G", "end":
+		m.helpScroll = 1 << 30
+	default:
+		m.showHelp = false
+	}
+	return m, nil
+}
+
+// helpTopic is one entry of the help: the keys, and what they do, in full.
+type helpTopic struct{ keys, text string }
+
+// helpSections is the detailed help. The line under each page says which keys matter there, briefly; this is where each is explained.
+var helpSections = []struct {
+	title  string
+	topics []helpTopic
+}{
+	{"Moving around", []helpTopic{
+		{"j / k, ↓ / ↑", "Down or up one row. Type a number first to repeat it: 6j goes down six rows, 3k up three. The numbers beside the rows make this easy: every row shows how far it is from the cursor, so the count to type is the number you can see; the cursor's own row shows its place in the list."},
+		{"g / G", "The first or last row. With a number, 5G (or 5g) goes to row 5."},
+		{"PgUp / PgDn", "A page at a time."},
+		{"Tab, l, →", "The next tab. Shift-Tab, h or ← goes back. A number repeats it, so 2l skips one."},
+		{"! @ #", "Jump straight to Focus, Notifications or Train (Shift-1, Shift-2, Shift-3). F1, F2 and F3 do the same."},
+		{"Esc", "Drops a number you have started typing."},
+	}},
+	{"Reading", []helpTopic{
+		{"e", "Read the whole message across the screen, with the list out of the way. j and k scroll it (numbers work here too), e or Esc puts it back. Reading this way does not mark the notification as read."},
+		{"Enter, o", "Open the app the notification came from and mark it read. If the app cannot be opened, it is not marked."},
+		{"d, x", "Dismiss it from the Notifications list. It stays in the Train list: dismissing is not training."},
+		{"f", "Flag it to look at again later. Flagged rows lead the Train tab, so a notification you noticed was wrong is easy to find. Press f again to clear the flag. The Flag button on an alert banner does the same thing; labelling a notification clears its flag."},
+	}},
+	{"Training (Notifications and Train tabs)", []helpTopic{
+		{"y / n", "Answer \"did shh do the right thing?\" The row shows what shh did: ✕ blocked means it held the notification back, no mark means it alerted you. y says the call was right (a blocked one should stay blocked, an alerted one should have alerted); n says it was wrong. A right call close to the line also teaches the model something, by pushing the score further from it. On the Train tab the question \"Was this correct?\" sits under each notification's score and says what shh did. The row then leaves the Train list, and when you label it from Notifications it is archived from there too."},
+		{"t", "Type an exact score instead, from 0 to 100 or light, medium, deep or lockdown, and press Enter. Esc cancels. While the box is open, digits and letters are typed into it."},
+		{"u", "Undo the last training exactly: the model goes back to how it was and the row returns to the list."},
+		{"order", "The Train list shows flagged rows first, then those whose score is closest to a common threshold (35, 65, 90 or 99), because a label there changes what gets through the most."},
+	}},
+	{"What the marks mean", []helpTopic{
+		{">", "The cursor. Its row is also highlighted."},
+		{"•", "Not opened yet."},
+		{"✕ blocked", "shh held it back and it never reached you. A row with nothing here was alerted."},
+		{"⚑", "Flagged for review."},
+	}},
+	{"Other", []helpTopic{
+		{"?", "This help. j and k scroll it, anything else closes it."},
+		{"q, Ctrl-C", "Quit."},
+	}},
+}
+
+// helpLines lays the help out for a screen width, wrapping each description beside its keys.
+func helpLines(width int) []string {
+	const keyWidth = 14
+	textWidth := max(20, width-keyWidth-4)
+	lines := []string{"", " " + lipgloss.NewStyle().Bold(true).Render("shh keys"), ""}
+	for _, section := range helpSections {
+		lines = append(lines, " "+lipgloss.NewStyle().Bold(true).Underline(true).Render(section.title))
+		for _, t := range section.topics {
+			keys := runewidth.Truncate(t.keys, keyWidth-1, "…")
+			for i, part := range strings.Split(lipgloss.NewStyle().Width(textWidth).Render(t.text), "\n") {
+				prefix := strings.Repeat(" ", keyWidth)
+				if i == 0 {
+					prefix = fmt.Sprintf("%-*s", keyWidth, keys)
+				}
+				lines = append(lines, "  "+prefix+" "+part)
+			}
+		}
+		lines = append(lines, "")
+	}
+	return lines
+}
+
 func (m *Model) helpView() string {
-	keys := [][2]string{
-		{"Tab / Shift-Tab, l / h, ← / →", "next / previous tab"},
-		{"! @ #  (Shift-1 2 3), F1 F2 F3", "Focus, Notifications, Train"},
-		{"j / k, ↓ / ↑", "move down / up"},
-		{"g / G, PgUp / PgDn", "first / last, page"},
-		{"e", "read it all (j/k scroll); not marked read"},
-		{"Enter, o", "open its app and mark it read"},
-		{"d, x", "dismiss (it stays in Train)"},
-		{"f", "flag it to review later (flagged rows lead the Train tab)"},
-		{"y / n", "did shh do the right thing? yes / no"},
-		{"t, or a digit", "type an exact 0-100 score or a tier name"},
-		{"u", "undo the last training"},
-		{"?", "this help"},
-		{"q, Ctrl-C", "quit"},
+	lines := helpLines(m.width)
+	room := max(1, m.height-1) // one line is kept for the footer
+	m.helpScroll = max(0, min(m.helpScroll, len(lines)-room))
+	last := min(len(lines), m.helpScroll+room)
+	visible := append([]string{}, lines[m.helpScroll:last]...)
+	for len(visible) < room {
+		visible = append(visible, "")
 	}
-	lines := []string{"", "  shh keys", ""}
-	for _, k := range keys {
-		lines = append(lines, fmt.Sprintf("  %-32s %s", k[0], k[1]))
-	}
-	lines = append(lines, "", "  • not opened yet    ✕ blocked: held back, never reached you (no mark: it was alerted)    ⚑ flagged for review",
-		"", dim.Render("  Press any key to go back."))
-	return pad(lines, m.height, m.width)
+	footer := dim.Render(fmt.Sprintf(" j/k scroll · any other key closes · lines %d-%d of %d", m.helpScroll+1, last, len(lines)))
+	return pad(append(visible, footer), m.height, m.width)
 }
 
 // ---- small helpers ----
