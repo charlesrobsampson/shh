@@ -328,3 +328,79 @@ func TestTimesInTheAlertUseTheConfiguredZone(t *testing.T) {
 		t.Errorf("body = %q, want the Denver time 02:10", body)
 	}
 }
+
+// source stores a notification from the given app, as the worker does before it schedules a reminder.
+func (r *schedRig) source(bundle string) int64 {
+	r.t.Helper()
+	threshold := 65
+	id, _, err := r.store.InsertNotification(store.Notification{
+		Source: "Outlook", Sender: "Reminder", Body: "x", Timestamp: start0, Status: store.StatusAlerted, Score: 0.5,
+		ThresholdAtDecision: &threshold, BundleID: bundle, SourceRecID: int64(len(bundle)) + 1,
+	})
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	return id
+}
+
+func TestTheAlertOpensTheAppTheReminderCameFrom(t *testing.T) {
+	r := newSchedRig(t)
+	id := r.source("com.microsoft.Outlook")
+	if err := r.scheduler.Schedule(r.meeting("Weekly Sync", 10*time.Minute), id); err != nil {
+		t.Fatal(err)
+	}
+	r.clock.Advance(9 * time.Minute)
+	shown := r.shown()
+	if len(shown) != 1 || shown[0].BundleID != "com.microsoft.Outlook" {
+		t.Fatalf("alert = %+v, want Go to to open Outlook, the app the reminder came from", shown)
+	}
+	if shown[0].Kind != config.KindCalendar {
+		t.Errorf("kind = %v, want a calendar alert", shown[0].Kind)
+	}
+}
+
+func TestAnImmediateAlertAlsoOpensTheSourceApp(t *testing.T) {
+	r := newSchedRig(t)
+	id := r.source("com.microsoft.Outlook")
+	if err := r.scheduler.Schedule(calendar.Reminder{Title: "Offsite", Delivered: r.clock.Now(), AllDay: true}, id); err != nil {
+		t.Fatal(err)
+	}
+	late := r.meeting("Started already", -time.Hour)
+	if err := r.scheduler.Schedule(late, id); err != nil {
+		t.Fatal(err)
+	}
+	shown := r.shown()
+	if len(shown) != 2 {
+		t.Fatalf("alerts = %d, want both to fire at once", len(shown))
+	}
+	for _, a := range shown {
+		if a.BundleID != "com.microsoft.Outlook" {
+			t.Errorf("alert %q has bundle %q, want the source app", a.Title, a.BundleID)
+		}
+	}
+}
+
+func TestWithoutASourceNotificationThereIsNothingToOpen(t *testing.T) {
+	r := newSchedRig(t)
+	r.schedule(r.meeting("No source", 10*time.Minute)) // scheduled with notification id 0
+	r.clock.Advance(9 * time.Minute)
+	shown := r.shown()
+	if len(shown) != 1 || shown[0].BundleID != "" {
+		t.Errorf("alerts = %+v, want one with no app to open: a missing source must not stop the alert", shown)
+	}
+}
+
+func TestARestartKeepsTheSourceApp(t *testing.T) {
+	r := newSchedRig(t)
+	id := r.source("com.microsoft.Outlook")
+	r.scheduler.Schedule(r.meeting("Standup", 10*time.Minute), id)
+	r.scheduler.Stop()
+	r.clock.Advance(time.Hour)
+	if err := r.newScheduler().Rearm(); err != nil {
+		t.Fatal(err)
+	}
+	shown := r.shown()
+	if len(shown) != 1 || shown[0].BundleID != "com.microsoft.Outlook" {
+		t.Errorf("alerts after a restart = %+v, want the source app kept", shown)
+	}
+}
