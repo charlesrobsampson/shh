@@ -42,10 +42,6 @@ func realEnv() cli.Env {
 	env.Spawn = func() error { return spawnDaemon(cfg) }
 	env.PersistedFocus = func() bool { return persistedFocus(cfg.Paths.DB) }
 	env.Daemon = func(context.Context) error { return runDaemon(cfg) }
-	env.NewAlerter = func() (alert.Alerter, error) {
-		alerter, _ := newAlerter(cfg, func(err error) { fmt.Fprintln(os.Stderr, "shh:", err) })
-		return alerter, nil
-	}
 	for source := range cfg.Alert.Source {
 		env.AlertSources = append(env.AlertSources, source)
 	}

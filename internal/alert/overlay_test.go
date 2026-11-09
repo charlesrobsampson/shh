@@ -3,6 +3,7 @@ package alert_test
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -517,5 +518,27 @@ func TestActiveCountsBannersOnScreen(t *testing.T) {
 	settle()
 	if got := r.overlay.Active(); got != 1 {
 		t.Errorf("Active = %d after one was dismissed, want 1", got)
+	}
+}
+
+func TestTheBannerIsToldWhichProcessStartedIt(t *testing.T) {
+	r := newOverlayRig(t)
+	r.show(request("a", "top-right"))
+	var spec struct {
+		Parent int `json:"parent"`
+	}
+	for _, kv := range r.process(0).env {
+		if v, ok := strings.CutPrefix(kv, "SHH_BANNER="); ok {
+			if err := json.Unmarshal([]byte(v), &spec); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if spec.Parent != os.Getpid() {
+		t.Errorf("parent = %d, want this process (%d): a banner cannot work it out for itself, because Go may be gone before the script starts", spec.Parent, os.Getpid())
+	}
+	script := strings.Join(alert.OverlayCommand(request("a", "top-right")).Args, " ")
+	if !strings.Contains(script, "cfg.parent") || strings.Contains(script, "const parent = $.getppid()") {
+		t.Error("the script must compare its parent with cfg.parent, not with whatever its parent is when it starts")
 	}
 }

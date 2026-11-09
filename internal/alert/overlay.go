@@ -92,6 +92,9 @@ type bannerSpec struct {
 	PreviewHeight int `json:"previewHeight"`
 	// Managed says Go is on the other end of the banner's standard input and output, sending layout changes and reading events.
 	Managed bool `json:"managed"`
+	// Parent is the process id of the Go process that started the banner. The banner compares it with its own parent to tell that Go
+	// has gone; it cannot learn it for itself, because Go may already be gone by the time the script starts.
+	Parent int `json:"parent"`
 }
 
 type bannerButton struct {
@@ -109,7 +112,7 @@ func bannerEnv(r Request, offset int) []string {
 	spec, _ := json.Marshal(bannerSpec{
 		Title: r.Title, Body: r.Body, Bundle: r.BundleID, Color: r.Style.Color, Width: r.Width, Height: r.Height,
 		Position: r.Style.Position, Offset: offset, Duration: r.Style.DurationSecs, Sound: r.Style.Sound,
-		Buttons: buttons, DismissOnClick: r.DismissOnClick, PreviewHeight: r.PreviewHeight, Managed: true,
+		Buttons: buttons, DismissOnClick: r.DismissOnClick, PreviewHeight: r.PreviewHeight, Managed: true, Parent: os.Getpid(),
 	})
 	return []string{"SHH_BANNER=" + string(spec)}
 }

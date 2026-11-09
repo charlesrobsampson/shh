@@ -10,8 +10,6 @@ import (
 
 	"github.com/alecthomas/kong"
 
-	"github.com/charlesrobsampson/shh/internal/alert"
-
 	"github.com/charlesrobsampson/shh/internal/session"
 )
 
@@ -36,8 +34,6 @@ type Env struct {
 	SpawnWait time.Duration
 	// PersistedFocus reports whether a focus level was left saved by an earlier worker, for example across a reboot. Nil means no.
 	PersistedFocus func() bool
-	// NewAlerter builds the alerter that `shh alert test` previews styles with. Nil when none is available.
-	NewAlerter func() (alert.Alerter, error)
 	// AlertSources names the apps that have a style override in the configuration, so the preview can show each.
 	AlertSources []string
 	// Daemon runs the worker in the foreground until ctx ends; it is what `shh daemon` (the spawned process) does.

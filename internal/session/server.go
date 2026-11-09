@@ -141,6 +141,8 @@ func (s *Server) handle(req Request) Response {
 		err = w.Resume()
 	case "adjust":
 		err = w.Adjust(time.Duration(req.DeltaSecs) * time.Second)
+	case "alert":
+		err = w.showAlert(req.Alert)
 	default:
 		return Response{Code: "bad_request", Error: fmt.Sprintf("unknown command %q", req.Cmd)}
 	}

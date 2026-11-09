@@ -143,10 +143,11 @@ layoutButtons();
 
 let timer = null;
 // Anything the script tells Go is a line starting "event ". When Go is gone nothing is written any more, because a write to a closed
-// pipe kills the script (SIGPIPE). Go is gone when our parent process changes, which is checked right before every write: the
+// pipe kills the script (SIGPIPE). Go is gone when our parent is no longer the process that started us, which is checked right before every write: the
 // notification for the end of stdin does not arrive reliably, and a timer would leave a window.
-const parent = $.getppid();
-function attached() { return cfg.managed && $.getppid() === parent; }
+// The parent's id comes from Go (cfg.parent), not from asking now: a command like `shh alert test` can exit before this script has
+// started, and then "my parent" would already be launchd and the check could never fail.
+function attached() { return cfg.managed && $.getppid() === cfg.parent; }
 function emit(line) { if (attached()) console.log('event ' + line); }
 
 // Moves and resizes the window in place, with the banner's contents following it.
