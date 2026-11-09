@@ -353,7 +353,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Manual check: run `shh` against some stored rows; keys behave.
 
 ### 32 · TUI: preview/expand, read state, open in app
-- [ ] Done
+- [x] Done
 - Branch: `task/32-tui-read` · Depends: 31
 - Read: `plan.md` §6, §8
 - Build: truncated preview filling the pane; `e` expands/collapses without changing read state; `Enter`/`o` opens the original app and marks read; dismiss `d`/`x`.
