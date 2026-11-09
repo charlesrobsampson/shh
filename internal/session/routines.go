@@ -47,7 +47,13 @@ func (r *routineRunner) Start(name string) error {
 		return err
 	}
 	plan := rt.Plan()
-	id, err := r.w.cfg.Store.StartRoutineRun(rt.Name, r.w.cfg.Clock.Now(), len(plan))
+	sessions := 0 // the summary counts sessions: a baseline step is not one that is started or skipped
+	for _, p := range plan {
+		if p.Kind == routine.StepSession {
+			sessions++
+		}
+	}
+	id, err := r.w.cfg.Store.StartRoutineRun(rt.Name, r.w.cfg.Clock.Now(), sessions)
 	if errors.Is(err, store.ErrRoutineActive) {
 		return ErrRoutineRunning
 	}
@@ -89,7 +95,13 @@ func (r *routineRunner) Back() error {
 	if err != nil {
 		return err
 	}
-	target := max(0, run.Position-1)
+	target := run.Position // a baseline step is not one to go back to: back to the session before it
+	for i := run.Position - 1; i >= 0; i-- {
+		if plan[i].Kind == routine.StepSession {
+			target = i
+			break
+		}
+	}
 	return r.beginStep(run, rt, plan, target)
 }
 
@@ -195,21 +207,57 @@ func (r *routineRunner) Info() (RoutineInfo, error) {
 // what its alert and its advance setting apply to.
 func (r *routineRunner) advance(run store.RoutineRun, rt routine.Routine, plan []routine.Planned, pos int, natural bool) error {
 	step := plan[pos]
-	last := pos+1 >= len(plan)
+	next := nextSession(plan, pos+1)
+	last := next >= len(plan)
 	if natural {
-		r.announce(rt, plan, pos, last)
+		r.announce(rt, plan, pos, next, last)
 	}
 	switch {
 	case last:
+		if _, err := r.applyBaselines(plan, pos+1); err != nil { // baseline steps after the last session still apply
+			return err
+		}
 		return r.finish(run, &rt, "finished")
 	case natural && step.Advance == routine.AdvanceAsk:
-		return r.wait(run, rt, plan, pos)
+		if _, err := r.applyBaselines(plan, pos+1); err != nil {
+			return err
+		}
+		return r.wait(run, rt, plan, pos, next)
 	}
 	return r.beginStep(run, rt, plan, pos+1)
 }
 
+// nextSession is the index of the first session step at or after from, or len(plan) if only baseline steps (or none) are left.
+func nextSession(plan []routine.Planned, from int) int {
+	for i := from; i < len(plan); i++ {
+		if plan[i].Kind == routine.StepSession {
+			return i
+		}
+	}
+	return len(plan)
+}
+
+// applyBaselines sets the baseline for each baseline step from the given index on, up to the next session step, whose index it
+// returns (len(plan) if there is none). A baseline step takes no time: it applies as the run reaches it.
+func (r *routineRunner) applyBaselines(plan []routine.Planned, from int) (int, error) {
+	for from < len(plan) && plan[from].Kind == routine.StepBaseline {
+		if err := r.w.stack.SetBaseline(plan[from].Level); err != nil {
+			return from, err
+		}
+		from++
+	}
+	return from, nil
+}
+
 // beginStep puts the step at pos in force as a timed session, ending whatever level the run had.
 func (r *routineRunner) beginStep(run store.RoutineRun, rt routine.Routine, plan []routine.Planned, pos int) error {
+	pos, err := r.applyBaselines(plan, pos)
+	if err != nil {
+		return err
+	}
+	if pos >= len(plan) { // nothing but baseline steps were left
+		return r.finish(run, &rt, "finished")
+	}
 	if run.LevelID != 0 {
 		if err := r.w.stack.CloseLayer(run.LevelID); err != nil {
 			return err
@@ -231,8 +279,8 @@ func (r *routineRunner) beginStep(run store.RoutineRun, rt routine.Routine, plan
 }
 
 // wait stops after the step at pos, until the user starts the next one. What focus does meanwhile is the routine's waiting setting.
-func (r *routineRunner) wait(run store.RoutineRun, rt routine.Routine, plan []routine.Planned, pos int) error {
-	finished, next := plan[pos], plan[pos+1]
+func (r *routineRunner) wait(run store.RoutineRun, rt routine.Routine, plan []routine.Planned, pos, nextPos int) error {
+	finished, next := plan[pos], plan[nextPos]
 	var level int64
 	switch rt.Waiting {
 	case routine.WaitStay:
@@ -251,12 +299,12 @@ func (r *routineRunner) wait(run store.RoutineRun, rt routine.Routine, plan []ro
 		if err := r.w.stack.PauseLayer(id); err != nil {
 			return err
 		}
-		if err := r.w.cfg.Store.AddRoutineRunStep(run.ID, pos+1, next.Name, id, r.w.cfg.Clock.Now()); err != nil {
+		if err := r.w.cfg.Store.AddRoutineRunStep(run.ID, nextPos, next.Name, id, r.w.cfg.Clock.Now()); err != nil {
 			return err
 		}
 		level = id
 	}
-	if err := r.w.cfg.Store.SetRoutineRunProgress(run.ID, pos+1, store.RoutineWaiting, level); err != nil {
+	if err := r.w.cfg.Store.SetRoutineRunProgress(run.ID, nextPos, store.RoutineWaiting, level); err != nil {
 		return err
 	}
 	return r.w.syncSuppressor()
@@ -310,7 +358,7 @@ func (r *routineRunner) finish(run store.RoutineRun, rt *routine.Routine, reason
 }
 
 // announce says that the step at pos is over, if its alert asks for that. A banner says what comes next and how to carry on.
-func (r *routineRunner) announce(rt routine.Routine, plan []routine.Planned, pos int, last bool) {
+func (r *routineRunner) announce(rt routine.Routine, plan []routine.Planned, pos, nextPos int, last bool) {
 	step := plan[pos]
 	if step.Alert == routine.AlertSound && !last {
 		r.w.playSound()
@@ -319,7 +367,7 @@ func (r *routineRunner) announce(rt routine.Routine, plan []routine.Planned, pos
 	if step.Alert != routine.AlertBanner || last { // the end of the routine has its summary instead
 		return
 	}
-	next := plan[pos+1]
+	next := plan[nextPos]
 	body := fmt.Sprintf("Next: %s, %s at %s", next.Label(), formatLength(next.Length), levelText(next.Level))
 	if step.Advance == routine.AdvanceAsk {
 		body += ". Start it with: shh routine next"

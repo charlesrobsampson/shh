@@ -16,9 +16,11 @@ cat > "$HOME_DIR/.config/shh/routines.json" <<'J'
   "quick test": {
     "summary": ["ui"],
     "steps": [
-      {"name": "one", "level": "off", "length": "3s"},
+      "baseline off",
+      "off 3s one",
       {"name": "two", "level": "off", "length": "3s", "advance": "ask"},
-      {"name": "three", "level": "off", "length": "3s"}
+      "baseline off",
+      "off 3s three"
     ]
   }
 }}
@@ -37,10 +39,10 @@ wait_for() { # wait_for <pattern> [seconds]: poll the routine status until it ma
 
 check "list shows the routine" "$(shh routine list)" "quick test"
 check "a name with spaces needs no quotes" "$(shh routine run quick test)" "Started quick test: one"
-check "status shows the first step" "$(shh routine status)" "quick test: one, step 1 of 3"
+check "status shows the first step" "$(shh routine status)" "quick test: one, step 2 of 5"
 if wait_for "waiting to start three"; then echo "ok   the step that asks waits for the user"; else echo "FAIL never reached the waiting state"; shh routine status | sed 's/^/       /'; fail=1; fi
 check "focus status shows the routine" "$(shh status)" "Routine: quick test"
-check "next starts the waiting step" "$(shh routine next)" "quick test: three, step 3 of 3"
+check "next starts the waiting step" "$(shh routine next)" "quick test: three, step 5 of 5"
 if wait_for "Last run: quick test finished"; then echo "ok   the routine finishes and is summarised"; else echo "FAIL never finished"; shh routine status | sed 's/^/       /'; fail=1; fi
 check "the summary counts every step" "$(shh routine status)" "3 of 3 steps"
 check "a second run can start after one finished" "$(shh routine run quick test)" "Started quick test"

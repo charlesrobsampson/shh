@@ -8,6 +8,7 @@ import (
 
 	"github.com/charlesrobsampson/shh/internal/routine"
 	"github.com/charlesrobsampson/shh/internal/session"
+	"github.com/charlesrobsampson/shh/internal/store"
 )
 
 // pomodoroLite is a short routine: two rounds of work then break, and a long break at the end.
@@ -600,5 +601,96 @@ func must(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// baseline returns the percent of the baseline layer, or 0 if there is none.
+func (r *routineRig) baseline() int {
+	r.t.Helper()
+	for _, l := range r.status().Layers {
+		if l.Kind == store.LevelBaseline {
+			return l.Percent
+		}
+	}
+	return 0
+}
+
+const baselineRoutine = `{"routines": {"day": {"steps": [
+  "baseline 30%",
+  "75% 25m work",
+  "baseline 50%",
+  "off 5m break --ask",
+  "baseline off",
+  "75% 10m wrap up",
+  "baseline 20%"
+]}}}`
+
+func TestBaselineStepsApplyWhenTheRunReachesThemAndTakeNoTime(t *testing.T) {
+	r := newRoutineRig(t, baselineRoutine)
+	r.start("day")
+	if got := r.baseline(); got != 30 {
+		t.Errorf("a baseline step at the start should apply at once: baseline = %d", got)
+	}
+	if v := r.info().Active; v == nil || v.Step != "work" || v.Position != 1 || r.top().Percent != 75 {
+		t.Errorf("the run should be on the first session, past the baseline step: %+v", v)
+	}
+	r.pass(25 * time.Minute)
+	if got := r.baseline(); got != 50 {
+		t.Errorf("the baseline step after work should have applied: baseline = %d", got)
+	}
+	if v := r.info().Active; v == nil || v.Step != "break" || r.top().Percent != 0 || !r.top().Timed {
+		t.Errorf("after work comes the break: %+v", v)
+	}
+	r.pass(5 * time.Minute) // the break asks: baseline off applies, then the run waits on the last session
+	if got := r.baseline(); got != 0 {
+		t.Errorf("baseline off should apply before waiting: baseline = %d", got)
+	}
+	v := r.info().Active
+	if v == nil || !v.Waiting || v.Step != "wrap up" || v.Position != 5 {
+		t.Fatalf("the run should wait to start wrap up: %+v", v)
+	}
+	if err := r.worker.RoutineNext(); err != nil {
+		t.Fatal(err)
+	}
+	r.pass(10 * time.Minute)
+	if r.info().Active != nil {
+		t.Error("the run should be over")
+	}
+	if got := r.baseline(); got != 20 {
+		t.Errorf("a baseline step after the last session still applies before the run ends: baseline = %d", got)
+	}
+}
+
+func TestARoutineOfOnlyBaselineStepsSetsThemAndEndsAtOnce(t *testing.T) {
+	r := newRoutineRig(t, `{"routines": {"set": {"steps": ["baseline 30%", "baseline 45%"]}}}`)
+	r.start("set")
+	if r.info().Active != nil {
+		t.Error("with no sessions the run is over as soon as it starts")
+	}
+	if got := r.baseline(); got != 45 {
+		t.Errorf("baseline = %d, want the last one, 45", got)
+	}
+}
+
+func TestBackSkipsOverBaselineStepsToTheSessionBefore(t *testing.T) {
+	r := newRoutineRig(t, baselineRoutine)
+	r.start("day")
+	r.pass(25 * time.Minute) // now on the break, position 3
+	if err := r.worker.RoutineBack(); err != nil {
+		t.Fatal(err)
+	}
+	if v := r.info().Active; v == nil || v.Step != "work" || r.top().Percent != 75 {
+		t.Errorf("back from the break should restart work, not stop on the baseline step: %+v", v)
+	}
+}
+
+func TestANextOnASessionBeforeABaselineStepAppliesTheBaseline(t *testing.T) {
+	r := newRoutineRig(t, baselineRoutine)
+	r.start("day")
+	if err := r.worker.RoutineNext(); err != nil { // skip work
+		t.Fatal(err)
+	}
+	if got := r.baseline(); got != 50 {
+		t.Errorf("skipping work should still apply the baseline step after it: baseline = %d", got)
 	}
 }

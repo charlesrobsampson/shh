@@ -5,6 +5,8 @@
 package routine
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -60,11 +62,12 @@ const (
 	WhereUI     Where = "ui"
 )
 
-// Step is one session of a routine.
+// Step is one step of a routine: a timed focus session, or a change of the baseline.
 type Step struct {
+	Kind    StepKind // StepSession unless it is a baseline step
 	Name    string
-	Level   int // 0-99, as a session's threshold; 0 is a break with nothing held back
-	Length  time.Duration
+	Level   int           // 0-99, as a session's threshold (or, for a baseline step, the baseline); 0 is a break with nothing held back
+	Length  time.Duration // zero for a baseline step
 	Note    string
 	Alert   Alert
 	Advance Advance
@@ -142,13 +145,29 @@ func Find(routines []Routine, name string) (Routine, bool) {
 
 // ---- the file ----
 
+// fileStep is a step as written: an object with its fields spelled out, or a string, which is the shh command that does it
+// ("75% 25m work --alert banner", "baseline 30%").
 type fileStep struct {
-	Name    *string `json:"name"`
-	Level   *string `json:"level"`
-	Length  *string `json:"length"`
-	Note    *string `json:"note"`
-	Alert   *string `json:"alert"`
-	Advance *string `json:"advance"`
+	Name     *string `json:"name"`
+	Level    *string `json:"level"`
+	Length   *string `json:"length"`
+	Note     *string `json:"note"`
+	Alert    *string `json:"alert"`
+	Advance  *string `json:"advance"`
+	Baseline *string `json:"baseline"`
+
+	command    string // the string, when the step was written as one
+	fromString bool
+}
+
+// UnmarshalJSON reads a step from either form. The decoder's key checking still sees the struct above for the object form.
+func (f *fileStep) UnmarshalJSON(data []byte) error {
+	if trimmed := bytes.TrimSpace(data); len(trimmed) > 0 && trimmed[0] == '"' {
+		f.fromString = true
+		return json.Unmarshal(trimmed, &f.command)
+	}
+	type plain fileStep // without the methods, so this does not call itself
+	return json.Unmarshal(data, (*plain)(f))
 }
 
 type fileSchedule struct {
@@ -296,21 +315,39 @@ func build(fr fileRoutine, name string) (Routine, error) {
 
 func buildSteps(fs []fileStep, key string) ([]Step, error) {
 	var out []Step
-	seen := map[string]bool{}
 	for i, f := range fs {
 		k := fmt.Sprintf("%s[%d]", key, i)
 		bad := func(field, format string, args ...any) error {
-			return fmt.Errorf("%q: %s", k+"."+field, fmt.Sprintf(format, args...))
+			path := k
+			if field != "" {
+				path += "." + field
+			}
+			return fmt.Errorf("%q: %s", path, fmt.Sprintf(format, args...))
 		}
-		s := Step{Level: 65, Alert: AlertNone, Advance: AdvanceAuto}
+		if f.fromString {
+			s, err := ParseCommand(f.command)
+			if err != nil {
+				return nil, bad("", "%v", err)
+			}
+			out = append(out, s)
+			continue
+		}
+		if f.Baseline != nil {
+			if f.Name != nil || f.Level != nil || f.Length != nil || f.Note != nil || f.Alert != nil || f.Advance != nil {
+				return nil, bad("baseline", "a baseline step sets the standing level and nothing else: it takes no other fields")
+			}
+			level, err := decide.ParseThreshold(*f.Baseline)
+			if err != nil {
+				return nil, bad("baseline", "%v", err)
+			}
+			out = append(out, Step{Kind: StepBaseline, Name: "baseline " + LevelWord(level), Level: level})
+			continue
+		}
+		s := Step{Kind: StepSession, Level: 65, Alert: AlertNone, Advance: AdvanceAuto}
 		if f.Name == nil || strings.TrimSpace(*f.Name) == "" {
 			return nil, bad("name", "a step needs a name")
 		}
 		s.Name = strings.TrimSpace(*f.Name)
-		if seen[strings.ToLower(s.Name)] {
-			return nil, bad("name", "the step name %q is used twice in this list", s.Name)
-		}
-		seen[strings.ToLower(s.Name)] = true
 		if f.Level != nil {
 			level, err := decide.ParseThreshold(*f.Level)
 			if err != nil {
@@ -383,13 +420,13 @@ const Example = `// Routines: named sequences of focus sessions, filed under the
       "description": "25 minutes on, 5 off, four times, then a long break",
       "repeat": 4, // the steps below run this many times, then the finish steps once
       "steps": [
-        // level: a percentage or a tier (off, light, medium, deep, lockdown); length: how long the step lasts
-        {"name": "work", "level": "75%", "length": "25m", "note": "focus", "alert": "banner"},
-        // alert: none, sound or banner when the step ends; advance: auto starts the next step, ask waits for you
-        {"name": "break", "level": "off", "length": "5m", "alert": "banner", "advance": "auto"}
+        // A step is written as the shh command that would do it: a level, a length and a name, in any order. level: a percentage or a tier
+        // (off, light, medium, deep, lockdown). --alert banner (or sound) announces the end of the step.
+        "75% 25m work --alert banner",
+        "off 5m break --alert banner"
       ],
       "finish": [
-        {"name": "long break", "level": "off", "length": "15m"}
+        "off 15m long break"
       ],
       // what focus does while a step waits for you: stay (keep the last level), next (the next step's level, timer held), baseline
       "waiting": "stay",
@@ -399,8 +436,10 @@ const Example = `// Routines: named sequences of focus sessions, filed under the
     },
     "deep work": {
       "steps": [
-        {"name": "block", "level": "deep", "length": "90m", "note": "deep work", "alert": "banner", "advance": "ask"},
-        {"name": "rest", "level": "off", "length": "20m"}
+        "baseline 30%",                         // set the standing level; it takes no time, and the routine goes straight on
+        "deep 90m deep work --alert banner --ask", // --ask waits for you ("shh routine next") before the next step
+        {"name": "rest", "level": "off", "length": "20m"}, // or spell a step out as an object: name, level, length, note, alert, advance
+        "baseline off"
       ]
     }
   }

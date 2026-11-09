@@ -37,11 +37,24 @@ func TestTheExampleFileParsesAndHasWhatItClaims(t *testing.T) {
 	if p.Repeat != 4 || len(p.Steps) != 2 || len(p.Finish) != 1 || p.Waiting != routine.WaitStay {
 		t.Errorf("pomodoro = %+v", p)
 	}
-	if work := p.Steps[0]; work.Level != 75 || work.Length != 25*time.Minute || work.Alert != routine.AlertBanner || work.Note != "focus" {
+	if work := p.Steps[0]; work.Level != 75 || work.Length != 25*time.Minute || work.Alert != routine.AlertBanner || work.Name != "work" {
 		t.Errorf("work = %+v", work)
 	}
-	if deep := rs[1]; deep.Steps[0].Level != 90 || deep.Steps[0].Advance != routine.AdvanceAsk || deep.Repeat != 1 {
-		t.Errorf("deep work = %+v", deep)
+	deep := rs[1]
+	if len(deep.Steps) != 4 || deep.Repeat != 1 {
+		t.Fatalf("deep work = %+v", deep)
+	}
+	if b := deep.Steps[0]; b.Kind != routine.StepBaseline || b.Level != 30 {
+		t.Errorf("the first deep work step should set the baseline to 30%%: %+v", b)
+	}
+	if block := deep.Steps[1]; block.Kind != routine.StepSession || block.Level != 90 || block.Length != 90*time.Minute || block.Advance != routine.AdvanceAsk || block.Name != "deep work" {
+		t.Errorf("block = %+v", block)
+	}
+	if rest := deep.Steps[2]; rest.Name != "rest" || rest.Level != 0 || rest.Length != 20*time.Minute {
+		t.Errorf("an object step in the same list should read the same way: %+v", rest)
+	}
+	if last := deep.Steps[3]; last.Kind != routine.StepBaseline || last.Level != 0 {
+		t.Errorf("the last step should clear the baseline: %+v", last)
 	}
 }
 
@@ -178,7 +191,6 @@ func TestProblemsNameTheKeyThatIsWrong(t *testing.T) {
 		{"a level that is a bare number", `{"routines": {"a": {"steps": [{"name": "s", "length": "5m", "level": "75"}]}}}`, "routines.a.steps[0].level"},
 		{"a bad alert", `{"routines": {"a": {"steps": [{"name": "s", "length": "5m", "alert": "loud"}]}}}`, "routines.a.steps[0].alert"},
 		{"a bad advance", `{"routines": {"a": {"steps": [{"name": "s", "length": "5m", "advance": "never"}]}}}`, "routines.a.steps[0].advance"},
-		{"the same step name twice", `{"routines": {"a": {"steps": [` + step + `, ` + step + `]}}}`, "routines.a.steps[1].name"},
 		{"a bad finish step", `{"routines": {"a": {"steps": [` + step + `], "finish": [{"name": "f"}]}}}`, "routines.a.finish[0].length"},
 		{"a bad waiting", `{"routines": {"a": {"waiting": "sleep", "steps": [` + step + `]}}}`, "routines.a.waiting"},
 		{"a bad summary place", `{"routines": {"a": {"summary": ["ui", "email"], "steps": [` + step + `]}}}`, "routines.a.summary[1]"},
@@ -251,5 +263,12 @@ func TestWaitingAndSummaryOptionsAreRead(t *testing.T) {
 	rs := parse(t, one(`{"summary": [], "steps": [{"name": "s", "length": "5m"}]}`))
 	if len(rs[0].Summary) != 0 {
 		t.Errorf("an empty summary list means no summary anywhere, got %v", rs[0].Summary)
+	}
+}
+
+func TestTheSameStepNameTwiceInAListIsFine(t *testing.T) {
+	rs := parse(t, `{"routines": {"a": {"steps": ["75% 25m work", "off 5m break", "75% 25m work", "off 5m break"]}}}`)
+	if len(rs[0].Steps) != 4 {
+		t.Errorf("steps = %+v: a routine may have two breaks of the same name (it is the routine's name that must be unique)", rs[0].Steps)
 	}
 }

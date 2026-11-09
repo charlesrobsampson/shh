@@ -57,16 +57,12 @@ func describeRoutine(r routine.Routine) string {
 	return b.String()
 }
 
-// stepsLine is the steps as "work 25m at 75% -> break 5m at off, 4 times -> long break 15m at off".
+// stepsLine is the steps as the shh commands that do them: "75% 25m work -> off 5m break, 4 times -> off 15m long break".
 func stepsLine(r routine.Routine) string {
 	part := func(steps []routine.Step) string {
 		var out []string
 		for _, s := range steps {
-			text := fmt.Sprintf("%s %s at %s", s.Name, decide.FormatRemaining(int(s.Length/time.Second)), levelWord(s.Level))
-			if s.Advance == routine.AdvanceAsk {
-				text += " (then asks)"
-			}
-			out = append(out, text)
+			out = append(out, s.Command())
 		}
 		return strings.Join(out, " -> ")
 	}

@@ -40,8 +40,8 @@ func TestRoutineListShowsEachRoutinesPlanOnOneLine(t *testing.T) {
 	r := newRig(t, false)
 	r.saveRoutines(lite)
 	out := r.mustRun("routine", "list")
-	for _, want := range []string{"pomo", "short and sweet", "work 25m at 75% -> break 5m at off, 2 times -> long break 15m at off", "1h15m in all",
-		"ask", "work 25m at 75% (then asks) -> break 5m at 30%"} {
+	for _, want := range []string{"pomo", "short and sweet", "75% 25m work --alert banner -> off 5m break, 2 times -> off 15m long break", "1h15m in all",
+		"ask", "75% 25m work --ask -> 30% 5m break"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("list output is missing %q:\n%s", want, out)
 		}
