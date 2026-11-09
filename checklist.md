@@ -373,7 +373,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Manual check: label ten real items with a mix of `y`, `n` and `l`, then see scores change in `shh replay`.
 
 ### 34 · TUI: Focus tab
-- [ ] Done
+- [x] Done
 - Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/34-tui-focus` · Depends: 31, 26
 - Read: `manifest.md` §5.2, `plan.md` §3.1, §8
