@@ -418,3 +418,15 @@ func TestTimestampsKeepSubSecondOrder(t *testing.T) {
 		t.Fatalf("got %v, want [%d %d %d]", ids(got), exact, late, early)
 	}
 }
+
+func TestThreadKindIsStoredAndReadBack(t *testing.T) {
+	s := open(t)
+	withThread := insert(t, s, sample(func(n *store.Notification) { n.Thread = "meeting"; n.SourceRecID = 1 }))
+	without := insert(t, s, sample(func(n *store.Notification) { n.SourceRecID = 2 }))
+	for id, want := range map[int64]string{withThread: "meeting", without: ""} {
+		got, err := s.GetNotification(id)
+		if err != nil || got.Thread != want {
+			t.Errorf("notification %d: thread = %q, %v; want %q", id, got.Thread, err, want)
+		}
+	}
+}

@@ -12,6 +12,8 @@ type Notification struct {
 	Category   string
 	Identifier string
 	Delivered  time.Time
+	// Thread is the kind of conversation, when the app's own metadata says (Teams does); otherwise unknown.
+	Thread Thread
 }
 
 // Skipped is a record that could not be decoded; the rest of the batch is still returned.

@@ -443,3 +443,31 @@ func TestPendingCalendarAlertsSurviveARestart(t *testing.T) {
 		t.Fatalf("alerts = %d, want it not to repeat", got)
 	}
 }
+
+func TestTheThreadKindFromTheAppIsStoredAndChangesTheFeatures(t *testing.T) {
+	score := func(thread ingest.Thread) (store.Notification, string) {
+		r := newWorkerRig(t)
+		if err := r.worker.SetBaseline(65); err != nil {
+			t.Fatal(err)
+		}
+		r.source.Add(ingest.Notification{BundleID: teams, Title: "Ana in General", Body: "can you look at this?", Thread: thread, Delivered: r.clock.Now().Add(-time.Second)})
+		r.tick()
+		n := r.onlyNotification()
+		return n, n.Reason
+	}
+	direct, directReason := score(ingest.ThreadDirect)
+	channel, channelReason := score(ingest.ThreadChannel)
+	guessed, guessedReason := score(ingest.ThreadUnknown)
+	if direct.Thread != "direct" || channel.Thread != "channel" || guessed.Thread != "" {
+		t.Errorf("stored threads = %q, %q, %q", direct.Thread, channel.Thread, guessed.Thread)
+	}
+	if !strings.Contains(directReason, "direct message") || strings.Contains(directReason, "channel message") {
+		t.Errorf("reason with a direct thread = %q: the app's metadata should beat the title that looks like a channel", directReason)
+	}
+	if !strings.Contains(channelReason, "channel message") && !strings.Contains(guessedReason, "channel message") {
+		t.Errorf("reasons %q / %q mention no channel message at all", channelReason, guessedReason)
+	}
+	if !strings.Contains(guessedReason, "channel message") {
+		t.Errorf("with no metadata the text guess should still apply, got %q", guessedReason)
+	}
+}

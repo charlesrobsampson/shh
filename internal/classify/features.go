@@ -39,6 +39,9 @@ const (
 	slotDirect
 	slotUrgency
 	slotQuestion
+	// Added with the thread kinds, after the others so that every earlier slot keeps its place and trained weights stay valid.
+	slotGroup
+	slotMeeting
 )
 
 var mention = regexp.MustCompile(`(?i)(@(you|here|channel|everyone)\b|\bmentioned you\b)`)
@@ -52,6 +55,9 @@ type Input struct {
 	Subtitle string
 	Body     string
 	Category string
+	// Thread is the kind of conversation when the app's own metadata says: "direct", "group", "meeting" or "channel". Empty means
+	// the app does not say, and the kind is guessed from the text.
+	Thread string
 }
 
 // Vector is a sparse feature vector. Indices are strictly ascending, Values are positive, and Labels describe each entry for
@@ -142,14 +148,25 @@ func (f *L0L1) Extract(in Input) Vector {
 	if mention.MatchString(text) {
 		acc.add(slotMention, 1, "mentions you")
 	}
-	// Starting heuristics: real Teams chats here carry only a title and body, so channel messages are guessed from text.
-	headline := in.Title + " " + in.Subtitle
-	channel := strings.Contains(headline, "#") || strings.Contains(strings.ToLower(headline), " in ")
-	switch {
-	case channel:
-		acc.add(slotChannel, 1, "channel message")
-	case in.Title != "":
+	switch in.Thread {
+	case "direct":
 		acc.add(slotDirect, 1, "direct message")
+	case "channel":
+		acc.add(slotChannel, 1, "channel message")
+	case "group":
+		acc.add(slotGroup, 1, "group chat")
+	case "meeting":
+		acc.add(slotMeeting, 1, "meeting chat")
+	default:
+		// The app did not say, so guess from the text (starting heuristics: real Teams chats here carry only a title and body).
+		headline := in.Title + " " + in.Subtitle
+		channel := strings.Contains(headline, "#") || strings.Contains(strings.ToLower(headline), " in ")
+		switch {
+		case channel:
+			acc.add(slotChannel, 1, "channel message")
+		case in.Title != "":
+			acc.add(slotDirect, 1, "direct message")
+		}
 	}
 	if strings.Contains(text, "?") {
 		acc.add(slotQuestion, 1, "question")
