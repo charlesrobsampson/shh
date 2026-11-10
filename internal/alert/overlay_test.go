@@ -845,3 +845,40 @@ func TestTheTextColorTravelsWithTheBannerAndTheScriptDrawsWithIt(t *testing.T) {
 		t.Error("the text, and the fainter app name above it, must be drawn in the configured text color, not always white")
 	}
 }
+
+func TestButtonColorsTravelWithTheBannerOnlyWhenSetAndTheScriptPaintsWithThem(t *testing.T) {
+	r := newOverlayRig(t)
+	plain := request("Ana", "top-right")
+	plain.Style.ButtonColor, plain.Style.ButtonTextColor = -1, -1
+	styled := request("Bo", "top-right")
+	styled.Style.ButtonColor, styled.Style.ButtonTextColor = 238, 15
+	r.show(plain)
+	r.show(styled)
+	read := func(i int) map[string]any {
+		for _, kv := range r.process(i).env {
+			if v, ok := strings.CutPrefix(kv, "SHH_BANNER="); ok {
+				var m map[string]any
+				if err := json.Unmarshal([]byte(v), &m); err != nil {
+					t.Fatal(err)
+				}
+				return m
+			}
+		}
+		return nil
+	}
+	if m := read(0); m["buttonColor"] != nil || m["buttonTextColor"] != nil {
+		t.Errorf("the system look sends no colors: %v", m)
+	}
+	if m := read(1); m["buttonColor"] != "#444444" || m["buttonTextColor"] != "#ffffff" {
+		t.Errorf("the styled buttons: %v", m)
+	}
+	script := strings.Join(alert.OverlayCommand(styled).Args, " ")
+	for _, want := range []string{"cfg.buttonColor", "cfg.buttonTextColor", "setButtonTitle", "setAttributedTitle", "NSForegroundColorAttributeName", "setBackgroundColor", "setCornerRadius"} {
+		if !strings.Contains(script, want) {
+			t.Errorf("the script does not mention %s", want)
+		}
+	}
+	if strings.Contains(script, "button.setTitle($(flagged") || strings.Contains(script, "button.setTitle($(expanded") {
+		t.Error("a button that changes its label must set it through setButtonTitle, or the new label loses the button text color")
+	}
+}

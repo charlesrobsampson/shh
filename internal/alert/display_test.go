@@ -50,13 +50,13 @@ func TestStyleIsResolvedBeforeItReachesTheBackend(t *testing.T) {
 		wantH     int
 	}{
 		{"a plain message uses the base style", alert.Alert{Kind: config.KindMessage, Source: "Teams", Title: "Ana", Body: "hi"},
-			config.Style{Position: "top-right", Size: "small", Color: 233, TextColor: 15, DurationSecs: 8, Sound: "Glass"}, 280, 110},
+			config.Style{Position: "top-right", Size: "small", Color: 233, TextColor: 15, ButtonColor: -1, ButtonTextColor: -1, DurationSecs: 8, Sound: "Glass"}, 280, 110},
 		{"a calendar alert uses the kind override", alert.Alert{Kind: config.KindCalendar, Source: "Calendar", Title: "Sync"},
-			config.Style{Position: "top-right", Size: "small", Color: 39, TextColor: 15, DurationSecs: 8, Sound: "Hero"}, 280, 110},
+			config.Style{Position: "top-right", Size: "small", Color: 39, TextColor: 15, ButtonColor: -1, ButtonTextColor: -1, DurationSecs: 8, Sound: "Hero"}, 280, 110},
 		{"a source override applies to its messages", alert.Alert{Kind: config.KindMessage, Source: "Slack", Title: "ops"},
-			config.Style{Position: "bottom-left", Size: "large", Color: 233, TextColor: 15, DurationSecs: 8, Sound: "none"}, 460, 110},
+			config.Style{Position: "bottom-left", Size: "large", Color: 233, TextColor: 15, ButtonColor: -1, ButtonTextColor: -1, DurationSecs: 8, Sound: "none"}, 460, 110},
 		{"a longer body makes the banner taller", alert.Alert{Kind: config.KindMessage, Source: "Teams", Title: "Ana", Body: strings.Repeat("word ", 20)},
-			config.Style{Position: "top-right", Size: "small", Color: 233, TextColor: 15, DurationSecs: 8, Sound: "Glass"}, 280, 142},
+			config.Style{Position: "top-right", Size: "small", Color: 233, TextColor: 15, ButtonColor: -1, ButtonTextColor: -1, DurationSecs: 8, Sound: "Glass"}, 280, 142},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -350,5 +350,17 @@ func TestOverridesChangeTheResolvedStyleInOrder(t *testing.T) {
 	got := primary.requests[0]
 	if got.Style.Color != 196 || got.Style.Size != "large" || got.Style.Position != "bottom-left" || got.Style.Sound != "Hero" || got.Width != 460 {
 		t.Errorf("style = %+v width %d: the later override wins, the source's sound stays, a larger size widens the banner", got.Style, got.Width)
+	}
+}
+
+func TestALiveDisplayAsksForTheConfigurationOfEachAlert(t *testing.T) {
+	primary := &recordingBackend{}
+	cfg := loadConfig(t, `{"alert": {"color": 33}}`).Alert
+	d := alert.NewLiveDisplay(func() config.Alert { return cfg }, primary, nil, nil)
+	_ = d.Show(alert.Alert{Kind: config.KindMessage, Title: "one", Body: "b"})
+	cfg = loadConfig(t, `{"alert": {"color": 196, "size": "large"}}`).Alert
+	_ = d.Show(alert.Alert{Kind: config.KindMessage, Title: "two", Body: "b"})
+	if len(primary.requests) != 2 || primary.requests[0].Style.Color != 33 || primary.requests[1].Style.Color != 196 || primary.requests[1].Width != 460 {
+		t.Errorf("requests = %+v", primary.requests)
 	}
 }

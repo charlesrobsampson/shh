@@ -132,3 +132,44 @@ func TestTextColorIsItsOwnSettingThatCascadesLikeTheRest(t *testing.T) {
 		t.Errorf("merge: %+v", m)
 	}
 }
+
+func TestButtonColorsAreTheirOwnSettingsAndDefaultToTheSystemLook(t *testing.T) {
+	def, err := config.Load(write(t, `{}`))
+	if err != nil || def.Alert.Base.ButtonColor != config.NoColor || def.Alert.Base.ButtonTextColor != config.NoColor || config.NoColor != -1 {
+		t.Fatalf("%+v %v", def.Alert.Base, err)
+	}
+	cfg, err := config.Load(write(t, `{"alert": {"button_color": 238, "button_text_color": 15, "source": {"Slack": {"button_color": 196}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Alert.Resolve(config.KindMessage, "Teams"); got.ButtonColor != 238 || got.ButtonTextColor != 15 {
+		t.Errorf("base: %+v", got)
+	}
+	if got := cfg.Alert.Resolve(config.KindMessage, "Slack"); got.ButtonColor != 196 || got.ButtonTextColor != 15 {
+		t.Errorf("a source can change one of them: %+v", got)
+	}
+	routine := config.StyleOverride{ButtonTextColor: intp(0)}
+	if got := cfg.Alert.ResolveWith(config.KindMessage, "Teams", routine); got.ButtonColor != 238 || got.ButtonTextColor != 0 {
+		t.Errorf("a routine: %+v", got)
+	}
+	for _, text := range []string{`{"alert": {"button_color": 256}}`, `{"alert": {"button_text_color": -1}}`} {
+		if _, err := config.Load(write(t, text)); err == nil || !contains(err.Error(), "button_") {
+			t.Errorf("%s: %v", text, err)
+		}
+	}
+	// what Effective writes must load again: the system look is left out, not written as -1
+	shown, err := def.Effective()
+	if err != nil || contains(string(shown), "button_color") {
+		t.Errorf("effective: %v\n%s", err, shown)
+	}
+	if _, err := config.Load(write(t, string(shown))); err != nil {
+		t.Errorf("Effective output must load again: %v", err)
+	}
+	shown, _ = cfg.Effective()
+	if !contains(string(shown), `"button_color": 238`) || !contains(string(shown), `"button_text_color": 15`) {
+		t.Errorf("effective:\n%s", shown)
+	}
+	if again, err := config.Load(write(t, string(shown))); err != nil || again.Alert.Base.ButtonColor != 238 {
+		t.Errorf("round trip: %+v %v", again.Alert.Base, err)
+	}
+}

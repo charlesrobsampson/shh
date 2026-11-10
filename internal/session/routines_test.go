@@ -1295,7 +1295,7 @@ func TestASoundAlertPlaysTheSoundTheStyleSays(t *testing.T) {
 	base := config.Alert{Base: config.Style{Position: "top-right", Size: "medium", Color: 208, Sound: "Glass"}}
 	build := func(c *session.Config) {
 		c.PlaySound = func(name string) error { played = append(played, name); return nil }
-		c.AlertConfig = base
+		c.AlertConfig = func() config.Alert { return base }
 		c.Location = time.UTC
 		c.Routines = func() ([]routine.Routine, error) { return routine.Parse("routines.json", []byte(*r.text)) }
 	}

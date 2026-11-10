@@ -168,3 +168,27 @@ func TestTextColorIsAStyleFlagAndAStyleKey(t *testing.T) {
 		t.Errorf("%+v %+v", rs[0].Style, rs[0].Steps[0].Style)
 	}
 }
+
+func TestButtonColorsAreStyleFlagsAndKeys(t *testing.T) {
+	s, err := routine.ParseCommand("75% 25m work --button-color 238 --button-text-color 15")
+	if err != nil || *s.Style.ButtonColor != 238 || *s.Style.ButtonTextColor != 15 {
+		t.Fatalf("%+v %v", s.Style, err)
+	}
+	if got := s.Command(); got != "75% 25m work --button-color 238 --button-text-color 15" {
+		t.Errorf("command = %q", got)
+	}
+	if again, err := routine.ParseCommand(s.Command()); err != nil || !reflect.DeepEqual(again.Style, s.Style) {
+		t.Errorf("%+v %v", again.Style, err)
+	}
+	if _, err := routine.ParseCommand("75% 25m work --button-color 300"); err == nil || !strings.Contains(err.Error(), "style.button_color") {
+		t.Errorf("err = %v", err)
+	}
+	o, err := routine.ParseStyle("--button-color 238")
+	if err != nil || *o.ButtonColor != 238 || routine.StyleWords(o) != "--button-color 238" {
+		t.Errorf("%+v %v", o, err)
+	}
+	rs := parse(t, `{"routines": {"r": {"style": {"button_color": 238}, "steps": [{"name": "x", "length": "5m", "style": {"button_text_color": 0}}]}}}`)
+	if *rs[0].Style.ButtonColor != 238 || *rs[0].Steps[0].Style.ButtonTextColor != 0 {
+		t.Errorf("%+v %+v", rs[0].Style, rs[0].Steps[0].Style)
+	}
+}

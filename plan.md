@@ -189,6 +189,8 @@ Pure function, easily tested. Keyword list (`now`, `ASAP`, `urgent`, `prod`, `do
       "size": "medium",          // small|medium|large
       "color": 208,              // a code from the 8-bit ANSI palette, 0-255 (shh alert colors shows it; https://en.wikipedia.org/wiki/ANSI_escape_code#8-bit)
       "text_color": 15,          // the text on the banner, same palette (15 = white, the default)
+      "button_color": 238,       // the buttons' background and text (left out = the system's look)
+      "button_text_color": 15,
       "duration_secs": 0,        // 0 (default) = stays until dismissed or opened; N = disappears after N seconds
       "sound": "Glass",          // system sound name | "none"
       "buttons": [               // left to right; every known type is always present, one left out is disabled

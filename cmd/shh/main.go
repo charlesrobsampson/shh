@@ -133,7 +133,7 @@ func persistedFocus(dbPath string) bool {
 
 // newAlerter draws alerts in the AppKit overlay and falls back to a Notification Center notification (titled with the own-banner
 // prefix so the suppressor lets it through) if the overlay cannot run or dies.
-func newAlerter(cfg config.Config, onError func(error), onFlag func(notificationID int64, flagged bool), onAction func(token, id string)) (alert.Alerter, *alert.Overlay) {
+func newAlerter(alertConfig func() config.Alert, onError func(error), onFlag func(notificationID int64, flagged bool), onAction func(token, id string)) (alert.Alerter, *alert.Overlay) {
 	fallback := alert.NewFallback(alert.FallbackConfig{OwnPrefix: ingest.OwnTitlePrefix})
 	overlay := alert.NewOverlay(alert.OverlayConfig{
 		OnFlag:   onFlag,
@@ -145,7 +145,7 @@ func newAlerter(cfg config.Config, onError func(error), onFlag func(notification
 			}
 		},
 	})
-	return alert.NewDisplay(cfg.Alert, overlay, fallback, onError), overlay
+	return alert.NewLiveDisplay(alertConfig, overlay, fallback, onError), overlay
 }
 
 // runDaemon is the background worker: real notification source, real banner suppressor and the real alerter.
@@ -182,7 +182,16 @@ func runDaemon(cfg config.Config) error {
 	// A routine's banner can carry a button ("Start next", "Skip"); the worker, made just below, is the one that acts on it.
 	var worker *session.Worker
 	// A banner's Flag button marks its notification for review in the Train tab (and pressing it again clears the mark).
-	alerter, overlay := newAlerter(cfg, onError, func(id int64, flagged bool) {
+	// Banners are styled from config.json as it is when they are shown, not as it was when the worker started.
+	var watcher *config.Watcher
+	if path, err := config.DefaultPath(); err == nil {
+		watcher = config.NewWatcher(path, cfg, onError)
+	}
+	alertConfig := func() config.Alert { return cfg.Alert }
+	if watcher != nil {
+		alertConfig = watcher.Alert
+	}
+	alerter, overlay := newAlerter(alertConfig, onError, func(id int64, flagged bool) {
 		if id < 0 {
 			return // a sample from `shh alert test`: nothing real to mark
 		}
@@ -206,7 +215,7 @@ func runDaemon(cfg config.Config) error {
 		Routines: func() ([]routine.Routine, error) { return routine.Load(routine.DefaultPath(cfg.Paths.Dir)) },
 		// The sound for alerts that are only a sound is the one the alert style uses.
 		PlaySound:   playSystemSound,
-		AlertConfig: cfg.Alert,
+		AlertConfig: alertConfig,
 	})
 	if err != nil {
 		return err

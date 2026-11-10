@@ -20,6 +20,9 @@ func ExplainColorError(err error) error {
 // DefaultColor is the banner color when nothing says otherwise: 208, an orange.
 const DefaultColor = 208
 
+// NoColor as a button color means the system's own look.
+const NoColor = -1
+
 // DefaultTextColor is the banner's text color when nothing says otherwise: 15, white.
 const DefaultTextColor = 15
 

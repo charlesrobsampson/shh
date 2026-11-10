@@ -131,16 +131,45 @@ function layoutText() {
 }
 layoutText();
 
+// Buttons look like the system's unless the configuration gives them a color: then they are drawn as a patch of that color with the
+// button text color on it (the banner's own text color when only a button color was given). The look is applied with a title that is
+// set again whenever a button changes what it says, and anything that goes wrong leaves the system look, which still works.
+const buttonHex = h => {
+  const rgb = h.replace('#', '');
+  const ch = i => parseInt(rgb.slice(i, i + 2), 16) / 255;
+  return $.NSColor.colorWithSRGBRedGreenBlueAlpha(ch(0), ch(2), ch(4), 1);
+};
+const buttonFill = cfg.buttonColor ? buttonHex(cfg.buttonColor) : null;
+const buttonInk = cfg.buttonTextColor ? buttonHex(cfg.buttonTextColor) : (buttonFill ? textColor : null);
+function setButtonTitle(button, text) {
+  button.setTitle($(text));
+  if (!buttonInk) return;
+  try {
+    const attributes = $.NSDictionary.dictionaryWithObjectForKey(buttonInk, $.NSForegroundColorAttributeName);
+    button.setAttributedTitle($.NSAttributedString.alloc.initWithStringAttributes($(text), attributes));
+  } catch (e) { /* the system's text color stays */ }
+}
+function paintButton(button) {
+  if (!buttonFill) return;
+  try {
+    button.setBordered(false);
+    button.setWantsLayer(true);
+    button.layer.setBackgroundColor(buttonFill.CGColor);
+    button.layer.setCornerRadius(6);
+  } catch (e) { button.setBordered(true); /* the system's look stays */ }
+}
+
 const actions = $.ShhBannerActions.alloc.init;
 const buttons = cfg.buttons.map((spec, i) => {
   const button = $.ShhBannerButton.alloc.init;
-  button.setTitle($(spec.label));
   button.setBezelStyle($.NSBezelStyleRounded);
   button.setControlSize($.NSControlSizeSmall);
   button.setFont($.NSFont.systemFontOfSize(12));
   button.setTag(i);
   button.setTarget(actions);
   button.setAction('press:');
+  setButtonTitle(button, spec.label);
+  paintButton(button);
   view.addSubview(button);
   return button;
 });
@@ -191,14 +220,14 @@ function press(spec) {
     // the mark. The script tells Go the state it now has (1 or 0), not just that it was pressed, so the two cannot drift apart.
     const button = buttons[cfg.buttons.indexOf(spec)];
     flagged = !flagged;
-    button.setTitle($(flagged ? (spec.flaggedLabel || 'Flagged') : spec.label));
+    setButtonTitle(button, flagged ? (spec.flaggedLabel || 'Flagged') : spec.label);
     emit('flag ' + (flagged ? 1 : 0));
   } else if (spec.type === 'preview') {
     expanded = !expanded;
     // Someone reading the full text should not have it vanish: stop the auto-dismiss timer.
     if (expanded && timer) { timer.invalidate; timer = null; }
     const button = buttons[cfg.buttons.indexOf(spec)];
-    button.setTitle($(expanded ? (spec.collapseLabel || 'Collapse') : spec.label));
+    setButtonTitle(button, expanded ? (spec.collapseLabel || 'Collapse') : spec.label);
     // Resize at once, then tell Go so it can move the banners after this one; Go answers with the same height and so changes nothing.
     layoutTo(indent, offset, expanded ? Math.max(cfg.previewHeight, cfg.height) : cfg.height);
     emit('height ' + height);

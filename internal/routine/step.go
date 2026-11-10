@@ -102,7 +102,7 @@ func ParseCommand(text string) (Step, error) {
 			s.Alert = Alert(v)
 		case flag == "--ask" && !hasValue:
 			s.Advance = AdvanceAsk
-		case flag == "--color" || flag == "--text-color" || flag == "--position" || flag == "--size" || flag == "--sound" || flag == "--banner-for":
+		case flag == "--color" || flag == "--text-color" || flag == "--button-color" || flag == "--button-text-color" || flag == "--position" || flag == "--size" || flag == "--sound" || flag == "--banner-for":
 			v, err := take()
 			if err != nil {
 				return Step{}, err
@@ -119,7 +119,7 @@ func ParseCommand(text string) (Step, error) {
 		case flag == "--then" || flag == "--end-routine" || flag == "--clear":
 			return Step{}, fmt.Errorf("%s does not apply in a routine (the routine decides what comes next)", flag)
 		case strings.HasPrefix(w, "-") && len(w) > 1:
-			return Step{}, fmt.Errorf("%q is not an option a routine step takes (it takes --alert, --ask, -m and the banner style flags --color, --text-color, --position, --size, --sound and --banner-for)", w)
+			return Step{}, fmt.Errorf("%q is not an option a routine step takes (it takes --alert, --ask, -m and the banner style flags --color, --text-color, --button-color, --button-text-color, --position, --size, --sound and --banner-for)", w)
 		default:
 			positional = append(positional, w)
 		}
@@ -181,15 +181,20 @@ func ParseCommand(text string) (Step, error) {
 // --position top-left, --size large, --sound Hero, --banner-for 10s (0 for until dismissed).
 func setStyleFlag(o *config.StyleOverride, flag, value string) error {
 	switch flag {
-	case "--color", "--text-color":
+	case "--color", "--text-color", "--button-color", "--button-text-color":
 		n, err := strconv.Atoi(value)
 		if err != nil {
 			return fmt.Errorf("%s %q is not a number from 0 to 255 (the 8-bit ANSI palette: shh alert colors shows it)", flag, value)
 		}
-		if flag == "--color" {
+		switch flag {
+		case "--color":
 			o.Color = &n
-		} else {
+		case "--text-color":
 			o.TextColor = &n
+		case "--button-color":
+			o.ButtonColor = &n
+		default:
+			o.ButtonTextColor = &n
 		}
 	case "--position":
 		o.Position = &value
@@ -218,8 +223,8 @@ func ParseStyle(text string) (config.StyleOverride, error) {
 	var o config.StyleOverride
 	for i := 0; i < len(words); i++ {
 		flag, value, hasValue := strings.Cut(words[i], "=")
-		if !slices.Contains([]string{"--color", "--text-color", "--position", "--size", "--sound", "--banner-for"}, flag) {
-			return o, fmt.Errorf("%q is not a style flag: use --color, --text-color, --position, --size, --sound and --banner-for", words[i])
+		if !slices.Contains([]string{"--color", "--text-color", "--button-color", "--button-text-color", "--position", "--size", "--sound", "--banner-for"}, flag) {
+			return o, fmt.Errorf("%q is not a style flag: use --color, --text-color, --button-color, --button-text-color, --position, --size, --sound and --banner-for", words[i])
 		}
 		if !hasValue {
 			if i+1 >= len(words) {
@@ -249,6 +254,12 @@ func styleFlags(o config.StyleOverride) []string {
 	}
 	if o.TextColor != nil {
 		out = append(out, "--text-color", strconv.Itoa(*o.TextColor))
+	}
+	if o.ButtonColor != nil {
+		out = append(out, "--button-color", strconv.Itoa(*o.ButtonColor))
+	}
+	if o.ButtonTextColor != nil {
+		out = append(out, "--button-text-color", strconv.Itoa(*o.ButtonTextColor))
 	}
 	if o.Position != nil {
 		out = append(out, "--position", *o.Position)

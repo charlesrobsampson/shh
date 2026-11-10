@@ -48,7 +48,8 @@ type Config struct {
 	// It is given the name of the sound the style says (see AlertConfig), which is "none" for none.
 	PlaySound func(name string) error
 	// AlertConfig is the configured look of alerts, for the sound a "sound" alert plays: the base, then the routine's and the step's own.
-	AlertConfig config.Alert
+	// It is a function so that an edit to config.json applies to the next alert; nil means no configuration (a sound named "").
+	AlertConfig func() config.Alert
 }
 
 // Decision is the outcome for one notification.
@@ -492,7 +493,11 @@ func (w *Worker) playSound(overrides ...config.StyleOverride) {
 	if w.cfg.PlaySound == nil {
 		return
 	}
-	name := w.cfg.AlertConfig.ResolveWith(config.KindMessage, "Routine", overrides...).Sound
+	var acfg config.Alert
+	if w.cfg.AlertConfig != nil {
+		acfg = w.cfg.AlertConfig()
+	}
+	name := acfg.ResolveWith(config.KindMessage, "Routine", overrides...).Sound
 	if err := w.cfg.PlaySound(name); err != nil && w.cfg.OnError != nil {
 		w.cfg.OnError(fmt.Errorf("playing the alert sound: %w", err))
 	}
