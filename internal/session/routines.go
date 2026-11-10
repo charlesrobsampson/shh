@@ -570,6 +570,14 @@ func (r *routineRunner) finish(run store.RoutineRun, rt *routine.Routine, reason
 	if err := r.w.cfg.Store.EndRoutineRun(run.ID, now, reason, held, let, elapsed); err != nil {
 		return err
 	}
+	// What was flagged for review while it ran, counted now: reviewing a notification takes its flag away.
+	flagged := 0
+	if items, err := r.w.cfg.Store.FlaggedBetween(run.StartedAt, now); err == nil {
+		flagged = len(items)
+		if err := r.w.cfg.Store.SetRoutineRunFlagged(run.ID, flagged); err != nil {
+			return err
+		}
+	}
 	if run.Queued != "" { // the session the user queued for when this ends, whichever way it ended
 		var q queuedSession
 		if err := json.Unmarshal([]byte(run.Queued), &q); err == nil {
@@ -583,6 +591,15 @@ func (r *routineRunner) finish(run store.RoutineRun, rt *routine.Routine, reason
 	}
 	if reason == "until" {
 		r.announceCutoff(run, rt)
+	}
+	if rt != nil && flagged > 0 && containsWhere(rt.Log, routine.WhereBanner) {
+		plural := "s"
+		if flagged == 1 {
+			plural = ""
+		}
+		r.show(alert.Alert{Kind: config.KindMessage, Source: "Routine", Title: fmt.Sprintf("%s: %d flagged notification%s to review", rt.Name, flagged, plural),
+			Body: "They are at the top of the Train tab.", ActionToken: fmt.Sprintf("log:%d", run.ID), Actions: []alert.Action{{ID: "review", Label: "Review"}},
+			Overrides: []config.StyleOverride{rt.Style}})
 	}
 	if rt != nil && reason == "finished" && containsWhere(rt.Summary, routine.WhereBanner) {
 		runs, err := r.w.cfg.Store.RoutineRuns(1)
@@ -768,7 +785,12 @@ func (r *routineRunner) summary(run store.RoutineRun) RoutineSummary {
 		for _, w := range rt.Summary {
 			s.Where = append(s.Where, string(w))
 		}
+		for _, w := range rt.Log {
+			s.LogWhere = append(s.LogWhere, string(w))
+		}
 	}
+	s.RunID, s.Flagged = run.ID, run.Flagged
+	s.ToReview = r.toReview(run)
 	if steps, err := r.w.cfg.Store.RoutineRunSteps(run.ID); err == nil {
 		started := map[int]bool{}
 		for _, st := range steps {
@@ -784,6 +806,19 @@ func describeSummary(s RoutineSummary) string { return s.Sentence() }
 
 // Last is the summary of the run that ended most recently, or nil if none has. It is worked out once per run, since clients ask for it
 // with every status poll.
+// toReview is how many of the notifications flagged during a run are still flagged: a flag goes when the notification is trained.
+func (r *routineRunner) toReview(run store.RoutineRun) int {
+	end := r.w.cfg.Clock.Now()
+	if run.EndedAt != nil {
+		end = *run.EndedAt
+	}
+	items, err := r.w.cfg.Store.FlaggedBetween(run.StartedAt, end)
+	if err != nil {
+		return 0
+	}
+	return len(items)
+}
+
 func (r *routineRunner) Last() *RoutineSummary {
 	runs, err := r.w.cfg.Store.RoutineRuns(2) // the newest may be the one in progress
 	if err != nil {
@@ -806,5 +841,6 @@ func (r *routineRunner) Last() *RoutineSummary {
 		r.last, r.lastID = &s, ended.ID
 	}
 	s := *r.last
+	s.ToReview = r.toReview(*ended) // what is still waiting changes as notifications are trained, so it is asked each time
 	return &s
 }

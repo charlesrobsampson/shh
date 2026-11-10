@@ -27,6 +27,7 @@ type routineCmd struct {
 	Unqueue routineUnqueueCmd `cmd:"" help:"Drop the session that was queued to start when the routine ends."`
 	Skip    routineSkipCmd    `cmd:"" help:"Leave out a routine's next scheduled start (--undo takes that back)."`
 	Status  routineStatusCmd  `cmd:"" help:"Show the routine that is running, or the last one that ran."`
+	Log     routineLogCmd     `cmd:"" help:"List the runs of routines, newest first, with what was held back and what was flagged to review."`
 }
 
 // ---- reading the file ----
@@ -126,6 +127,7 @@ type routineAddCmd struct {
 	Steps       []string `arg:"" optional:"" help:"Each step as a shh command in quotes: \"75% 25m work --alert banner\", \"off 5m break\", \"baseline 30%\". Add --ask to a step to wait for approval before the next."`
 	Description string   `short:"d" help:"A line saying what the routine is for."`
 	Repeat      string   `short:"r" default:"1" help:"How many times the steps run: a number, or forever to go round until stopped."`
+	Log         []string `default:"" enum:",banner,menu,ui" help:"Where to say that notifications were flagged during a run, so they can be reviewed: banner, menu, ui (comma-separated). Nothing by default; shh routine log always shows them."`
 	Style       string   `help:"How this routine's banners look, over the configuration's: \"--color 33 --size large --position bottom-left --sound Hero --banner-for 10s\" (shh alert colors shows the colors). Give it with an equals sign: --style=\"--color 33\"."`
 	Trigger     []string `short:"t" sep:"none" help:"A way to start it by itself, in words: \"weekdays except fri at 09:00 until 12:00 --reminder 5m\" (repeat the flag for more than one)."`
 	Finish      []string `short:"f" sep:"none" help:"A step to run once after the last round (repeat the flag for more than one)."`
@@ -146,6 +148,11 @@ func (c *routineAddCmd) Run(env *Env) error {
 	r := routine.Routine{Name: c.Name, Description: c.Description, Repeat: repeat, Waiting: routine.Waiting(c.Waiting)}
 	for _, w := range c.Summary {
 		r.Summary = append(r.Summary, routine.Where(w))
+	}
+	for _, w := range c.Log {
+		if w != "" {
+			r.Log = append(r.Log, routine.Where(w))
+		}
 	}
 	for i, text := range c.Steps {
 		step, err := routine.ParseCommand(text)

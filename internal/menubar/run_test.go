@@ -352,3 +352,23 @@ func TestTheItemLeavesWhenItsWorkerHasGoneEvenIfAnotherAnswersTheSocket(t *testi
 		t.Error("the status item itself should be taken down")
 	}
 }
+
+func TestTheReviewItemOpensTheReviewAndFallsBackToOpen(t *testing.T) {
+	r := newRig(t)
+	r.ctl.set(session.StatusView{Level: 30, Layers: []session.LayerView{baseline}}, nil)
+	var reviewed atomic.Int32
+	r.start(func(c *menubar.Config) {
+		c.Interval = time.Hour
+		c.Review = func() error { reviewed.Add(1); return nil }
+	})
+	h := r.helper(0)
+	r.eventually("the first title", func() bool { return len(h.titles()) == 1 })
+	h.clicks <- menubar.IDReview
+	r.eventually("the review", func() bool { return reviewed.Load() == 1 })
+	r.mu.Lock()
+	opened := r.opened
+	r.mu.Unlock()
+	if opened != 0 {
+		t.Errorf("with a Review handler Open is not used: %d", opened)
+	}
+}

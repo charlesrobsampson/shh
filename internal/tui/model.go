@@ -25,6 +25,8 @@ import (
 
 // Data is the part of the store the lists read and the actions change.
 type Data interface {
+	// The runs of routines, for the history on the Routines tab.
+	session.RunStore
 	ListNotifications(store.Filter) ([]store.Notification, error)
 	SetRead(id int64, read bool) error
 	SetDismissed(id int64, dismissed bool) error
@@ -70,6 +72,8 @@ type Config struct {
 	Now func() time.Time
 	// Refresh is how often the lists and status are re-read; one second when zero.
 	Refresh time.Duration
+	// StartTab is the tab to open on: focus, notifications, train or routines; empty for the usual one.
+	StartTab string
 	// HelpOnly opens the guide on its own, as shh guide does: closing it leaves shh. HelpSection (a section's slug) and HelpSearch
 	// say where it opens and what it searches for first. Either of those also opens the help when HelpOnly is not set.
 	HelpOnly                bool
@@ -133,6 +137,8 @@ type Model struct {
 	// saved is the routines last read from the file, and savedErr why they could not be.
 	saved    []routine.Routine
 	savedErr string
+	// history is the list of past runs, open on the Routines tab; nil when it is not.
+	history *historyView
 	// trigForm is the trigger being changed on top of the editor; nil when none is.
 	trigForm *triggerForm
 	// editor is the routine being made or changed on the Routines tab; nil when none is.
@@ -185,6 +191,11 @@ func New(cfg Config) *Model {
 	}
 	m := &Model{cfg: cfg, tab: TabNotifications, width: 100, height: 30, helpAt: -1}
 	m.reload()
+	for tab := Tab(0); tab < tabCount; tab++ {
+		if strings.EqualFold(cfg.StartTab, tab.String()) {
+			m.tab = tab
+		}
+	}
 	if cfg.HelpOnly || cfg.HelpSection != "" || cfg.HelpSearch != "" {
 		m.openGuide(cfg.HelpSection, cfg.HelpSearch)
 	}
@@ -296,6 +307,10 @@ func (m *Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.showHelp {
 		return m.helpKey(msg)
+	}
+	if m.history != nil {
+		m.historyKey(msg.String(), 1)
+		return m, m.takeBlink()
 	}
 	if m.trigForm != nil {
 		m.triggerFormKey(msg.String())
@@ -1372,13 +1387,16 @@ func (m *Model) keyHints() string {
 	case TabFocus:
 		return "j/k select · Enter run it · or its key: s b f p + - x X · Tab switch"
 	case TabRoutines:
+		if m.history != nil {
+			return "j/k select a run · R review what was flagged (the Train tab) · H or Esc back to the routines"
+		}
 		if m.trigForm != nil {
 			return triggerFormHint(m.trigForm)
 		}
 		if m.editor != nil {
 			return "j/k move · Enter change · a add · d delete · J/K reorder steps · s save · Esc cancel"
 		}
-		return "j/k select · Enter start · n next · b back · x stop · a new · e edit · c copy · d delete"
+		return "j/k select · Enter start · n next · b back · x stop · a new · e edit · c copy · d delete · H history"
 	case TabTrain:
 		return "j/k move · / filter · y/n right/wrong · t score · u undo · f flag · e read · o open · d dismiss"
 	}

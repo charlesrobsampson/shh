@@ -36,6 +36,8 @@ type RoutineRun struct {
 	// EndsAt is when the run is cut off, for one started by a trigger with an until time; EndsAlert says how that is announced.
 	EndsAt    *time.Time
 	EndsAlert string
+	// Flagged is how many notifications were flagged for review during the run, counted when it ended.
+	Flagged int
 	// Queued is a session to start when the run ends, as the worker wrote it ("" for none).
 	Queued string
 	// Blocked, Allowed and ActiveSecs total what the run did, filled in when it ends.
@@ -51,7 +53,7 @@ type RoutineRunStep struct {
 	StartedAt time.Time
 }
 
-const runColumns = `id, routine, CAST(started_at AS TEXT), CAST(ended_at AS TEXT), end_reason, position, steps_total, state, level_id, blocked, allowed, active_secs, interrupted, queued, CAST(ends_at AS TEXT), ends_alert`
+const runColumns = `id, routine, CAST(started_at AS TEXT), CAST(ended_at AS TEXT), end_reason, position, steps_total, state, level_id, blocked, allowed, active_secs, interrupted, queued, CAST(ends_at AS TEXT), ends_alert, flagged`
 
 // StartRoutineRun records a new run at its first step. It returns ErrRoutineActive if one is running already.
 func (s *Store) StartRoutineRun(routine string, now time.Time, stepsTotal int) (int64, error) {
@@ -83,6 +85,20 @@ func (s *Store) SetRoutineRunProgress(id int64, position int, state RoutineState
 // SetRoutineRunInterrupted notes that the user's own session is running on top of the run's step (or that it is not any more).
 func (s *Store) SetRoutineRunInterrupted(id int64, interrupted bool) error {
 	return s.update(id, `UPDATE routine_runs SET interrupted = ? WHERE id = ? AND ended_at IS NULL`, interrupted, id)
+}
+
+// SetRoutineRunFlagged records how many notifications were flagged during a run that has ended.
+func (s *Store) SetRoutineRunFlagged(id int64, n int) error {
+	return s.update(id, `UPDATE routine_runs SET flagged = ? WHERE id = ?`, n, id)
+}
+
+// GetRoutineRun returns one run, active or ended.
+func (s *Store) GetRoutineRun(id int64) (RoutineRun, bool, error) {
+	run, err := scanRun(s.db.QueryRow(`SELECT `+runColumns+` FROM routine_runs WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return RoutineRun{}, false, nil
+	}
+	return run, err == nil, err
 }
 
 // SetRoutineRunEnds says when the active run is cut off and how that is announced.
@@ -194,7 +210,7 @@ func scanRun(row scanner) (RoutineRun, error) {
 		endsAlt sql.NullString
 	)
 	if err := row.Scan(&run.ID, &run.Routine, &started, &ended, &reason, &run.Position, &run.StepsTotal, &state, &level,
-		&run.Blocked, &run.Allowed, &run.ActiveSecs, &run.Interrupted, &queued, &endsAt, &endsAlt); err != nil {
+		&run.Blocked, &run.Allowed, &run.ActiveSecs, &run.Interrupted, &queued, &endsAt, &endsAlt, &run.Flagged); err != nil {
 		return RoutineRun{}, err
 	}
 	var err error
@@ -210,4 +226,41 @@ func scanRun(row scanner) (RoutineRun, error) {
 	}
 	run.EndsAlert = endsAlt.String
 	return run, nil
+}
+
+// FlaggedNotification is a notification that was flagged for review, in brief.
+type FlaggedNotification struct {
+	ID        int64
+	Source    string
+	Sender    string
+	Title     string
+	Timestamp time.Time
+}
+
+// FlaggedBetween lists the notifications that arrived between two times and are flagged for review now, oldest first. Flags go when a
+// notification is trained, so what is listed is what still waits to be looked at.
+func (s *Store) FlaggedBetween(from, to time.Time) ([]FlaggedNotification, error) {
+	rows, err := s.db.Query(`SELECT id, source, sender, title, CAST(timestamp AS TEXT) FROM notifications WHERE is_flagged = 1 AND timestamp >= ? AND timestamp <= ? ORDER BY timestamp, id`,
+		formatTime(from), formatTime(to))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []FlaggedNotification
+	for rows.Next() {
+		var (
+			f  FlaggedNotification
+			ts string
+		)
+		var sender, title sql.NullString
+		if err := rows.Scan(&f.ID, &f.Source, &sender, &title, &ts); err != nil {
+			return nil, err
+		}
+		f.Sender, f.Title = sender.String, title.String
+		if f.Timestamp, err = parseTime(ts); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
 }

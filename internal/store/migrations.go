@@ -187,4 +187,8 @@ CREATE TABLE schedule_events (
 	PRIMARY KEY (routine, start_at, kind)
 );
 `,
+
+	// How many notifications were flagged for review during a run, counted when it ended (task 52): a flag is cleared by training the
+	// notification, so counting later would lose the ones that have been reviewed since.
+	`ALTER TABLE routine_runs ADD COLUMN flagged INTEGER NOT NULL DEFAULT 0;`,
 }

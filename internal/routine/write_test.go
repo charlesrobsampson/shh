@@ -321,3 +321,27 @@ func TestCheckReturnsTheRoutineAsItWillReadBack(t *testing.T) {
 		t.Error("a nameless routine is not valid")
 	}
 }
+
+func TestLogAndAnEmptySummarySurviveSavingAndReading(t *testing.T) {
+	p := tempFile(t, "")
+	r := newRoutine(t, "logged", "75% 25m work")
+	r.Log = []routine.Where{routine.WhereBanner, routine.WhereMenu}
+	r.Summary = []routine.Where{} // nowhere is a choice, and must not come back as the default
+	if err := routine.Save(p, r, false); err != nil {
+		t.Fatal(err)
+	}
+	rs, err := routine.Load(p)
+	if err != nil || len(rs[0].Log) != 2 || rs[0].Log[1] != routine.WhereMenu || len(rs[0].Summary) != 0 {
+		t.Fatalf("%+v %v\n%s", rs, err, read(t, p))
+	}
+	if text := read(t, p); !strings.Contains(text, `"log": [`) || !strings.Contains(text, `"summary": []`) {
+		t.Errorf("file:\n%s", text)
+	}
+	plain := newRoutine(t, "plain", "75% 25m work")
+	if err := routine.Save(p, plain, false); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(read(t, p), `"log"`) != 1 || strings.Count(read(t, p), `"summary"`) != 1 {
+		t.Errorf("a routine with the defaults writes neither:\n%s", read(t, p))
+	}
+}

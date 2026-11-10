@@ -92,6 +92,9 @@ type Routine struct {
 	Finish  []Step
 	Waiting Waiting
 	Summary []Where
+	// Log is where to say that notifications were flagged during a run that has ended, so they can be reviewed: banner, menu, ui. None
+	// by default. (The runs and what they did are always kept, and shh routine log lists them.)
+	Log []Where
 	// Style changes how all the routine's banners look from what the configuration says: position, size, color, duration_secs and sound.
 	// A step's own style is laid over it.
 	Style config.StyleOverride
@@ -265,6 +268,7 @@ type fileRoutine struct {
 	Finish      []fileStep            `json:"finish"`
 	Waiting     *string               `json:"waiting"`
 	Summary     []string              `json:"summary"`
+	Log         []string              `json:"log"`
 	Triggers    []fileTrigger         `json:"triggers"`
 	Style       *config.StyleOverride `json:"style"`
 }
@@ -408,6 +412,15 @@ func build(fr fileRoutine, name string) (Routine, error) {
 			if !slices.Contains(r.Summary, w) {
 				r.Summary = append(r.Summary, w)
 			}
+		}
+	}
+	for i, s := range fr.Log {
+		w := Where(s)
+		if !slices.Contains([]Where{WhereBanner, WhereMenu, WhereUI}, w) {
+			return r, bad(fmt.Sprintf("log[%d]", i), "%q is not one of banner, menu, ui", s)
+		}
+		if !slices.Contains(r.Log, w) {
+			r.Log = append(r.Log, w)
 		}
 	}
 	return r, nil

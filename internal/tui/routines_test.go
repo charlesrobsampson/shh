@@ -320,7 +320,7 @@ func TestEditingARoutineChangesAStepAndSavesInPlace(t *testing.T) {
 			t.Errorf("the editor should show %q:\n%s", want, v)
 		}
 	}
-	r.press("j", "j", "j", "j", "j", "j", "enter") // the first step
+	r.press("j", "j", "j", "j", "j", "j", "j", "enter") // the first step
 	if r.m.prompt == nil || r.m.prompt.text != "75% 25m work --alert banner" {
 		t.Fatalf("Enter on a step should open it for editing: %+v", r.m.prompt)
 	}
@@ -398,7 +398,7 @@ func TestBadValuesStayInTheBoxWithTheReason(t *testing.T) {
 		t.Errorf("err = %v", r.m.prompt)
 	}
 	r.press("esc")
-	r.press("j", "j", "j", "j", "enter") // the first step
+	r.press("j", "j", "j", "j", "j", "enter") // the first step
 	r.typeInto("75% work")
 	if r.m.prompt == nil || !strings.Contains(r.m.prompt.err, "length") {
 		t.Errorf("err = %v", r.m.prompt)
@@ -410,7 +410,7 @@ func TestBadValuesStayInTheBoxWithTheReason(t *testing.T) {
 
 func TestStepsCanBeMovedAndDeletedButNotTheLastOne(t *testing.T) {
 	r, _, _ := editorRig(t)
-	r.press("e", "j", "j", "j", "j", "j", "j") // first step
+	r.press("e", "j", "j", "j", "j", "j", "j", "j") // first step
 	r.press("J")
 	if r.m.editor.draft.Steps[1].Name != "work" || r.m.editor.draft.Steps[0].Name != "break" {
 		t.Errorf("steps = %+v", r.m.editor.draft.Steps)
@@ -547,7 +547,7 @@ func TestEditingKeysAreOffWithoutSaveSupport(t *testing.T) {
 func openStepBox(t *testing.T) *rig {
 	t.Helper()
 	r, _, _ := editorRig(t)
-	r.press("e", "j", "j", "j", "j", "j", "j", "enter") // the first step of pomo: "75% 25m work --alert banner"
+	r.press("e", "j", "j", "j", "j", "j", "j", "j", "enter") // the first step of pomo: "75% 25m work --alert banner"
 	if r.m.prompt == nil || r.m.prompt.text != "75% 25m work --alert banner" {
 		t.Fatalf("prompt = %+v", r.m.prompt)
 	}

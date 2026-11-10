@@ -13,6 +13,7 @@ import (
 
 	"github.com/charlesrobsampson/shh/internal/decide"
 	"github.com/charlesrobsampson/shh/internal/session"
+	"github.com/charlesrobsampson/shh/internal/store"
 )
 
 // Env is everything the commands need from the outside world, so tests can substitute all of it.
@@ -38,6 +39,11 @@ type Env struct {
 	RoutinesPath string
 	// TUI opens the terminal UI. Nil when it is not available.
 	TUI func() error
+	// UI opens the terminal UI on a tab (focus, notifications, train, routines). Nil when it is not available.
+	UI func(tab string) error
+	// WithStore opens the database for reading history (the runs of routines), calls do with it and closes it again. Nil when there is no
+	// database to read.
+	WithStore func(do func(*store.Store) error) error
 	// Guide opens the guide in the terminal UI, at a section (its slug, or empty) and with a search made (or empty). Nil when it is not
 	// available, and the guide is printed instead.
 	Guide func(section, search string) error

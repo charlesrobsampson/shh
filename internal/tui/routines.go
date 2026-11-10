@@ -106,6 +106,15 @@ func (m *Model) routineKey(key string) bool {
 		m.copyRoutine()
 	case "d":
 		m.confirmDelete()
+	case "H":
+		m.openHistory()
+	case "R":
+		if l := m.status.LastRoutine; m.haveStatus && l != nil && l.ToReview > 0 {
+			m.goTo(TabTrain)
+			m.notice = fmt.Sprintf("%d flagged during %s: they are at the top of the Train tab", l.ToReview, l.Name)
+			return true
+		}
+		m.notice = "nothing flagged during the last run is waiting for review (H shows the runs)"
 	case "S":
 		if m.routineCursor >= len(m.saved) {
 			return true
@@ -252,6 +261,9 @@ func routineLineOnly(r session.RoutineView) string {
 
 // routinesView is the Routines tab: the run in progress, if any, and the saved routines to start one from.
 func (m *Model) routinesView() string {
+	if m.history != nil {
+		return m.historyView()
+	}
 	if m.trigForm != nil {
 		return m.triggerFormView()
 	}
@@ -266,6 +278,9 @@ func (m *Model) routinesView() string {
 		lines = append(lines, "  "+bold.Render("No routine is running"))
 		if l := m.status.LastRoutine; l != nil && l.Shows("ui") {
 			lines = append(lines, "  "+dim.Render("last: "+oneLine(l.Line())))
+		}
+		if l := m.status.LastRoutine; l != nil && l.ToReview > 0 && l.ShowsLog("ui") {
+			lines = append(lines, "  "+bold.Render(fmt.Sprintf("⚑ %d flagged during %s to review", l.ToReview, l.Name))+dim.Render(" · R: Train tab · H: all runs"))
 		}
 	default:
 		r := m.status.Routine
@@ -313,4 +328,11 @@ func (m *Model) routinesView() string {
 		}
 	}
 	return pad(lines, m.bodyHeight(), m.width)
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }

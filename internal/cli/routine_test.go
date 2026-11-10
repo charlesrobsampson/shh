@@ -753,3 +753,15 @@ func TestAlertColorsShowsThePaletteOrOneColor(t *testing.T) {
 		t.Errorf("code %d stderr %q", code, r.err.String())
 	}
 }
+
+func TestRoutineAddTakesWhereToReportFlaggedNotifications(t *testing.T) {
+	r := newRig(t, false)
+	r.mustRun("routine", "add", "morning", "75% 25m work", "--log", "banner,ui")
+	rs, err := routine.Load(r.routines)
+	if err != nil || len(rs[0].Log) != 2 || rs[0].Log[0] != routine.WhereBanner || rs[0].Log[1] != routine.WhereUI {
+		t.Fatalf("%+v %v", rs, err)
+	}
+	if code := r.run("routine", "add", "bad", "75% 25m work", "--log", "email"); code == 0 {
+		t.Error("an unknown place is refused")
+	}
+}

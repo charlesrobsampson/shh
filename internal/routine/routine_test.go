@@ -262,3 +262,16 @@ func TestTheSameStepNameTwiceInAListIsFine(t *testing.T) {
 		t.Errorf("steps = %+v: a routine may have two breaks of the same name (it is the routine's name that must be unique)", rs[0].Steps)
 	}
 }
+
+func TestLogSaysWhereToReportFlaggedNotificationsAndDefaultsToNowhere(t *testing.T) {
+	rs := parse(t, one(`{"steps": ["75% 25m x"], "log": ["banner", "ui", "banner"]}`))
+	if len(rs[0].Log) != 2 || rs[0].Log[0] != routine.WhereBanner || rs[0].Log[1] != routine.WhereUI {
+		t.Errorf("log = %v (a repeat is dropped)", rs[0].Log)
+	}
+	if none := parse(t, one(`{"steps": ["75% 25m x"]}`)); len(none[0].Log) != 0 {
+		t.Errorf("by default nothing is reported: %v", none[0].Log)
+	}
+	if _, err := routine.Parse("f", []byte(one(`{"steps": ["75% 25m x"], "log": ["email"]}`))); err == nil || !strings.Contains(err.Error(), "routines.r.log[0]") {
+		t.Errorf("err = %v", err)
+	}
+}

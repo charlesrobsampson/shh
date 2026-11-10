@@ -1316,3 +1316,160 @@ func TestASoundAlertPlaysTheSoundTheStyleSays(t *testing.T) {
 		t.Errorf("played = %v", played)
 	}
 }
+
+// ---- the run log: what was flagged for review during a run ----
+
+func (r *routineRig) flagAll() int {
+	r.t.Helper()
+	n := 0
+	for _, nt := range r.notifications() {
+		if err := r.store.SetFlagged(nt.ID, true); err != nil {
+			r.t.Fatal(err)
+		}
+		n++
+	}
+	return n
+}
+
+const loggedRoutine = `{"routines": {"r": {"log": ["banner", "menu"], "steps": ["75% 10m work"]}, "quiet": {"steps": ["75% 10m work"]}}}`
+
+func TestARunCountsTheNotificationsFlaggedDuringItWhenItEnds(t *testing.T) {
+	r := newRoutineRig(t, loggedRoutine)
+	r.postAndTick(teams, "Ana", "lunch menu for friday") // before the run: not part of it
+	r.pass(time.Minute)
+	r.start("quiet")
+	r.pass(time.Minute) // a notification is stamped a second before it is seen, so let the run be a little older first
+	r.postAndTick(teams, "Bo", "lunch menu for friday")
+	r.postAndTick(teams, "Cy", "standup notes")
+	r.flagAll() // all three are flagged, but only two arrived during the run
+	r.pass(10 * time.Minute)
+	last := r.worker.RoutineLast()
+	if last == nil || last.Flagged != 2 || last.ToReview != 2 || last.RunID == 0 {
+		t.Fatalf("last = %+v: two of the three arrived while it ran", last)
+	}
+	if !strings.HasSuffix(last.Sentence(), "2 flagged for review.") {
+		t.Errorf("sentence = %q", last.Sentence())
+	}
+	// reviewing one takes its flag away: the count made at the end stays, what is left to do goes down
+	for _, n := range r.notifications() {
+		if n.Sender == "Bo" {
+			if err := r.store.Train(n.ID, store.Training{Feedback: "y"}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	last = r.worker.RoutineLast()
+	if last.Flagged != 2 || last.ToReview != 1 || !strings.HasSuffix(last.Sentence(), "2 flagged for review, 1 still to review.") {
+		t.Errorf("last = %+v: %q", last, last.Sentence())
+	}
+}
+
+func TestNothingFlaggedMeansNothingAddedToTheSentence(t *testing.T) {
+	r := newRoutineRig(t, loggedRoutine)
+	r.start("quiet")
+	r.pass(time.Minute)
+	r.postAndTick(teams, "Bo", "lunch menu for friday")
+	r.pass(10 * time.Minute)
+	last := r.worker.RoutineLast()
+	if last.Flagged != 0 || strings.Contains(last.Sentence(), "flagged") {
+		t.Errorf("sentence = %q", last.Sentence())
+	}
+}
+
+func TestTheReviewBannerComesOnlyForARoutineThatAsksForItAndOnlyWhenSomethingWasFlagged(t *testing.T) {
+	r := newRoutineRig(t, loggedRoutine)
+	var opened []string
+	r.worker = r.build(func(c *session.Config) {
+		c.Location = time.UTC
+		c.OpenUI = func(tab string) error { opened = append(opened, tab); return nil }
+		c.Routines = func() ([]routine.Routine, error) { return routine.Parse("routines.json", []byte(*r.text)) }
+	})
+	r.start("r")
+	r.pass(time.Minute)
+	r.postAndTick(teams, "Bo", "lunch menu for friday")
+	r.flagAll()
+	r.pass(10 * time.Minute)
+	var review *struct{ title, token string }
+	for _, a := range r.alerter.Shown() {
+		if strings.Contains(a.Title, "flagged notification") {
+			review = &struct{ title, token string }{a.Title, a.ActionToken}
+			if len(a.Actions) != 1 || a.Actions[0].ID != "review" || a.Actions[0].Label != "Review" {
+				t.Errorf("actions = %+v", a.Actions)
+			}
+		}
+	}
+	if review == nil || review.title != "r: 1 flagged notification to review" {
+		t.Fatalf("shown = %v", r.shown())
+	}
+	if err := r.worker.RoutineAction(review.token, "review"); err != nil || len(opened) != 1 || opened[0] != "train" {
+		t.Errorf("Review should open the UI at the Train tab: %v %v", opened, err)
+	}
+	// a routine that did not ask, and a run with nothing flagged, stay quiet
+	before := len(r.alerter.Shown())
+	r.start("quiet")
+	r.pass(time.Minute)
+	r.postAndTick(teams, "Cy", "standup notes")
+	r.flagAll()
+	r.pass(10 * time.Minute)
+	for _, a := range r.alerter.Shown()[before:] {
+		if strings.Contains(a.Title, "flagged notification") {
+			t.Errorf("quiet did not ask for it: %q", a.Title)
+		}
+	}
+	r.start("r")
+	r.pass(10 * time.Minute)
+	for _, a := range r.alerter.Shown()[before:] {
+		if strings.Contains(a.Title, "flagged notification") {
+			t.Errorf("nothing was flagged during this run: %q", a.Title)
+		}
+	}
+}
+
+func TestTheLogSettingIsReadAndCarriesIntoTheSummary(t *testing.T) {
+	r := newRoutineRig(t, loggedRoutine)
+	r.start("r")
+	r.pass(10 * time.Minute)
+	last := r.worker.RoutineLast()
+	if !last.ShowsLog("banner") || !last.ShowsLog("menu") || last.ShowsLog("ui") {
+		t.Errorf("log where = %v", last.LogWhere)
+	}
+}
+
+func TestRunLogsListsRunsNewestFirstWithWhatTheyDidAndWhatIsLeftToReview(t *testing.T) {
+	r := newRoutineRig(t, loggedRoutine)
+	r.start("r")
+	r.pass(time.Minute)
+	r.postAndTick(teams, "Bo", "lunch menu for friday")
+	r.flagAll()
+	r.pass(10 * time.Minute)
+	r.start("quiet")
+	r.pass(4 * time.Minute)
+	logs, err := session.RunLogs(r.store, "", 0, r.clock.Now())
+	if err != nil || len(logs) != 2 {
+		t.Fatalf("%v %v", logs, err)
+	}
+	quiet, first := logs[0], logs[1]
+	if quiet.Routine != "quiet" || quiet.Ended != nil || quiet.Elapsed != 4*time.Minute {
+		t.Errorf("the run in progress comes first and has no end yet: %+v", quiet)
+	}
+	if first.Routine != "r" || first.Ended == nil || first.Reason != "finished" || first.Steps != 1 || first.Total != 1 || first.Flagged != 1 || first.ToReview != 1 || first.Held != 1 {
+		t.Errorf("first = %+v", first)
+	}
+	if only, _ := session.RunLogs(r.store, "R", 0, r.clock.Now()); len(only) != 1 || only[0].Routine != "r" {
+		t.Errorf("one routine, ignoring case: %+v", only)
+	}
+	if one, _ := session.RunLogs(r.store, "", 1, r.clock.Now()); len(one) != 1 {
+		t.Errorf("a limit: %+v", one)
+	}
+	got, ok, err := session.RunLogOf(r.store, first.ID, r.clock.Now())
+	if err != nil || !ok || got.Routine != "r" {
+		t.Errorf("by id: %+v %v %v", got, ok, err)
+	}
+	if _, ok, _ := session.RunLogOf(r.store, 9999, r.clock.Now()); ok {
+		t.Error("no such run")
+	}
+	items, err := session.RunFlagged(r.store, first.ID, r.clock.Now())
+	if err != nil || len(items) != 1 || items[0].Sender != "Bo" || items[0].Source != "Teams" {
+		t.Errorf("items = %+v %v", items, err)
+	}
+}

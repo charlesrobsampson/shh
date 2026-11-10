@@ -22,6 +22,7 @@ const (
 	rowWaiting
 	rowSummary
 	rowStyle     // the routine's banner style
+	rowLog       // where to say that notifications were flagged during a run
 	rowStep      // a step of the routine; index says which
 	rowAddStep   // "+ add a step"
 	rowFinish    // a step of the finish; index says which
@@ -46,6 +47,18 @@ type routineEditor struct {
 	discard bool
 }
 
+// logChoices are the combinations of places to say that notifications were flagged during a run, in the order Enter goes through them.
+var logChoices = [][]routine.Where{
+	nil,
+	{routine.WhereBanner},
+	{routine.WhereMenu},
+	{routine.WhereUI},
+	{routine.WhereBanner, routine.WhereMenu},
+	{routine.WhereBanner, routine.WhereUI},
+	{routine.WhereMenu, routine.WhereUI},
+	{routine.WhereBanner, routine.WhereMenu, routine.WhereUI},
+}
+
 // summaryChoices are the combinations of places a summary can be shown, in the order Enter goes through them.
 var summaryChoices = [][]routine.Where{
 	{routine.WhereBanner, routine.WhereUI},
@@ -56,6 +69,14 @@ var summaryChoices = [][]routine.Where{
 	{routine.WhereMenu, routine.WhereUI},
 	{routine.WhereBanner, routine.WhereMenu, routine.WhereUI},
 	{},
+}
+
+// logText says where a run's flagged notifications are reported.
+func logText(w []routine.Where) string {
+	if len(w) == 0 {
+		return "nowhere (shh routine log and the history still show them)"
+	}
+	return summaryText(w)
 }
 
 func summaryText(w []routine.Where) string {
@@ -71,7 +92,7 @@ func summaryText(w []routine.Where) string {
 
 // rows lists what the editor shows, top to bottom.
 func (e *routineEditor) rows() []editorRow {
-	rows := []editorRow{{rowName, 0}, {rowDescription, 0}, {rowRepeat, 0}, {rowWaiting, 0}, {rowSummary, 0}, {rowStyle, 0}}
+	rows := []editorRow{{rowName, 0}, {rowDescription, 0}, {rowRepeat, 0}, {rowWaiting, 0}, {rowSummary, 0}, {rowStyle, 0}, {rowLog, 0}}
 	for i := range e.draft.Steps {
 		rows = append(rows, editorRow{rowStep, i})
 	}
@@ -200,6 +221,11 @@ func (m *Model) editRow(row editorRow, _ bool) {
 		i := slices.IndexFunc(summaryChoices, func(c []routine.Where) bool { return slices.Equal(c, e.draft.Summary) })
 		e.draft.Summary = slices.Clone(summaryChoices[(i+1)%len(summaryChoices)])
 		e.dirty = true
+	case rowLog:
+		i := slices.IndexFunc(logChoices, func(c []routine.Where) bool { return slices.Equal(c, e.draft.Log) })
+		e.draft.Log = slices.Clone(logChoices[(i+1)%len(logChoices)])
+		e.dirty = true
+		m.notice = "log: " + logText(e.draft.Log)
 	case rowStyle:
 		m.openField("banner style", routine.StyleWords(e.draft.Style), "flags: --color 33 (background) --text-color 15 --button-color 238 --button-text-color 15 (0-255, shh alert colors shows the palette) --position top-left --size large --sound Hero --banner-for 10s · empty uses the config · Enter keeps it · Esc cancels", row)
 	case rowStep:
@@ -441,6 +467,13 @@ func addCommand(r routine.Routine, replace bool) string {
 	if r.Waiting != "" && r.Waiting != routine.WaitStay {
 		parts = append(parts, "-w", string(r.Waiting))
 	}
+	if len(r.Log) > 0 {
+		var w []string
+		for _, x := range r.Log {
+			w = append(w, string(x))
+		}
+		parts = append(parts, "--log", strings.Join(w, ","))
+	}
 	if w := routine.StyleWords(r.Style); w != "" {
 		parts = append(parts, "--style", shellWord(w))
 	}
@@ -528,6 +561,8 @@ func (m *Model) editorRow(e *routineEditor, row editorRow, selected bool) string
 		label, value = "Waiting", string(e.draft.Waiting)+"  (Enter changes it: stay, next, baseline)"
 	case rowSummary:
 		label, value = "Summary", summaryText(e.draft.Summary)+"  (Enter changes it)"
+	case rowLog:
+		label, value = "Log", logText(e.draft.Log)+"  (Enter changes it)"
 	case rowStyle:
 		label, value = "Banner style", routine.StyleWords(e.draft.Style)
 		if value == "" {

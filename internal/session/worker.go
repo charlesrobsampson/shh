@@ -47,6 +47,9 @@ type Config struct {
 	// PlaySound plays the alert sound, for sessions and routine steps whose alert is "sound". Nil means it is silent.
 	// It is given the name of the sound the style says (see AlertConfig), which is "none" for none.
 	PlaySound func(name string) error
+	// OpenUI opens the terminal UI on a tab (focus, notifications, train or routines): what the Review button of a routine's banner does.
+	// Nil means it cannot.
+	OpenUI func(tab string) error
 	// AlertConfig is the configured look of alerts, for the sound a "sound" alert plays: the base, then the routine's and the step's own.
 	// It is a function so that an edit to config.json applies to the next alert; nil means no configuration (a sound named "").
 	AlertConfig func() config.Alert
@@ -399,6 +402,12 @@ func (w *Worker) RoutineUnqueue() error { return w.routines.Unqueue() }
 func (w *Worker) RoutineAction(token, id string) error {
 	if strings.HasPrefix(token, "sched:") { // a banner of a scheduled start
 		return w.schedule.Action(token, id)
+	}
+	if strings.HasPrefix(token, "log:") { // the banner that says notifications were flagged during a run
+		if id == "review" && w.cfg.OpenUI != nil {
+			return w.cfg.OpenUI("train")
+		}
+		return nil
 	}
 	return w.routines.Action(token, id)
 }

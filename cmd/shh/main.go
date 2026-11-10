@@ -72,8 +72,10 @@ func realEnv() cli.Env {
 	env.PersistedFocus = func() bool { return persistedFocus(cfg.Paths.DB) }
 	env.Daemon = func(context.Context) error { return runDaemon(cfg) }
 	env.Menubar = func(ctx context.Context) error { return runMenubar(ctx, cfg) }
-	env.TUI = func() error { return runTUI(cfg, "", "", false) }
-	env.Guide = func(section, search string) error { return runTUI(cfg, section, search, true) }
+	env.TUI = func() error { return runTUI(cfg, "", "", false, "") }
+	env.UI = func(tab string) error { return runTUI(cfg, "", "", false, tab) }
+	env.Guide = func(section, search string) error { return runTUI(cfg, section, search, true, "") }
+	env.WithStore = func(do func(*store.Store) error) error { return withStore(cfg.Paths.DB, do) }
 	for source := range cfg.Alert.Source {
 		env.AlertSources = append(env.AlertSources, source)
 	}
@@ -115,6 +117,19 @@ func spawnDaemon(cfg config.Config) error {
 		return err
 	}
 	return cmd.Process.Release()
+}
+
+// withStore opens the database for a command that reads the history, without creating one that is not there, and closes it after.
+func withStore(path string, do func(*store.Store) error) error {
+	if _, err := os.Stat(path); err != nil {
+		return fmt.Errorf("there is no history yet (%s does not exist): it starts when the worker first runs", path)
+	}
+	s, err := store.Open(path)
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	return do(s)
 }
 
 // persistedFocus reports whether the database holds an active focus level, without creating a database that is not there.
@@ -215,6 +230,7 @@ func runDaemon(cfg config.Config) error {
 		Routines: func() ([]routine.Routine, error) { return routine.Load(routine.DefaultPath(cfg.Paths.Dir)) },
 		// The sound for alerts that are only a sound is the one the alert style uses.
 		PlaySound:   playSystemSound,
+		OpenUI:      openUI,
 		AlertConfig: alertConfig,
 	})
 	if err != nil {
@@ -280,18 +296,23 @@ func runMenubar(ctx context.Context, cfg config.Config) error {
 		Gone:       func() bool { return os.Getppid() != parent },
 		Controller: session.NewClient(cfg.Paths.Socket),
 		Label:      cfg.Menubar.Label,
-		Open:       openUI,
+		Open:       func() error { return openUI("") },
+		Review:     func() error { return openUI("train") },
 		OnError:    func(err error) { logger.Println("error:", err) },
 	})
 }
 
 // openUI opens a Terminal window running shh, which shows the terminal UI.
-func openUI() error {
+// With a tab (focus, notifications, train, routines) the UI opens on it.
+func openUI(tab string) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return err
 	}
 	quoted := "'" + strings.ReplaceAll(exe, "'", `'\''`) + "'"
+	if tab != "" {
+		quoted += " ui --tab " + tab
+	}
 	script := `tell application "Terminal"
 	activate
 	do script ` + strconv.Quote(quoted) + `
@@ -301,7 +322,7 @@ end tell`
 
 // runTUI opens the terminal UI. It reads the same database as the worker (SQLite allows that) and asks the worker for the session
 // status, which it does without: with no worker the UI is for review and training.
-func runTUI(cfg config.Config, helpSection, helpSearch string, helpOnly bool) error {
+func runTUI(cfg config.Config, helpSection, helpSearch string, helpOnly bool, startTab string) error {
 	if err := os.MkdirAll(cfg.Paths.Dir, 0o700); err != nil {
 		return err
 	}
@@ -313,7 +334,7 @@ func runTUI(cfg config.Config, helpSection, helpSearch string, helpOnly bool) er
 	client := session.NewClient(cfg.Paths.Socket)
 	return tui.Run(tui.Config{
 		Data: db, Worker: client, Label: cfg.Menubar.Label,
-		HelpOnly: helpOnly, HelpSection: helpSection, HelpSearch: helpSearch,
+		HelpOnly: helpOnly, HelpSection: helpSection, HelpSearch: helpSearch, StartTab: startTab,
 		// The Focus tab does everything the command line does, through the worker.
 		Control: client,
 		// The Routines tab starts and steers routines through the worker and reads the routines file itself.

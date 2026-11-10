@@ -50,6 +50,9 @@ type Config struct {
 	Controller Controller
 	// Label starts the title, for example "shh".
 	Label string
+	// Review handles the item that says notifications were flagged during a routine's run, typically by opening the UI on the Train tab.
+	// Nil falls back to Open.
+	Review func() error
 	// Open handles the "Open shh…" item, typically by opening a terminal with the UI. Nil means the item does nothing.
 	Open func() error
 	// Start launches the status item. The default runs statusitem.js with osascript.
@@ -218,6 +221,13 @@ func (r *runner) act(id string) {
 			_, err = rc.RoutineBack()
 		default:
 			_, err = rc.RoutineStop()
+		}
+	case IDReview:
+		switch {
+		case r.cfg.Review != nil:
+			err = r.cfg.Review()
+		case r.cfg.Open != nil:
+			err = r.cfg.Open()
 		}
 	case IDOpen:
 		if r.cfg.Open != nil {

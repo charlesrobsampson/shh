@@ -227,11 +227,16 @@ func (c *resumeCmd) Run(env *Env) error {
 	return nil
 }
 
-type uiCmd struct{}
+type uiCmd struct {
+	Tab string `help:"The tab to open on: focus, notifications, train or routines." enum:",focus,notifications,train,routines" default:""`
+}
 
 // Run opens the terminal UI on a terminal; anywhere else, or without a UI, it prints the status so `shh` is still useful in a
 // pipe or a script.
 func (c *uiCmd) Run(env *Env) error {
+	if env.IsTerminal && env.UI != nil {
+		return env.UI(c.Tab)
+	}
 	if env.IsTerminal && env.TUI != nil {
 		return env.TUI()
 	}

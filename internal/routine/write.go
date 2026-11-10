@@ -271,7 +271,8 @@ type outRoutine struct {
 	Steps       []string              `json:"steps"`
 	Finish      []string              `json:"finish,omitempty"`
 	Waiting     string                `json:"waiting,omitempty"`
-	Summary     []string              `json:"summary,omitempty"`
+	Summary     *[]string             `json:"summary,omitempty"`
+	Log         []string              `json:"log,omitempty"`
 	Triggers    []string              `json:"triggers,omitempty"`
 	Style       *config.StyleOverride `json:"style,omitempty"`
 }
@@ -300,10 +301,15 @@ func marshalRoutine(r Routine, indent string) ([]byte, error) {
 	if r.Waiting != "" && r.Waiting != WaitStay {
 		out.Waiting = string(r.Waiting)
 	}
-	if len(r.Summary) > 0 && !slices.Equal(r.Summary, defaultSummary) {
+	if r.Summary != nil && !slices.Equal(r.Summary, defaultSummary) {
+		where := []string{} // written even when empty: nowhere is a choice
 		for _, w := range r.Summary {
-			out.Summary = append(out.Summary, string(w))
+			where = append(where, string(w))
 		}
+		out.Summary = &where
+	}
+	for _, w := range r.Log {
+		out.Log = append(out.Log, string(w))
 	}
 	for _, t := range r.Triggers {
 		out.Triggers = append(out.Triggers, t.Command())
