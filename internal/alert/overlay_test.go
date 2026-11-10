@@ -873,7 +873,7 @@ func TestButtonColorsTravelWithTheBannerOnlyWhenSetAndTheScriptPaintsWithThem(t 
 		t.Errorf("the styled buttons: %v", m)
 	}
 	script := strings.Join(alert.OverlayCommand(styled).Args, " ")
-	for _, want := range []string{"cfg.buttonColor", "cfg.buttonTextColor", "setButtonTitle", "inks", "ink.setTextColor(buttonInk)", "NSBox", "backdrops", "setFillColor(buttonFill)"} {
+	for _, want := range []string{"cfg.buttonColor", "cfg.buttonTextColor", "setButtonTitle", "inks", "ink.setTextColor(buttonInk)", "sizeToFit", "NSBox", "backdrops", "setFillColor(buttonFill)"} {
 		if !strings.Contains(script, want) {
 			t.Errorf("the script does not mention %s", want)
 		}
@@ -886,5 +886,15 @@ func TestButtonColorsTravelWithTheBannerOnlyWhenSetAndTheScriptPaintsWithThem(t 
 	}
 	if strings.Contains(script, "button.setTitle($(flagged") || strings.Contains(script, "button.setTitle($(expanded") {
 		t.Error("a button that changes its label must set it through setButtonTitle, or the new label loses the button text color")
+	}
+}
+
+func TestAButtonsLabelIsCenteredByHandNotWithTheAlignmentConstant(t *testing.T) {
+	script := strings.Join(alert.OverlayCommand(request("Ana", "top-right")).Args, " ")
+	if strings.Contains(script, "setAlignment") || strings.Contains(script, "NSTextAlignmentCenter") {
+		t.Error("NSTextAlignmentCenter came out as right-aligned text in the banner (the label sat against the right edge of its button): center the label from its size instead")
+	}
+	if !strings.Contains(script, "(face.size.width - size.width) / 2") || !strings.Contains(script, "(face.size.height - size.height) / 2") {
+		t.Error("the label is centered both ways from its own size")
 	}
 }

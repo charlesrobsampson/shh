@@ -151,6 +151,7 @@ function setButtonTitle(button, text, i) {
   if (inks[i]) {
     inks[i].setStringValue($(text));
     button.setTitle($(''));
+    layoutButtons(); // the new words may be a different width, and are centered again
   } else {
     button.setTitle($(text));
   }
@@ -172,7 +173,6 @@ function paintButton(button, i, text) {
     const ink = $.NSTextField.labelWithString($(text));
     ink.setFont($.NSFont.systemFontOfSize(12));
     ink.setTextColor(buttonInk);
-    ink.setAlignment($.NSTextAlignmentCenter);
     view.addSubview(ink);
     backdrops[i] = box;
     inks[i] = ink;
@@ -207,8 +207,12 @@ function layoutButtons() {
     inks[i].setHidden(b.isHidden);
     if (!b.isHidden) {
       box.setFrame(b.frame);
-      // the label is a little shorter than the button, so it sits in the middle of it
-      inks[i].setFrame($.NSMakeRect(b.frame.origin.x, b.frame.origin.y + 4, b.frame.size.width, 16));
+      // The label is centered on the button by hand, from the size its words take. (Its alignment setting is not used: the constant
+      // that is named center came out as right-aligned text on the macOS this was tried on.)
+      inks[i].sizeToFit;
+      const size = inks[i].frame.size;
+      const face = b.frame;
+      inks[i].setFrame($.NSMakeRect(face.origin.x + (face.size.width - size.width) / 2, face.origin.y + (face.size.height - size.height) / 2, size.width, size.height));
     }
   });
 }
