@@ -222,7 +222,8 @@ func runDaemon(cfg config.Config) error {
 		LockPath: filepath.Join(cfg.Paths.Dir, "shh.lock"), PIDPath: cfg.Paths.PID, OnError: onError,
 		// Banners stay until dismissed, and only this process can lay them out, so do not leave while any are up.
 		// A routine waiting for the user may have nothing in force, but it still needs this process to carry on.
-		Busy: func() bool { return overlay.Active() > 0 || worker.RoutineActive() },
+		// A routine with a trigger switched on is started by this process, so it stays up for as long as there is one.
+		Busy: func() bool { return overlay.Active() > 0 || worker.RoutineActive() || worker.HasTriggers() },
 	})
 }
 

@@ -25,6 +25,7 @@ type routineCmd struct {
 	Back    routineBackCmd    `cmd:"" help:"Restart the step before the one in focus."`
 	Stop    routineStopCmd    `cmd:"" help:"End the routine that is running."`
 	Unqueue routineUnqueueCmd `cmd:"" help:"Drop the session that was queued to start when the routine ends."`
+	Skip    routineSkipCmd    `cmd:"" help:"Leave out a routine's next scheduled start (--undo takes that back)."`
 	Status  routineStatusCmd  `cmd:"" help:"Show the routine that is running, or the last one that ran."`
 }
 
@@ -47,7 +48,24 @@ func (c *routineListCmd) Run(env *Env) error {
 		}
 		fmt.Fprint(env.Stdout, describeRoutine(r, routines, env.now()))
 	}
+	env.warnIfTriggersCannotFire(routines)
 	return nil
+}
+
+// warnIfTriggersCannotFire says so when routines have triggers switched on and no worker is running to start them.
+func (e *Env) warnIfTriggersCannotFire(routines []routine.Routine) {
+	has := false
+	for _, r := range routines {
+		for _, t := range r.Triggers {
+			has = has || !t.Disabled
+		}
+	}
+	if !has {
+		return
+	}
+	if _, err := e.client().Status(); errors.Is(err, session.ErrNotRunning) {
+		fmt.Fprintln(e.Stdout, "\nNote: the shh worker is not running, so triggers will not start anything yet. Start it with: shh daemon  (see: shh guide triggers)")
+	}
 }
 
 // describeRoutine writes a routine for people: its name and description, then its plan on one line.
@@ -333,7 +351,69 @@ func (c *routineStatusCmd) Run(env *Env) error {
 		fmt.Fprintln(env.Stdout, "No routine is running.")
 	}
 	if info.Last != nil {
-		fmt.Fprintf(env.Stdout, "Last run: %s %s at %s. %s\n", info.Last.Name, info.Last.Reason, info.Last.Ended.Local().Format("Mon 15:04"), summaryText(*info.Last))
+		fmt.Fprintf(env.Stdout, "Last run: %s %s at %s. %s\n", info.Last.Name, session.ReasonText(info.Last.Reason), info.Last.Ended.Local().Format("Mon 15:04"), summaryText(*info.Last))
+	}
+	if len(info.Upcoming) > 0 {
+		fmt.Fprintln(env.Stdout, "Starts by itself:")
+		for _, u := range info.Upcoming {
+			fmt.Fprintln(env.Stdout, "  "+describeUpcoming(u, env.now()))
+		}
+	}
+	return nil
+}
+
+// describeUpcoming says when a routine starts next: "morning  Mon 09:00  (weekdays at 09:00)", with the skip noted.
+func describeUpcoming(u session.UpcomingStart, now time.Time) string {
+	line := fmt.Sprintf("%s  %s  (%s)", u.Routine, startWhen(u.Start, now), u.Trigger)
+	if u.Skipped {
+		line = fmt.Sprintf("%s  %s  (%s)  SKIPPED", u.Routine, startWhen(u.Start, now), u.Trigger)
+		if u.Then != nil {
+			line += ", then " + startWhen(*u.Then, now)
+		}
+	}
+	return line
+}
+
+type routineSkipCmd struct {
+	Name []string `arg:"" name:"name" help:"The routine; a name with spaces needs no quotes."`
+	Undo bool     `help:"Take back a skip: the next start happens after all."`
+}
+
+func (c *routineSkipCmd) Run(env *Env) error {
+	name := strings.Join(c.Name, " ")
+	if err := env.ensureWorker(); err != nil { // the worker is what starts routines, and it keeps what was skipped
+		return err
+	}
+	var info session.RoutineInfo
+	var err error
+	if c.Undo {
+		info, err = env.client().RoutineUnskip(name)
+	} else {
+		info, err = env.client().RoutineSkip(name)
+	}
+	switch {
+	case errors.Is(err, session.ErrUnknownRoutine):
+		return unknownRoutine(env, name, err)
+	case errors.Is(err, session.ErrNoTrigger):
+		return fmt.Errorf("%q has no trigger that is switched on, so it does not start by itself (shh routine list shows its triggers)", name)
+	case errors.Is(err, session.ErrNotSkipped):
+		return fmt.Errorf("the next start of %q is not skipped", name)
+	case err != nil:
+		return err
+	}
+	for _, u := range info.Upcoming {
+		if !strings.EqualFold(u.Routine, name) {
+			continue
+		}
+		if c.Undo {
+			fmt.Fprintf(env.Stdout, "The next start of %s is back on: %s\n", u.Routine, startWhen(u.Start, env.now()))
+		} else {
+			fmt.Fprintf(env.Stdout, "Skipped the next start of %s (%s).", u.Routine, startWhen(u.Start, env.now()))
+			if u.Then != nil {
+				fmt.Fprintf(env.Stdout, " The one after is %s.", startWhen(*u.Then, env.now()))
+			}
+			fmt.Fprintf(env.Stdout, " Take it back with: shh routine skip --undo %s\n", u.Routine)
+		}
 	}
 	return nil
 }

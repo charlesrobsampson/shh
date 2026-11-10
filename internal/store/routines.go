@@ -33,6 +33,9 @@ type RoutineRun struct {
 	LevelID int64
 	// Interrupted says the user started a session of their own on top of the step, whose countdown is held until that ends.
 	Interrupted bool
+	// EndsAt is when the run is cut off, for one started by a trigger with an until time; EndsAlert says how that is announced.
+	EndsAt    *time.Time
+	EndsAlert string
 	// Queued is a session to start when the run ends, as the worker wrote it ("" for none).
 	Queued string
 	// Blocked, Allowed and ActiveSecs total what the run did, filled in when it ends.
@@ -48,7 +51,7 @@ type RoutineRunStep struct {
 	StartedAt time.Time
 }
 
-const runColumns = `id, routine, CAST(started_at AS TEXT), CAST(ended_at AS TEXT), end_reason, position, steps_total, state, level_id, blocked, allowed, active_secs, interrupted, queued`
+const runColumns = `id, routine, CAST(started_at AS TEXT), CAST(ended_at AS TEXT), end_reason, position, steps_total, state, level_id, blocked, allowed, active_secs, interrupted, queued, CAST(ends_at AS TEXT), ends_alert`
 
 // StartRoutineRun records a new run at its first step. It returns ErrRoutineActive if one is running already.
 func (s *Store) StartRoutineRun(routine string, now time.Time, stepsTotal int) (int64, error) {
@@ -80,6 +83,11 @@ func (s *Store) SetRoutineRunProgress(id int64, position int, state RoutineState
 // SetRoutineRunInterrupted notes that the user's own session is running on top of the run's step (or that it is not any more).
 func (s *Store) SetRoutineRunInterrupted(id int64, interrupted bool) error {
 	return s.update(id, `UPDATE routine_runs SET interrupted = ? WHERE id = ? AND ended_at IS NULL`, interrupted, id)
+}
+
+// SetRoutineRunEnds says when the active run is cut off and how that is announced.
+func (s *Store) SetRoutineRunEnds(id int64, at time.Time, alert string) error {
+	return s.update(id, `UPDATE routine_runs SET ends_at = ?, ends_alert = ? WHERE id = ? AND ended_at IS NULL`, formatTime(at), alert, id)
 }
 
 // SetRoutineRunQueued keeps a session to start when the active run ends, or drops it when text is empty.
@@ -182,9 +190,11 @@ func scanRun(row scanner) (RoutineRun, error) {
 		state   string
 		level   sql.NullInt64
 		queued  sql.NullString
+		endsAt  sql.NullString
+		endsAlt sql.NullString
 	)
 	if err := row.Scan(&run.ID, &run.Routine, &started, &ended, &reason, &run.Position, &run.StepsTotal, &state, &level,
-		&run.Blocked, &run.Allowed, &run.ActiveSecs, &run.Interrupted, &queued); err != nil {
+		&run.Blocked, &run.Allowed, &run.ActiveSecs, &run.Interrupted, &queued, &endsAt, &endsAlt); err != nil {
 		return RoutineRun{}, err
 	}
 	var err error
@@ -195,5 +205,9 @@ func scanRun(row scanner) (RoutineRun, error) {
 		return RoutineRun{}, fmt.Errorf("routine run %d: %w", run.ID, err)
 	}
 	run.EndReason, run.State, run.LevelID, run.Queued = reason.String, RoutineState(state), level.Int64, queued.String
+	if run.EndsAt, err = parseOptionalTime(endsAt); err != nil {
+		return RoutineRun{}, fmt.Errorf("routine run %d: %w", run.ID, err)
+	}
+	run.EndsAlert = endsAlt.String
 	return run, nil
 }

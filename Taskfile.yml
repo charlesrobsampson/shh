@@ -53,6 +53,11 @@ tasks:
     cmds:
       - tools/e2e_routines.sh
 
+  e2e:schedule:
+    desc: Let a trigger start a routine by itself through the real binary and a real worker in a throwaway HOME (takes up to 2.5 minutes; nothing on screen is touched)
+    cmds:
+      - tools/e2e_schedule.sh
+
   watch:invites:
     desc: Watch for meeting invites and record only their structure to private/captures/invites.jsonl; says ENOUGH after 5 (task 47)
     cmds:

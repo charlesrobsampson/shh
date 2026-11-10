@@ -63,6 +63,7 @@ type Worker struct {
 	classifier *classify.Classifier
 	parser     *calendar.Parser
 	routines   *routineRunner
+	schedule   *scheduler
 	scheduler  *calendar.Scheduler
 	tailer     *ingest.Tailer
 
@@ -89,6 +90,7 @@ func NewWorker(cfg Config) (*Worker, error) {
 		}),
 	}
 	w.routines = newRoutineRunner(w)
+	w.schedule = newScheduler(w)
 	w.tailer = ingest.NewTailer(ingest.Config{
 		Source: cfg.Source, Store: cfg.Store, Clock: cfg.Clock, Sources: cfg.Rules.Sources, OwnBundles: cfg.OwnBundles,
 		Interval: cfg.Interval, Handle: w.handle, OnError: cfg.OnError,
@@ -191,6 +193,7 @@ func (w *Worker) Tick() error {
 	if err := w.routines.Tick(); err != nil && w.cfg.OnError != nil {
 		w.cfg.OnError(fmt.Errorf("routine: %w", err))
 	}
+	w.schedule.Tick()
 	if err := w.announceEnded(); err != nil && w.cfg.OnError != nil {
 		w.cfg.OnError(fmt.Errorf("session alerts: %w", err))
 	}
@@ -386,7 +389,22 @@ func (w *Worker) RoutineNext() error { return w.routines.Next() }
 func (w *Worker) RoutineUnqueue() error { return w.routines.Unqueue() }
 
 // RoutineAction is a button on a routine's banner being pressed (see alert.Action).
-func (w *Worker) RoutineAction(token, id string) error { return w.routines.Action(token, id) }
+func (w *Worker) RoutineAction(token, id string) error {
+	if strings.HasPrefix(token, "sched:") { // a banner of a scheduled start
+		return w.schedule.Action(token, id)
+	}
+	return w.routines.Action(token, id)
+}
+
+// RoutineSkip leaves out a routine's next scheduled start; RoutineUnskip takes that back.
+func (w *Worker) RoutineSkip(name string) error   { return w.schedule.Skip(name) }
+func (w *Worker) RoutineUnskip(name string) error { return w.schedule.Unskip(name) }
+
+// Upcoming is the next scheduled start of each routine that has a trigger switched on.
+func (w *Worker) Upcoming() []UpcomingStart { return w.schedule.Upcoming() }
+
+// HasTriggers says whether any routine has a trigger switched on. The worker must stay up while one does, since it starts them.
+func (w *Worker) HasTriggers() bool { return w.schedule.HasTriggers() }
 
 // RoutineBack restarts the step before the one in focus.
 func (w *Worker) RoutineBack() error { return w.routines.Back() }

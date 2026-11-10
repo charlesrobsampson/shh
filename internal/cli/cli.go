@@ -70,7 +70,7 @@ type cli struct {
 	Guide    guideCmd    `cmd:"" help:"The guide to the terminal UI, routines and commands: open it, jump to a section, or search it."`
 	Alert    alertCmd    `cmd:"" help:"Alert tools."`
 	Replay   replayCmd   `cmd:"" help:"Run the classifier over a file of notifications and print each decision."`
-	Daemon   daemonCmd   `cmd:"" hidden:"" help:"Run the background worker (started by shh itself)."`
+	Daemon   daemonCmd   `cmd:"" help:"Run the worker in the foreground. shh starts it by itself when it is needed; run this at login to keep routines' triggers firing (shh guide triggers)."`
 	Menubar  menubarCmd  `cmd:"" hidden:"" help:"Run the menu bar item (started by the worker)."`
 }
 

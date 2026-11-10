@@ -653,3 +653,58 @@ func TestGuideOpensTheUIOnATerminalAndPrintsWithPrint(t *testing.T) {
 		t.Errorf("--print should print: opened %d\n%s", opened, out)
 	}
 }
+
+func TestSkipLeavesOutTheNextStartAndStatusShowsWhatIsUpcoming(t *testing.T) {
+	r := newRig(t, true)
+	r.env.Now = func() time.Time { return time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC) }
+	r.saveRoutines(`{"routines": {"morning": {"steps": ["75% 25m work"], "triggers": ["daily at 09:30", "weekdays at 17:00"]}, "plain": {"steps": ["75% 5m x"]}}}`)
+	out := r.mustRun("routine", "status")
+	if !strings.Contains(out, "Starts by itself:") || !strings.Contains(out, "morning  today 09:30  (daily at 09:30)") || strings.Contains(out, "plain  ") {
+		t.Errorf("status:\n%s", out)
+	}
+	out = r.mustRun("routine", "skip", "morning")
+	if !strings.Contains(out, "Skipped the next start of morning (today 09:30)") || !strings.Contains(out, "The one after is today 17:00") || !strings.Contains(out, "shh routine skip --undo morning") {
+		t.Errorf("skip:\n%s", out)
+	}
+	if out = r.mustRun("routine", "status"); !strings.Contains(out, "SKIPPED, then today 17:00") {
+		t.Errorf("status:\n%s", out)
+	}
+	if out = r.mustRun("routine", "skip", "--undo", "morning"); !strings.Contains(out, "back on: today 09:30") {
+		t.Errorf("undo:\n%s", out)
+	}
+	if code := r.run("routine", "skip", "--undo", "morning"); code == 0 || !strings.Contains(r.err.String(), "is not skipped") {
+		t.Errorf("code %d stderr %q", code, r.err.String())
+	}
+}
+
+func TestSkipSaysWhenARoutineHasNoTriggerOrDoesNotExist(t *testing.T) {
+	r := newRig(t, true)
+	r.saveRoutines(`{"routines": {"plain": {"steps": ["75% 5m x"]}}}`)
+	if code := r.run("routine", "skip", "plain"); code == 0 || !strings.Contains(r.err.String(), "does not start by itself") {
+		t.Errorf("code %d stderr %q", code, r.err.String())
+	}
+	if code := r.run("routine", "skip", "nothing"); code == 0 || !strings.Contains(r.err.String(), "no saved routine is called") {
+		t.Errorf("code %d stderr %q", code, r.err.String())
+	}
+}
+
+func TestListWarnsThatTriggersNeedAWorkerWhenThereIsNone(t *testing.T) {
+	r := newRig(t, false)
+	r.saveRoutines(`{"routines": {"morning": {"steps": ["75% 25m work"], "triggers": ["daily at 09:30"]}, "off": {"steps": ["75% 25m work"], "triggers": ["daily at 09:30 --disabled"]}}}`)
+	if out := r.mustRun("routine", "list"); !strings.Contains(out, "the shh worker is not running, so triggers will not start anything yet") || !strings.Contains(out, "shh daemon") {
+		t.Errorf("list:\n%s", out)
+	}
+	r.saveRoutines(`{"routines": {"off": {"steps": ["75% 25m work"], "triggers": ["daily at 09:30 --disabled"]}, "plain": {"steps": ["75% 25m work"]}}}`)
+	if out := r.mustRun("routine", "list"); strings.Contains(out, "worker is not running") {
+		t.Errorf("no enabled trigger, nothing to warn about:\n%s", out)
+	}
+}
+
+func TestStatusSaysAnUntilCutOffInWords(t *testing.T) {
+	if got := session.ReasonText("until"); got != "was cut off at its end time" {
+		t.Errorf("ReasonText = %q", got)
+	}
+	if session.ReasonText("finished") != "finished" || !strings.Contains(session.ReasonText("missing"), "gone from the file") {
+		t.Error("the other reasons")
+	}
+}

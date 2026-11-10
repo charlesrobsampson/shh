@@ -156,6 +156,10 @@ func (s *Server) handle(req Request) Response {
 		err = w.RoutineStop()
 	case "routine_unqueue":
 		err = w.RoutineUnqueue()
+	case "routine_skip":
+		err = w.RoutineSkip(req.Name)
+	case "routine_unskip":
+		err = w.RoutineUnskip(req.Name)
 	case "routine_status":
 	default:
 		return Response{Code: "bad_request", Error: fmt.Sprintf("unknown command %q", req.Cmd)}
@@ -172,6 +176,7 @@ func (s *Server) handle(req Request) Response {
 	if view.Routine == nil {
 		view.LastRoutine = w.routines.Last()
 	}
+	view.Upcoming = w.Upcoming()
 	resp := Response{OK: true, Status: &view}
 	if strings.HasPrefix(req.Cmd, "routine_") {
 		info, err := w.RoutineInfo()

@@ -622,11 +622,11 @@ func TestTheDaemonCommandRunsTheWorkerInTheForeground(t *testing.T) {
 	}
 }
 
-func TestTheDaemonCommandIsHiddenFromHelp(t *testing.T) {
+func TestTheDaemonCommandIsInHelpBecauseTriggersNeedItRunningAtLogin(t *testing.T) {
 	r := newRig(t, false)
 	r.run("--help")
-	if strings.Contains(r.out.String()+r.err.String(), "daemon") {
-		t.Error("the internal daemon command shows up in --help")
+	if text := r.out.String() + r.err.String(); !strings.Contains(text, "daemon") || !strings.Contains(text, "run this at login") {
+		t.Errorf("the daemon command should be listed and say why:\n%s", text)
 	}
 }
 

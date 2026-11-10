@@ -152,6 +152,14 @@ func (c *Client) RoutineUnqueue() (RoutineInfo, error) {
 	return c.routine(Request{Cmd: "routine_unqueue"})
 }
 
+// RoutineSkip leaves out a routine's next scheduled start; RoutineUnskip takes that back.
+func (c *Client) RoutineSkip(name string) (RoutineInfo, error) {
+	return c.routine(Request{Cmd: "routine_skip", Name: name})
+}
+func (c *Client) RoutineUnskip(name string) (RoutineInfo, error) {
+	return c.routine(Request{Cmd: "routine_unskip", Name: name})
+}
+
 // RoutineStop ends the routine run.
 func (c *Client) RoutineStop() (RoutineInfo, error) { return c.routine(Request{Cmd: "routine_stop"}) }
 

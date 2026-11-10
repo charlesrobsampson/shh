@@ -43,7 +43,14 @@ type routineRunner struct {
 func newRoutineRunner(w *Worker) *routineRunner { return &routineRunner{w: w} }
 
 // Start begins a saved routine at its first step.
-func (r *routineRunner) Start(name string) error {
+func (r *routineRunner) Start(name string) error { return r.start(name, nil, "") }
+
+// StartScheduled begins a routine that a trigger started: it is cut off at ends, and the cut-off is announced as the trigger says.
+func (r *routineRunner) StartScheduled(name string, ends time.Time, alert routine.Alert) error {
+	return r.start(name, &ends, alert)
+}
+
+func (r *routineRunner) start(name string, ends *time.Time, endAlert routine.Alert) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rt, err := r.find(name)
@@ -69,6 +76,11 @@ func (r *routineRunner) Start(name string) error {
 		return err
 	}
 	_ = id // the run row is read back so the step starts from what was stored
+	if ends != nil {
+		if err := r.w.cfg.Store.SetRoutineRunEnds(run.ID, *ends, string(endAlert)); err != nil {
+			return err
+		}
+	}
 	return r.beginStep(run, rt, plan, 0)
 }
 
@@ -171,6 +183,9 @@ func (r *routineRunner) Tick() error {
 			r.w.cfg.OnError(fmt.Errorf("routine %q: %w; ending the run", run.Routine, err))
 		}
 		return r.finish(run, nil, "missing")
+	}
+	if run.EndsAt != nil && !r.w.cfg.Clock.Now().Before(*run.EndsAt) { // the trigger's until time: a hard stop, whatever is going on
+		return r.finish(run, &rt, "until")
 	}
 	if run.Interrupted {
 		if still, err := r.resumeAfterInterruption(run); err != nil || still {
@@ -374,7 +389,7 @@ func (r *routineRunner) View() *RoutineView {
 
 // Info is the answer to "routine status": the run in progress and the last one that ended.
 func (r *routineRunner) Info() (RoutineInfo, error) {
-	info := RoutineInfo{Active: r.View()}
+	info := RoutineInfo{Active: r.View(), Upcoming: r.w.Upcoming()}
 	runs, err := r.w.cfg.Store.RoutineRuns(5)
 	if err != nil {
 		return info, err
@@ -566,6 +581,9 @@ func (r *routineRunner) finish(run store.RoutineRun, rt *routine.Routine, reason
 	if err := r.w.syncSuppressor(); err != nil {
 		return err
 	}
+	if reason == "until" {
+		r.announceCutoff(run, rt)
+	}
 	if rt != nil && reason == "finished" && containsWhere(rt.Summary, routine.WhereBanner) {
 		runs, err := r.w.cfg.Store.RoutineRuns(1)
 		if err == nil && len(runs) == 1 {
@@ -573,6 +591,28 @@ func (r *routineRunner) finish(run store.RoutineRun, rt *routine.Routine, reason
 		}
 	}
 	return nil
+}
+
+// announceCutoff says that the run was stopped at its until time, if the trigger asked for that.
+func (r *routineRunner) announceCutoff(run store.RoutineRun, rt *routine.Routine) {
+	switch routine.Alert(run.EndsAlert) {
+	case routine.AlertSound:
+		r.w.playSound()
+	case routine.AlertBanner:
+		name := run.Routine
+		if rt != nil {
+			name = rt.Name
+		}
+		at := ""
+		if run.EndsAt != nil {
+			at = " at " + run.EndsAt.In(r.location()).Format("15:04")
+		}
+		body := ""
+		if runs, err := r.w.cfg.Store.RoutineRuns(1); err == nil && len(runs) == 1 {
+			body = describeSummary(r.summary(runs[0]))
+		}
+		r.show(alert.Alert{Kind: config.KindMessage, Source: "Routine", Title: name + " stopped" + at, Body: body})
+	}
 }
 
 // announce says that the step at pos is over, if its alert asks for that. A banner says what comes next and how to carry on.

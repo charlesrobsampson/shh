@@ -122,7 +122,29 @@ func (s RoutineSummary) Sentence() string {
 
 // Line is the summary with the routine and how it ended in front: "pomodoro finished: 4 steps in 1h15m. ...".
 func (s RoutineSummary) Line() string {
-	return fmt.Sprintf("%s %s: %s", s.Name, s.Reason, s.Sentence())
+	return fmt.Sprintf("%s %s: %s", s.Name, ReasonText(s.Reason), s.Sentence())
+}
+
+// ReasonText says how a run ended in words: finished, stopped, "was cut off at its end time", ...
+func ReasonText(reason string) string {
+	switch reason {
+	case "until":
+		return "was cut off at its end time"
+	case "missing":
+		return "ended (the routine is gone from the file)"
+	}
+	return reason
+}
+
+// UpcomingStart is the next time a routine starts by itself.
+type UpcomingStart struct {
+	Routine string `json:"routine"`
+	// Trigger is the trigger that starts it, written as words.
+	Trigger string    `json:"trigger"`
+	Start   time.Time `json:"start"`
+	// Skipped says that start has been skipped; Then is the start after it, when there is one.
+	Skipped bool       `json:"skipped,omitempty"`
+	Then    *time.Time `json:"then,omitempty"`
 }
 
 // Shows says whether the routine asked for its summary to be shown there.
@@ -132,6 +154,8 @@ func (s RoutineSummary) Shows(where string) bool { return slices.Contains(s.Wher
 type RoutineInfo struct {
 	Active *RoutineView    `json:"active,omitempty"`
 	Last   *RoutineSummary `json:"last,omitempty"`
+	// Upcoming is the next scheduled start of each routine that has a trigger switched on.
+	Upcoming []UpcomingStart `json:"upcoming,omitempty"`
 }
 
 // TrainView is a TrainOutcome on the wire.
@@ -153,6 +177,8 @@ type StatusView struct {
 	// LastRoutine is the run that ended most recently, while none is in progress, for the places its summary is to be shown (see
 	// RoutineSummary.Where).
 	LastRoutine *RoutineSummary `json:"last_routine,omitempty"`
+	// Upcoming is the next scheduled start of each routine that has a trigger switched on.
+	Upcoming []UpcomingStart `json:"upcoming,omitempty"`
 	// Build identifies the executable the worker is running (see BuildID), so a command can tell when the worker predates the
 	// binary it was typed with, which would otherwise be easy to mistake for a bug in the new code.
 	Build string `json:"build,omitempty"`
@@ -218,6 +244,8 @@ var codes = map[string]error{
 	"routine_running": ErrRoutineRunning,
 	"no_routine":      ErrNoRoutine,
 	"unknown_routine": ErrUnknownRoutine,
+	"no_trigger":      ErrNoTrigger,
+	"not_skipped":     ErrNotSkipped,
 }
 
 func (e *RemoteError) Is(target error) bool {

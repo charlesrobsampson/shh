@@ -24,13 +24,15 @@ const pomodoroLite = `{"routines": {"pomo": {
 // routineRig is a worker rig whose routines come from a text that tests can change.
 type routineRig struct {
 	*workerRig
-	text *string
+	text  *string
+	plays int // sounds played
 }
 
 func newRoutineRig(t *testing.T, text string) *routineRig {
 	t.Helper()
 	rr := &routineRig{text: &text}
 	rr.workerRig = newWorkerRig(t, func(c *session.Config) {
+		c.PlaySound = func() error { rr.plays++; return nil }
 		c.Location = time.UTC
 		c.Routines = func() ([]routine.Routine, error) { return routine.Parse("routines.json", []byte(*rr.text)) }
 	})
@@ -41,6 +43,7 @@ func newRoutineRig(t *testing.T, text string) *routineRig {
 func (r *routineRig) restart() {
 	r.t.Helper()
 	r.worker = r.build(func(c *session.Config) {
+		c.PlaySound = func() error { r.plays++; return nil }
 		c.Location = time.UTC
 		c.Routines = func() ([]routine.Routine, error) { return routine.Parse("routines.json", []byte(*r.text)) }
 	})
