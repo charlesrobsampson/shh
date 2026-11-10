@@ -132,22 +132,20 @@ function layoutText() {
 layoutText();
 
 // Buttons look like the system's unless the configuration gives them a color: then they are drawn as a patch of that color with the
-// button text color on it (the banner's own text color when only a button color was given). The look is applied with a title that is
-// set again whenever a button changes what it says, and anything that goes wrong leaves the system look, which still works.
+// button text color on it (the banner's own text color when only a button color was given, and a faint white patch when only a text
+// color was). A bezel cannot be recolored, so a colored button has none: its face is a box behind it, and its text color is the
+// button's content tint, which a borderless button draws its title in. (An attributed title would be the usual way to color text, but
+// JXA cannot build one: NSAttributedString's initializers are not callable from it.) Anything that goes wrong leaves the system look.
 const buttonHex = h => {
   const rgb = h.replace('#', '');
   const ch = i => parseInt(rgb.slice(i, i + 2), 16) / 255;
   return $.NSColor.colorWithSRGBRedGreenBlueAlpha(ch(0), ch(2), ch(4), 1);
 };
-const buttonFill = cfg.buttonColor ? buttonHex(cfg.buttonColor) : null;
+const buttonFill = cfg.buttonColor ? buttonHex(cfg.buttonColor)
+  : (cfg.buttonTextColor ? $.NSColor.colorWithSRGBRedGreenBlueAlpha(1, 1, 1, 0.25) : null);
 const buttonInk = cfg.buttonTextColor ? buttonHex(cfg.buttonTextColor) : (buttonFill ? textColor : null);
 function setButtonTitle(button, text) {
-  button.setTitle($(text));
-  if (!buttonInk) return;
-  try {
-    const attributes = $.NSDictionary.dictionaryWithObjectForKey(buttonInk, $.NSForegroundColorAttributeName);
-    button.setAttributedTitle($.NSAttributedString.alloc.initWithStringAttributes($(text), attributes));
-  } catch (e) { /* the system's text color stays */ }
+  button.setTitle($(text)); // the tint set when the button was painted stays through a new title
 }
 // A button with a color has no bezel of its own: a box of that color sits behind it as its face (the same kind of box the banner itself
 // is made of), and layoutButtons keeps each box under its button.
@@ -156,6 +154,7 @@ function paintButton(button, i) {
   if (!buttonFill) return;
   try {
     button.setBordered(false);
+    if (buttonInk) button.setContentTintColor(buttonInk);
     const box = $.NSBox.alloc.initWithFrame($.NSMakeRect(0, 0, 10, 10));
     box.setBoxType($.NSBoxCustom);
     box.setTitlePosition($.NSNoTitle);

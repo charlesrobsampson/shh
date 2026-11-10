@@ -873,10 +873,13 @@ func TestButtonColorsTravelWithTheBannerOnlyWhenSetAndTheScriptPaintsWithThem(t 
 		t.Errorf("the styled buttons: %v", m)
 	}
 	script := strings.Join(alert.OverlayCommand(styled).Args, " ")
-	for _, want := range []string{"cfg.buttonColor", "cfg.buttonTextColor", "setButtonTitle", "setAttributedTitle", "NSForegroundColorAttributeName", "NSBox", "backdrops", "setFillColor(buttonFill)"} {
+	for _, want := range []string{"cfg.buttonColor", "cfg.buttonTextColor", "setButtonTitle", "setContentTintColor(buttonInk)", "NSBox", "backdrops", "setFillColor(buttonFill)"} {
 		if !strings.Contains(script, want) {
 			t.Errorf("the script does not mention %s", want)
 		}
+	}
+	if strings.Contains(script, "setAttributedTitle") || strings.Contains(script, "NSAttributedString.alloc") {
+		t.Error("JXA cannot call NSAttributedString's initializers (initWithStringAttributes is undefined there, which silently left the button text uncolored): use the content tint")
 	}
 	if strings.Contains(script, ".layer") || strings.Contains(script, "CGColor") {
 		t.Error("a CGColor handed to a layer from JXA can take osascript down with it (and then every banner falls back to a system notification): the buttons are painted with a box instead")
