@@ -1,0 +1,375 @@
+// Package guide is shh's guide: the keys of the terminal UI, the routines file and the commands, written once for the help screen
+// in the UI (shh guide opens it, ? in the UI shows it) and for printing in a terminal (shh guide --print).
+package guide
+
+import (
+	"fmt"
+	"strings"
+	"unicode"
+
+	"github.com/mattn/go-runewidth"
+)
+
+// Topic is one entry of a section: the keys or words it is about, and what they do, in full.
+type Topic struct{ Keys, Text string }
+
+// Section is a group of topics under a title. Slug is what names it on the command line.
+type Section struct {
+	Slug, Title string
+	Topics      []Topic
+}
+
+// Sections is the guide, in the order it is shown.
+var Sections = []Section{
+	{"moving", "Moving around", []Topic{
+		{"j / k, ↓ / ↑", "Down or up one row. Type a number first to repeat it: 6j goes down six rows, 3k up three. The numbers beside the rows make this easy: every row shows how far it is from the cursor, so the count to type is the number you can see; the cursor's own row shows its place in the list."},
+		{"g / G", "The first or last row. With a number, 5G (or 5g) goes to row 5."},
+		{"PgUp / PgDn", "A page at a time."},
+		{"Tab, l, →", "The next tab. Shift-Tab, h or ← goes back. A number repeats it, so 2l skips one."},
+		{"! @ # $", "Jump straight to Focus, Notifications, Train or Routines (Shift-1 to Shift-4). F1 to F4 do the same."},
+		{"/", "Filter both lists: type some text and press Enter to see only the notifications whose sender, app, title or message contain it (case does not matter). The filter shows beside the tabs. Esc clears it; an empty filter does too."},
+		{"Esc", "Drops a number you have started typing, or closes a message you are reading, or clears the filter."},
+	}},
+	{"focus", "Focus tab", []Topic{
+		{"what you see", "The sessions in force, top first. ▶ marks the one in force; the others are what it falls back to as sessions end. Each shows its level and its time left (or that it runs until stopped), and a note if it has one. Below it is a menu of everything you can do."},
+		{"j / k, Enter", "Select a menu row and run it with Enter (a number first moves further, so 3j goes down three rows). Rows that do not apply right now are dimmed, with the reason; Enter on one explains instead of doing anything. Every row also has its own key, shown beside it, which works without selecting it. The line below the page shows, at its right, the equivalent shh command for the selected row, and after you run something it shows the exact command that would have done the same, such as $ shh 75% 25m writing docs. Changing the level and adding time have no command line equivalent yet, so they say TUI only."},
+		{"s", "Start a session on top of what is in force. Type a level, a length and a note in any order, the way the shh command takes them: 75% 25m writing docs, or deep 1h, or just 30%. Add then off (or then a level) at the end to choose what it falls back to. Nothing typed starts medium until stopped. If shh is not running, a worker is started for you."},
+		{"b", "Set the standing level that applies whenever no session does: a percentage, a tier, or off to clear it."},
+		{"f", "Change the level of the session in force, without starting a new one."},
+		{"p, Space", "Pause the countdown of a timed session, or start it again. Only the timer stops; the level stays."},
+		{"+ / -", "Add or take away five minutes from the time left. A number first repeats it: 3+ adds fifteen, and 3 then Enter on the menu row does the same. Time cannot go below zero."},
+		{"x", "Stop the session in force; focus falls back to what is under it."},
+		{"X", "Turn focus off completely, baseline included. It asks first: y confirms, n or Esc keeps it."},
+	}},
+	{"routines-tab", "Routines tab", []Topic{
+		{"what you see", "The routine that is running, if any, with the step it is on, how far through it is and what comes next (or the step it is waiting for you to start). Below it are the routines saved in routines.json, each with its steps written as the shh commands that do them. Under No routine is running, a last: line gives the summary of the run that ended, for routines whose summary setting includes ui. Edit that file to change them; the next run uses the new text. shh routine example prints a file to start from."},
+		{"j / k, Enter", "Select a routine and start it with Enter (or s). Only one runs at a time."},
+		{"n", "Go on: start the step that is waiting for you, or end the running step early and move to the next. Steps that only set the baseline are applied on the way."},
+		{"b", "Restart the step before this one (the step that just ended, while waiting)."},
+		{"x", "End the routine now. Whatever it had in force is stopped."},
+		{"a, e, c, d", "a makes a new routine, e edits the selected one, c edits a copy of it under a new name, d deletes it (asking first). The same things from a terminal: shh routine add and shh routine remove; the line under the page shows the command that would save what you are editing."},
+		{"the editor", "j and k move over the rows, Enter changes one: Name, Description and Repeat take typing; Waiting and Summary go to their next choice. Each step is one shh command, such as 75% 25m work --alert banner or baseline 30% (--ask makes it wait for you before the next). Enter on a step edits it, a adds one, d deletes one (a routine keeps at least one), J and K move it down or up. s saves; only that routine's text in routines.json changes, so your comments and the rest of the file stay as they were. Esc cancels; with unsaved changes it asks for a second Esc."},
+		{"on the Focus tab", "While a routine runs, starting or stopping a session by hand asks first: y ends the routine and does what you asked, n leaves everything as it was. For a new session there are two more answers. c interrupts the routine: your session starts now, the routine's step stops counting down, and the routine continues from there when your session ends (Stop on your session ends it early, and the routine resumes at once). q queues your session: nothing changes now, and it starts when the routine ends, however it ends. u on the Routines tab drops a queued session. The Focus tab also shows the routine's step under the level in force."},
+	}},
+	{"routine-files", "Routines file (routines.json)", []Topic{
+		{"where", "routines.json in the shh folder (~/.config/shh). It is JSON with comments allowed (// and /* */) and trailing commas. shh routine example prints a complete example to start from. shh changes only the routine you save or delete when it edits the file, so your comments, order and layout elsewhere stay as you wrote them."},
+		{"shape", "{\"routines\": {\"pomodoro\": {...}, \"deep work\": {...}}}. A routine's name is its key, so a name can be there only once (capitals do not make a different name). Names start with a letter or digit and use letters, digits, spaces, dots, dashes and underscores, since they are typed on the command line."},
+		{"steps", "A list of steps, run in order. Each is written as the shh command that does it (see Writing steps). A routine needs at least one."},
+		{"repeat", "How many times the steps run, 1 to 99 (the default is 1), or the word \"forever\" to go round again and again until you stop it. A routine that repeats forever has no finish steps."},
+		{"finish", "Steps that run once after the last round, such as a long break. Written like steps."},
+		{"description", "A line saying what it is for, shown in the list."},
+		{"waiting", "What focus does while the routine waits for you to start the next step (a step that asks): stay (the default: the level of the step that ended stays in force, so walking away does not let notifications through), next (the next step's level, with its countdown held until you start it) or baseline (fall back to the baseline). A step that ends at a time of day has no countdown to hold, so next behaves like stay for it."},
+		{"summary", "Where to report a finished run, any of: banner (a banner when it ends), menu (a line at the top of the menu bar menu for an hour) and ui (a last: line on the Routines tab). The default is banner and ui."},
+		{"mistakes", "A mistake anywhere in the file stops every routine from loading, with a message that names the file, the line and the key, such as routines.pomodoro.steps[1]: a half-read file could start the wrong thing. Fix it and the next command works."},
+	}},
+	{"steps", "Writing steps", []Topic{
+		{"a step", "A step is a shh command: a level, a length and a name, in any order, the way shh focus takes them. 75% 25m work is a 25 minute session at 75% called work. A leading shh or shh focus is allowed, so a line can be pasted from a terminal. It is only read, never run through a shell."},
+		{"level", "A percentage (75%) or a tier: off (0, a break with nothing held back), light (35%), medium (65%, the default), deep (90%) or lockdown (99%). A tier word is a level when it is alone or beside another setting: deep 25m is a level and a length, deep work is a name."},
+		{"length", "25m, 1h30m or 90s, or until 11:00 to last until a time of day. The time is worked out when the step starts: a step whose time has already gone by is skipped, so a run that starts late joins in where the clock is, and a run with nothing left ends. A step has a length or an end time, not both."},
+		{"name, -m", "The words that are not a level or a length are the step's name, shown as work (2/4) when the routine repeats, and its note. -m gives a different note: 75% 25m work -m \"write the report\". A name that would look like a setting is given with -m."},
+		{"--alert", "--alert banner (or sound, or none, the default) announces the end of the step. A banner says what comes next and carries a Start next button when the step asks, or a Skip button when the next step has already begun."},
+		{"--ask", "Waits for you before the next step begins (shh routine next, the Start next button, or n on the Routines tab). Only a routine uses it. What focus does meanwhile is the routine's waiting setting."},
+		{"baseline", "baseline 30% sets the standing level when the run reaches that step, and baseline off clears it. It takes no time and never waits. It still applies after the last session, and when the session before it is skipped."},
+		{"run", "run pomodoro puts another routine's steps in this one's place: its repeats and its finish steps included, named pomodoro › work (2/4). --times 2 does it twice. --ask and --alert on the call apply when the called routine ends. A name with spaces needs no quotes. The called routine's own waiting and summary settings do not apply: the routine that was started decides."},
+		{"run limits", "A routine cannot call itself, directly or through others: a cycle such as a → b → a is refused, with the path, routines may not be nested more than 5 deep, and a routine that repeats forever cannot be called, since nothing after it could run. A call to a name that does not exist is refused. These are checked whenever the file is read, and when you try to delete a routine another one calls."},
+		{"objects", "A step can also be an object: {\"name\": \"work\", \"level\": \"75%\", \"length\": \"25m\", \"note\": \"...\", \"alert\": \"banner\", \"advance\": \"ask\"} (until in place of length), or {\"baseline\": \"30%\"}. Calls are written as commands."},
+		{"going round", "repeat: \"forever\" in the routine is how to loop. A routine that is only steps with a time of day (until) works as a day's timetable."},
+	}},
+	{"routine-commands", "Routine commands (shh routine ...)", []Topic{
+		{"list", "shh routine list shows each routine with its steps written as commands, how long it takes (or at least how long, if some steps end at a time of day, or until stopped), and any triggers."},
+		{"example", "shh routine example prints a complete routines file to start from."},
+		{"add", "shh routine add <name> \"<step>\" \"<step>\" ... saves a routine, each step in quotes. -d \"text\" describes it, -r 4 (or -r forever) repeats it, -f \"<step>\" adds a finish step (repeat the flag), -w stay|next|baseline sets waiting, --summary banner,menu,ui says where to report it, -t \"<trigger>\" adds a trigger (repeat the flag), --replace overwrites a routine of the same name. A step or a flag that is wrong says which one."},
+		{"remove", "shh routine remove <name> (or rm) deletes a routine, asking first on a terminal; -y skips the question. Deleting one that another routine calls is refused."},
+		{"run", "shh routine run <name> starts one (a worker is started if none is running). Only one runs at a time."},
+		{"next, back", "shh routine next starts the step a waiting routine is waiting on, or ends the running step early and goes on to the next (it ignores a step's ask and announces nothing). shh routine back restarts the step before the one in focus (the step that just ended, while waiting)."},
+		{"stop", "shh routine stop ends the run, closing what it had in force and recording a summary."},
+		{"status", "shh routine status shows the run in progress, or the last one that ended and what it did. shh status shows a Routine: line too."},
+		{"unqueue", "shh routine unqueue drops a session that was queued to start when the routine ends."},
+		{"shh focus", "While a routine runs, shh focus asks what to do about it (see During a run). Without a terminal, give the answer as a flag: --end-routine, --continue-routine or --after-routine. shh stop takes --end-routine."},
+	}},
+	{"during-a-run", "During a routine run", []Topic{
+		{"steps", "Each step starts as an ordinary timed focus session, so pause, add and take away time, the menu bar and shh status all work on it. When a step ends the next one starts at that moment, so every step gets its full length."},
+		{"asking", "A step with --ask stops after it ends and waits for you. n on the Routines tab, shh routine next, the Start next button on its banner, or Start in the menu bar menu starts the next step."},
+		{"the menu bar", "The menu bar title reads shh pomodoro · work (2/4) · 14m (a pause sign while paused, and ? while it waits for you). Its menu has Skip to the next step (or Start the waiting step), Back a step and Stop routine, in place of the Stop and Turn off items, which a run refuses."},
+		{"your own session", "Starting a session by hand while a routine runs asks what to do with the routine: end it and start your session; interrupt it (your session starts now, the routine's step stops counting down, and the routine continues from there when your session ends); queue your session (nothing changes now, and it starts when the routine ends, however it ends); or leave it as it is."},
+		{"interrupting", "While your session is on top, stop (x, shh stop) ends it and the routine resumes at once. Next and back end it and move on. Stopping the routine leaves your session running by itself. If the worker restarts, the run picks up where it was."},
+		{"queueing", "One session can be queued; queueing another replaces it. It is checked when you queue it, so it cannot fail later. The Routines tab, shh routine status and the menu show what is queued; u or shh routine unqueue drops it."},
+		{"stopping", "Turning focus off completely, or stopping a session, while a routine runs asks first, since the routine would otherwise just start the next step. Ending the routine ends the session it had in force."},
+		{"finishing", "A run ends after its last step, or when you stop it, or if its routine disappears from the file. The summary says how many steps ran, how long it took, and how many notifications were held back and let through. An edited routine is followed as edited, with the run staying at its step."},
+		{"the worker", "The worker stays running while a routine is going, even with nothing in force, since it is what moves the routine on."},
+	}},
+	{"reading", "Reading", []Topic{
+		{"e", "Read the whole message across the screen, with the list out of the way. j and k scroll it (numbers work here too), e or Esc puts it back. Reading this way does not mark the notification as read."},
+		{"Enter, o", "Open the app the notification came from and mark it read. If the app cannot be opened, it is not marked."},
+		{"d, x", "Dismiss it from the Notifications list. It stays in the Train list: dismissing is not training."},
+		{"f", "Flag it to look at again later. Flagged rows lead the Train tab, so a notification you noticed was wrong is easy to find. Press f again to clear the flag. The Flag button on an alert banner does the same thing; labelling a notification clears its flag."},
+	}},
+	{"training", "Training (Notifications and Train tabs)", []Topic{
+		{"y / n", "Answer \"did shh do the right thing?\" The row shows what shh did: ✕ blocked means it held the notification back, no mark means it alerted you. y says the call was right (a blocked one should stay blocked, an alerted one should have alerted); n says it was wrong. A right call close to the line also teaches the model something, by pushing the score further from it. On the Train tab the question \"Was this correct?\" sits under each notification's score and says what shh did. The row then leaves the Train list, and when you label it from Notifications it is archived from there too."},
+		{"t", "Type an exact score instead, from 0 to 100 or light, medium, deep or lockdown, and press Enter. Esc cancels. While the box is open, digits and letters are typed into it."},
+		{"u", "Undo the last training exactly: the model goes back to how it was and the row returns to the list."},
+		{"order", "The Train list shows flagged rows first, then those whose score is closest to a common threshold (35, 65, 90 or 99), because a label there changes what gets through the most."},
+	}},
+	{"marks", "What the marks mean", []Topic{
+		{">", "The cursor. Its row is also highlighted."},
+		{"•", "Not opened yet."},
+		{"✕ blocked", "shh held it back and it never reached you. A row with nothing here was alerted."},
+		{"⚑", "Flagged for review."},
+	}},
+	{"typing", "Typing in a box", []Topic{
+		{"← / →", "Move the cursor through what you have typed, so a typo can be fixed without retyping the rest. Home and End (or Ctrl-A and Ctrl-E) go to the start or the end; Alt-← and Alt-→ jump a word."},
+		{"Backspace, Del", "Delete the character before or under the cursor. Ctrl-W deletes the word before it, Ctrl-U everything before it, Ctrl-K everything after it."},
+		{"Enter, Esc", "Enter accepts the text; if it cannot be used, the box stays open with the reason under it. Esc cancels. A text longer than the box scrolls to keep the cursor in view."},
+	}},
+	{"other", "Other", []Topic{
+		{"?", "This help: / searches it (n and N go to the next and previous match), j and k scroll, Esc closes it. From a terminal, shh guide opens it directly, and shh guide routines jumps to a section; shh guide --list names them."},
+		{"q, Ctrl-C", "Quit."},
+	}},
+}
+
+// Find returns the section a word names: its slug, or the start of its slug or title, ignoring case. It is false when nothing matches
+// or when more than one section does and none is the exact one.
+func Find(word string) (Section, bool) {
+	word = strings.ToLower(strings.TrimSpace(word))
+	if word == "" {
+		return Section{}, false
+	}
+	var found []Section
+	for _, s := range Sections {
+		if s.Slug == word {
+			return s, true
+		}
+		if strings.HasPrefix(s.Slug, word) || strings.HasPrefix(strings.ToLower(s.Title), word) {
+			found = append(found, s)
+		}
+	}
+	if len(found) == 1 {
+		return found[0], true
+	}
+	return Section{}, false
+}
+
+// Listing is the sections one to a line: "routine-files  Routines file (routines.json)".
+func Listing() string {
+	var b strings.Builder
+	for _, s := range Sections {
+		fmt.Fprintf(&b, "%-18s %s\n", s.Slug, s.Title)
+	}
+	return b.String()
+}
+
+// LineKind says what a laid-out line is, so a screen can style it.
+type LineKind int
+
+const (
+	LineBlank   LineKind = iota
+	LineHeading          // the guide's own title
+	LineSection
+	LineRow // a topic: its keys beside the first line of its text, then the rest of the text
+)
+
+// Line is one line of the guide laid out for a width.
+type Line struct {
+	Kind LineKind
+	// Slug is the section the line is in.
+	Slug string
+	// Keys is the topic's keys on its first line, and empty on the lines that carry on its text.
+	Keys string
+	Text string
+	// Topic numbers the topic within the layout (from 0), the same on every line of one topic; -1 for lines that are not part of one.
+	Topic int
+	// First says this is the topic's first line, which is where a search lands.
+	First bool
+}
+
+// KeyWidth is the width of the column the keys are in.
+const KeyWidth = 14
+
+// Layout lays the sections out for a screen width, wrapping each topic's text beside its keys.
+func Layout(sections []Section, width int) []Line {
+	textWidth := max(20, width-KeyWidth-4)
+	lines := []Line{{Kind: LineBlank, Topic: -1}, {Kind: LineHeading, Text: "shh guide", Topic: -1}, {Kind: LineBlank, Topic: -1}}
+	topic := 0
+	for _, s := range sections {
+		lines = append(lines, Line{Kind: LineSection, Slug: s.Slug, Text: s.Title, Topic: -1})
+		for _, t := range s.Topics {
+			keys := runewidth.Truncate(t.Keys, KeyWidth-1, "…")
+			for i, part := range Wrap(t.Text, textWidth) {
+				l := Line{Kind: LineRow, Slug: s.Slug, Text: part, Topic: topic, First: i == 0}
+				if i == 0 {
+					l.Keys = keys
+				}
+				lines = append(lines, l)
+			}
+			topic++
+		}
+		lines = append(lines, Line{Kind: LineBlank, Slug: s.Slug, Topic: -1})
+	}
+	return lines
+}
+
+// SectionStart is the index of the first line of a section in a layout, or -1.
+func SectionStart(lines []Line, slug string) int {
+	for i, l := range lines {
+		if l.Kind == LineSection && l.Slug == slug {
+			return i
+		}
+	}
+	return -1
+}
+
+// Wrap breaks text into lines of at most width cells at spaces. A word longer than the width is kept whole on a line of its own.
+func Wrap(text string, width int) []string {
+	var lines []string
+	var cur string
+	for _, word := range strings.Fields(text) {
+		switch {
+		case cur == "":
+			cur = word
+		case runewidth.StringWidth(cur)+1+runewidth.StringWidth(word) <= width:
+			cur += " " + word
+		default:
+			lines = append(lines, cur)
+			cur = word
+		}
+	}
+	if cur != "" || len(lines) == 0 {
+		lines = append(lines, cur)
+	}
+	return lines
+}
+
+// Pad writes a line's keys column and text as the guide shows them, without styling.
+func (l Line) Pad() string {
+	switch l.Kind {
+	case LineHeading:
+		return " " + l.Text
+	case LineSection:
+		return " " + l.Text
+	case LineRow:
+		return "  " + fmt.Sprintf("%-*s", KeyWidth, l.Keys) + " " + l.Text
+	}
+	return ""
+}
+
+// ---- searching ----
+
+// Query is a search text. It ignores case unless it has a capital letter in it (as vim's smartcase does).
+type Query struct {
+	text  string
+	exact bool
+}
+
+// NewQuery makes a query of the text; an empty text matches nothing.
+func NewQuery(text string) Query {
+	exact := false
+	for _, r := range text {
+		if unicode.IsUpper(r) {
+			exact = true
+		}
+	}
+	if !exact {
+		text = strings.ToLower(text)
+	}
+	return Query{text: text, exact: exact}
+}
+
+// Text is what was searched for.
+func (q Query) Text() string { return q.text }
+
+// Empty says there is nothing to find.
+func (q Query) Empty() bool { return q.text == "" }
+
+func (q Query) fold(s string) string {
+	if q.exact {
+		return s
+	}
+	return strings.ToLower(s)
+}
+
+// Has says whether s contains the query.
+func (q Query) Has(s string) bool { return !q.Empty() && strings.Contains(q.fold(s), q.text) }
+
+// Spans cuts s into pieces that alternate between text that is not a match and text that is, starting with one that is not (which
+// may be empty): an odd index is a match.
+func (q Query) Spans(s string) []string {
+	if q.Empty() {
+		return []string{s}
+	}
+	folded := q.fold(s)
+	// strings.ToLower can change a string's byte length for a few characters; then there is no safe way to cut, and nothing is marked.
+	if len(folded) != len(s) {
+		return []string{s}
+	}
+	var out []string
+	rest := 0
+	for {
+		at := strings.Index(folded[rest:], q.text)
+		if at < 0 {
+			break
+		}
+		out = append(out, s[rest:rest+at], s[rest+at:rest+at+len(q.text)])
+		rest += at + len(q.text)
+	}
+	return append(out, s[rest:])
+}
+
+// Hits are the indexes of the lines where a topic (or a section title) that contains the query starts, in order. A topic is searched
+// whole, keys and text, so a phrase that wraps over two lines is still found.
+func Hits(sections []Section, lines []Line, q Query) []int {
+	if q.Empty() {
+		return nil
+	}
+	whole := map[int]string{} // the topic's keys and text
+	topic := 0
+	titles := map[string]string{}
+	for _, s := range sections {
+		titles[s.Slug] = s.Title
+		for _, t := range s.Topics {
+			whole[topic] = t.Keys + " " + t.Text
+			topic++
+		}
+	}
+	var hits []int
+	for i, l := range lines {
+		switch {
+		case l.Kind == LineSection && q.Has(titles[l.Slug]):
+			hits = append(hits, i)
+		case l.Kind == LineRow && l.First && q.Has(whole[l.Topic]):
+			hits = append(hits, i)
+		}
+	}
+	return hits
+}
+
+// Plain writes sections as text for a terminal: each title underlined, then its topics. With a query only the topics that contain it
+// are written (a section whose title matches is written whole).
+func Plain(sections []Section, width int, q Query) string {
+	textWidth := max(20, width-KeyWidth-4)
+	var b strings.Builder
+	for _, s := range sections {
+		wholeSection := q.Empty() || q.Has(s.Title)
+		var topics []Topic
+		for _, t := range s.Topics {
+			if wholeSection || q.Has(t.Keys+" "+t.Text) {
+				topics = append(topics, t)
+			}
+		}
+		if len(topics) == 0 {
+			continue
+		}
+		fmt.Fprintf(&b, "%s\n%s\n", s.Title, strings.Repeat("=", runewidth.StringWidth(s.Title)))
+		for _, t := range topics {
+			keys := runewidth.Truncate(t.Keys, KeyWidth-1, "…")
+			for i, part := range Wrap(t.Text, textWidth) {
+				prefix := strings.Repeat(" ", KeyWidth)
+				if i == 0 {
+					prefix = fmt.Sprintf("%-*s", KeyWidth, keys)
+				}
+				fmt.Fprintf(&b, "  %s %s\n", prefix, part)
+			}
+		}
+		b.WriteString("\n")
+	}
+	return strings.TrimRight(b.String(), "\n") + "\n"
+}

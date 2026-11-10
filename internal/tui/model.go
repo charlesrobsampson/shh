@@ -16,6 +16,7 @@ import (
 	"github.com/mattn/go-runewidth"
 
 	"github.com/charlesrobsampson/shh/internal/decide"
+	"github.com/charlesrobsampson/shh/internal/guide"
 	"github.com/charlesrobsampson/shh/internal/menubar"
 	"github.com/charlesrobsampson/shh/internal/routine"
 	"github.com/charlesrobsampson/shh/internal/session"
@@ -69,6 +70,10 @@ type Config struct {
 	Now func() time.Time
 	// Refresh is how often the lists and status are re-read; one second when zero.
 	Refresh time.Duration
+	// HelpOnly opens the guide on its own, as shh guide does: closing it leaves shh. HelpSection (a section's slug) and HelpSearch
+	// say where it opens and what it searches for first. Either of those also opens the help when HelpOnly is not set.
+	HelpOnly                bool
+	HelpSection, HelpSearch string
 }
 
 // Tab is one of the screens.
@@ -99,8 +104,16 @@ type Model struct {
 	tab           Tab
 	width, height int
 	showHelp      bool
-	helpScroll    int    // how far down the help text is
-	err           string // a problem to show in the status bar, such as the database failing to read
+	helpScroll    int // how far down the help text is
+	// helpQuery is the search made in the help, helpHits the lines where its matches start and helpAt which of them is shown (-1 for
+	// none). helpJump and helpSearch are a section and a search to go to when the help is first drawn.
+	helpQuery            guide.Query
+	helpHits             []int
+	helpAt               int
+	helpJump, helpSearch string
+	layoutLines          []guide.Line // the guide laid out for layoutWidth
+	layoutWidth          int
+	err                  string // a problem to show in the status bar, such as the database failing to read
 
 	lists  [tabCount][]store.Notification // the rows of the Notifications and Train tabs
 	cursor [tabCount]int                  // the selected row in each list
@@ -168,8 +181,11 @@ func New(cfg Config) *Model {
 	if cfg.Label == "" {
 		cfg.Label = "shh"
 	}
-	m := &Model{cfg: cfg, tab: TabNotifications, width: 100, height: 30}
+	m := &Model{cfg: cfg, tab: TabNotifications, width: 100, height: 30, helpAt: -1}
 	m.reload()
+	if cfg.HelpOnly || cfg.HelpSection != "" || cfg.HelpSearch != "" {
+		m.openGuide(cfg.HelpSection, cfg.HelpSearch)
+	}
 	return m
 }
 
@@ -311,7 +327,7 @@ func (m *Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c", "q":
 		return m, tea.Quit
 	case "?":
-		m.showHelp, m.helpScroll = true, 0
+		m.openGuide("", "")
 	case "tab", "l", "right":
 		m.goTo((m.tab + Tab(steps%int(tabCount))) % tabCount)
 	case "shift+tab", "h", "left":
@@ -473,6 +489,7 @@ const (
 	promptConfirmEndRoutine                   // y or n: end the running routine, which is in the way
 	promptConfirmDelete                       // y or n: delete the selected saved routine
 	promptEditField                           // a value in the routine editor
+	promptHelpSearch                          // text to find in the guide
 )
 
 // prompt is a line being typed at the bottom of the screen.
@@ -717,6 +734,9 @@ func (m *Model) submitPrompt() {
 		m.setFilter(strings.TrimSpace(p.text))
 	case promptEditField:
 		m.submitField(p)
+	case promptHelpSearch:
+		m.prompt = nil
+		m.setHelpQuery(p.text)
 	}
 }
 
@@ -1376,6 +1396,8 @@ func (p *prompt) question() string {
 		return " delete this routine? "
 	case promptEditField:
 		return " " + p.label + ": "
+	case promptHelpSearch:
+		return " search the guide: "
 	}
 	return fmt.Sprintf(" label for %s: ", oneLine(p.target.Sender))
 }
@@ -1402,6 +1424,8 @@ func (p *prompt) hint() string {
 		return "y deletes it from the routines file · n or Esc keeps it"
 	case promptEditField:
 		return p.help
+	case promptHelpSearch:
+		return "text to find (capitals make it exact) · Enter searches · n and N then go to the next and previous match · Esc cancels"
 	}
 	return "Enter saves · Esc cancels · a score from 0 to 100, or light, medium, deep or lockdown"
 }
@@ -1448,132 +1472,6 @@ func (m *Model) sessionText() string {
 	title := strings.ReplaceAll(menubar.Build(m.status, m.cfg.Label).Title, " ", " ")
 	top := m.status.Layers[len(m.status.Layers)-1]
 	return fmt.Sprintf("%s  (%d held back, %d let through)", title, top.Blocked, top.Allowed)
-}
-
-// helpKey handles a key while the help is showing: the motion keys scroll it, quit keys quit, and anything else closes it.
-func (m *Model) helpKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	page := max(1, m.height-2)
-	switch msg.String() {
-	case "ctrl+c", "q":
-		return m, tea.Quit
-	case "j", "down":
-		m.helpScroll++
-	case "k", "up":
-		m.helpScroll--
-	case "pgdown", "ctrl+d", " ":
-		m.helpScroll += page
-	case "pgup", "ctrl+u":
-		m.helpScroll -= page
-	case "g", "home":
-		m.helpScroll = 0
-	case "G", "end":
-		m.helpScroll = 1 << 30
-	default:
-		m.showHelp = false
-	}
-	return m, nil
-}
-
-// helpTopic is one entry of the help: the keys, and what they do, in full.
-type helpTopic struct{ keys, text string }
-
-// helpSections is the detailed help. The line under each page says which keys matter there, briefly; this is where each is explained.
-var helpSections = []struct {
-	title  string
-	topics []helpTopic
-}{
-	{"Moving around", []helpTopic{
-		{"j / k, ↓ / ↑", "Down or up one row. Type a number first to repeat it: 6j goes down six rows, 3k up three. The numbers beside the rows make this easy: every row shows how far it is from the cursor, so the count to type is the number you can see; the cursor's own row shows its place in the list."},
-		{"g / G", "The first or last row. With a number, 5G (or 5g) goes to row 5."},
-		{"PgUp / PgDn", "A page at a time."},
-		{"Tab, l, →", "The next tab. Shift-Tab, h or ← goes back. A number repeats it, so 2l skips one."},
-		{"! @ # $", "Jump straight to Focus, Notifications, Train or Routines (Shift-1 to Shift-4). F1 to F4 do the same."},
-		{"/", "Filter both lists: type some text and press Enter to see only the notifications whose sender, app, title or message contain it (case does not matter). The filter shows beside the tabs. Esc clears it; an empty filter does too."},
-		{"Esc", "Drops a number you have started typing, or closes a message you are reading, or clears the filter."},
-	}},
-	{"Focus tab", []helpTopic{
-		{"what you see", "The sessions in force, top first. ▶ marks the one in force; the others are what it falls back to as sessions end. Each shows its level and its time left (or that it runs until stopped), and a note if it has one. Below it is a menu of everything you can do."},
-		{"j / k, Enter", "Select a menu row and run it with Enter (a number first moves further, so 3j goes down three rows). Rows that do not apply right now are dimmed, with the reason; Enter on one explains instead of doing anything. Every row also has its own key, shown beside it, which works without selecting it. The line below the page shows, at its right, the equivalent shh command for the selected row, and after you run something it shows the exact command that would have done the same, such as $ shh 75% 25m writing docs. Changing the level and adding time have no command line equivalent yet, so they say TUI only."},
-		{"s", "Start a session on top of what is in force. Type a level, a length and a note in any order, the way the shh command takes them: 75% 25m writing docs, or deep 1h, or just 30%. Add then off (or then a level) at the end to choose what it falls back to. Nothing typed starts medium until stopped. If shh is not running, a worker is started for you."},
-		{"b", "Set the standing level that applies whenever no session does: a percentage, a tier, or off to clear it."},
-		{"f", "Change the level of the session in force, without starting a new one."},
-		{"p, Space", "Pause the countdown of a timed session, or start it again. Only the timer stops; the level stays."},
-		{"+ / -", "Add or take away five minutes from the time left. A number first repeats it: 3+ adds fifteen, and 3 then Enter on the menu row does the same. Time cannot go below zero."},
-		{"x", "Stop the session in force; focus falls back to what is under it."},
-		{"X", "Turn focus off completely, baseline included. It asks first: y confirms, n or Esc keeps it."},
-	}},
-	{"Routines tab", []helpTopic{
-		{"what you see", "The routine that is running, if any, with the step it is on, how far through it is and what comes next (or the step it is waiting for you to start). Below it are the routines saved in routines.json, each with its steps written as the shh commands that do them. Under No routine is running, a last: line gives the summary of the run that ended, for routines whose summary setting includes ui. Edit that file to change them; the next run uses the new text. shh routine example prints a file to start from."},
-		{"j / k, Enter", "Select a routine and start it with Enter (or s). Only one runs at a time."},
-		{"n", "Go on: start the step that is waiting for you, or end the running step early and move to the next. Steps that only set the baseline are applied on the way."},
-		{"b", "Restart the step before this one (the step that just ended, while waiting)."},
-		{"x", "End the routine now. Whatever it had in force is stopped."},
-		{"a, e, c, d", "a makes a new routine, e edits the selected one, c edits a copy of it under a new name, d deletes it (asking first). The same things from a terminal: shh routine add and shh routine remove; the line under the page shows the command that would save what you are editing."},
-		{"the editor", "j and k move over the rows, Enter changes one: Name, Description and Repeat take typing; Waiting and Summary go to their next choice. Each step is one shh command, such as 75% 25m work --alert banner or baseline 30% (--ask makes it wait for you before the next). Enter on a step edits it, a adds one, d deletes one (a routine keeps at least one), J and K move it down or up. s saves; only that routine's text in routines.json changes, so your comments and the rest of the file stay as they were. Esc cancels; with unsaved changes it asks for a second Esc."},
-		{"on the Focus tab", "While a routine runs, starting or stopping a session by hand asks first: y ends the routine and does what you asked, n leaves everything as it was. For a new session there are two more answers. c interrupts the routine: your session starts now, the routine's step stops counting down, and the routine continues from there when your session ends (Stop on your session ends it early, and the routine resumes at once). q queues your session: nothing changes now, and it starts when the routine ends, however it ends. u on the Routines tab drops a queued session. The Focus tab also shows the routine's step under the level in force."},
-	}},
-	{"Reading", []helpTopic{
-		{"e", "Read the whole message across the screen, with the list out of the way. j and k scroll it (numbers work here too), e or Esc puts it back. Reading this way does not mark the notification as read."},
-		{"Enter, o", "Open the app the notification came from and mark it read. If the app cannot be opened, it is not marked."},
-		{"d, x", "Dismiss it from the Notifications list. It stays in the Train list: dismissing is not training."},
-		{"f", "Flag it to look at again later. Flagged rows lead the Train tab, so a notification you noticed was wrong is easy to find. Press f again to clear the flag. The Flag button on an alert banner does the same thing; labelling a notification clears its flag."},
-	}},
-	{"Training (Notifications and Train tabs)", []helpTopic{
-		{"y / n", "Answer \"did shh do the right thing?\" The row shows what shh did: ✕ blocked means it held the notification back, no mark means it alerted you. y says the call was right (a blocked one should stay blocked, an alerted one should have alerted); n says it was wrong. A right call close to the line also teaches the model something, by pushing the score further from it. On the Train tab the question \"Was this correct?\" sits under each notification's score and says what shh did. The row then leaves the Train list, and when you label it from Notifications it is archived from there too."},
-		{"t", "Type an exact score instead, from 0 to 100 or light, medium, deep or lockdown, and press Enter. Esc cancels. While the box is open, digits and letters are typed into it."},
-		{"u", "Undo the last training exactly: the model goes back to how it was and the row returns to the list."},
-		{"order", "The Train list shows flagged rows first, then those whose score is closest to a common threshold (35, 65, 90 or 99), because a label there changes what gets through the most."},
-	}},
-	{"What the marks mean", []helpTopic{
-		{">", "The cursor. Its row is also highlighted."},
-		{"•", "Not opened yet."},
-		{"✕ blocked", "shh held it back and it never reached you. A row with nothing here was alerted."},
-		{"⚑", "Flagged for review."},
-	}},
-	{"Typing in a box", []helpTopic{
-		{"← / →", "Move the cursor through what you have typed, so a typo can be fixed without retyping the rest. Home and End (or Ctrl-A and Ctrl-E) go to the start or the end; Alt-← and Alt-→ jump a word."},
-		{"Backspace, Del", "Delete the character before or under the cursor. Ctrl-W deletes the word before it, Ctrl-U everything before it, Ctrl-K everything after it."},
-		{"Enter, Esc", "Enter accepts the text; if it cannot be used, the box stays open with the reason under it. Esc cancels. A text longer than the box scrolls to keep the cursor in view."},
-	}},
-	{"Other", []helpTopic{
-		{"?", "This help. j and k scroll it, anything else closes it."},
-		{"q, Ctrl-C", "Quit."},
-	}},
-}
-
-// helpLines lays the help out for a screen width, wrapping each description beside its keys.
-func helpLines(width int) []string {
-	const keyWidth = 14
-	textWidth := max(20, width-keyWidth-4)
-	lines := []string{"", " " + lipgloss.NewStyle().Bold(true).Render("shh keys"), ""}
-	for _, section := range helpSections {
-		lines = append(lines, " "+lipgloss.NewStyle().Bold(true).Underline(true).Render(section.title))
-		for _, t := range section.topics {
-			keys := runewidth.Truncate(t.keys, keyWidth-1, "…")
-			for i, part := range strings.Split(lipgloss.NewStyle().Width(textWidth).Render(t.text), "\n") {
-				prefix := strings.Repeat(" ", keyWidth)
-				if i == 0 {
-					prefix = fmt.Sprintf("%-*s", keyWidth, keys)
-				}
-				lines = append(lines, "  "+prefix+" "+part)
-			}
-		}
-		lines = append(lines, "")
-	}
-	return lines
-}
-
-func (m *Model) helpView() string {
-	lines := helpLines(m.width)
-	room := max(1, m.height-1) // one line is kept for the footer
-	m.helpScroll = max(0, min(m.helpScroll, len(lines)-room))
-	last := min(len(lines), m.helpScroll+room)
-	visible := append([]string{}, lines[m.helpScroll:last]...)
-	for len(visible) < room {
-		visible = append(visible, "")
-	}
-	footer := dim.Render(fmt.Sprintf(" j/k scroll · any other key closes · lines %d-%d of %d", m.helpScroll+1, last, len(lines)))
-	return pad(append(visible, footer), m.height, m.width)
 }
 
 // ---- small helpers ----

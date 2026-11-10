@@ -599,3 +599,57 @@ func TestRoutineAddSaysWhichTriggerIsWrong(t *testing.T) {
 		t.Error("nothing should be written")
 	}
 }
+
+func TestGuidePrintsASectionOrSearchesItWhenNotOnATerminal(t *testing.T) {
+	r := newRig(t, false)
+	out := r.mustRun("guide", "steps")
+	if !strings.Contains(out, "Writing steps") || !strings.Contains(out, "until 11:00") || strings.Contains(out, "Moving around") {
+		t.Errorf("one section:\n%s", out)
+	}
+	out = r.mustRun("guide", "-s", "queue")
+	if !strings.Contains(out, "unqueue") || strings.Contains(out, "Reading\n===") {
+		t.Errorf("search:\n%s", out)
+	}
+	out = r.mustRun("guide", "routine-commands", "--search", "remove")
+	if !strings.Contains(out, "shh routine remove") || strings.Contains(out, "shh routine example prints") {
+		t.Errorf("a section and a search:\n%s", out)
+	}
+	if out = r.mustRun("guide", "--list"); !strings.Contains(out, "routine-files") || !strings.Contains(out, "during-a-run") {
+		t.Errorf("list:\n%s", out)
+	}
+	if out = r.mustRun("guide"); !strings.Contains(out, "Moving around") || !strings.Contains(out, "Routine commands") {
+		t.Errorf("everything:\n%s", out[:200])
+	}
+}
+
+func TestGuideSaysWhenASectionIsUnknownOrAmbiguousOrASearchFindsNothing(t *testing.T) {
+	r := newRig(t, false)
+	if code := r.run("guide", "nonsense"); code != 2 || !strings.Contains(r.err.String(), "routine-files") {
+		t.Errorf("code %d stderr %q: an unknown section lists the sections", code, r.err.String())
+	}
+	if code := r.run("guide", "routine"); code != 2 {
+		t.Errorf("code %d: routine starts several sections", code)
+	}
+	if code := r.run("guide", "-s", "zzzzqqqq"); code != 1 || !strings.Contains(r.err.String(), "nothing in the guide matches") {
+		t.Errorf("code %d stderr %q", code, r.err.String())
+	}
+}
+
+func TestGuideOpensTheUIOnATerminalAndPrintsWithPrint(t *testing.T) {
+	r := newRig(t, false)
+	var gotSection, gotSearch string
+	opened := 0
+	r.env.IsTerminal = true
+	r.env.Guide = func(section, search string) error { opened++; gotSection, gotSearch = section, search; return nil }
+	r.mustRun("guide", "routine-f", "-s", "comments")
+	if opened != 1 || gotSection != "routine-files" || gotSearch != "comments" {
+		t.Errorf("opened %d at %q searching %q", opened, gotSection, gotSearch)
+	}
+	r.mustRun("guide")
+	if opened != 2 || gotSection != "" || gotSearch != "" {
+		t.Errorf("opened %d at %q searching %q", opened, gotSection, gotSearch)
+	}
+	if out := r.mustRun("guide", "steps", "--print"); opened != 2 || !strings.Contains(out, "Writing steps") {
+		t.Errorf("--print should print: opened %d\n%s", opened, out)
+	}
+}

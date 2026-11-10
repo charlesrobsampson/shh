@@ -37,6 +37,9 @@ type Env struct {
 	RoutinesPath string
 	// TUI opens the terminal UI. Nil when it is not available.
 	TUI func() error
+	// Guide opens the guide in the terminal UI, at a section (its slug, or empty) and with a search made (or empty). Nil when it is not
+	// available, and the guide is printed instead.
+	Guide func(section, search string) error
 	// Spawn starts a worker in the background when none is running. Nil when that is not possible.
 	Spawn func() error
 	// SpawnWait is how long to wait for a spawned worker to answer; 5 seconds when zero.
@@ -63,7 +66,8 @@ type cli struct {
 	Status   statusCmd   `cmd:"" help:"Show the focus levels in force and the time left."`
 	Pause    pauseCmd    `cmd:"" help:"Pause the countdown of the current timed session."`
 	Resume   resumeCmd   `cmd:"" help:"Resume a paused countdown."`
-	Routine  routineCmd  `cmd:"" help:"Saved sequences of focus sessions, such as a pomodoro."`
+	Routine  routineCmd  `cmd:"" help:"Saved sequences of focus sessions, such as a pomodoro (shh guide routine-commands explains them)."`
+	Guide    guideCmd    `cmd:"" help:"The guide to the terminal UI, routines and commands: open it, jump to a section, or search it."`
 	Alert    alertCmd    `cmd:"" help:"Alert tools."`
 	Replay   replayCmd   `cmd:"" help:"Run the classifier over a file of notifications and print each decision."`
 	Daemon   daemonCmd   `cmd:"" hidden:"" help:"Run the background worker (started by shh itself)."`

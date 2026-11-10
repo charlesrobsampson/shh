@@ -522,11 +522,11 @@ func TestWhenTheSelectedRowDisappearsTheCursorStaysInRange(t *testing.T) {
 	r.press("j", "k", "G", "g") // must not panic on an empty list
 }
 
-func TestHelpOpensJKScrollItAndAnyOtherKeyCloses(t *testing.T) {
+func TestHelpOpensJKScrollItAndEscCloses(t *testing.T) {
 	r := newRig(t)
 	r.m.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
 	r.press("?")
-	if got := r.view(); !strings.Contains(got, "shh keys") || !strings.Contains(got, "Moving around") {
+	if got := r.view(); !strings.Contains(got, "shh guide") || !strings.Contains(got, "Moving around") {
 		t.Errorf("help:\n%s", got)
 	}
 	r.press("j", "j", "j")
@@ -546,8 +546,12 @@ func TestHelpOpensJKScrollItAndAnyOtherKeyCloses(t *testing.T) {
 		t.Errorf("g should scroll back to the top, scroll = %d", r.m.helpScroll)
 	}
 	r.press("x")
-	if got := r.view(); strings.Contains(got, "shh keys") || r.m.showHelp {
-		t.Errorf("another key should close the help:\n%s", got)
+	if !r.m.showHelp {
+		t.Error("a key the help does not use should do nothing, not close it: keys like n and / mean things there now")
+	}
+	r.press("esc")
+	if got := r.view(); strings.Contains(got, "shh guide") || r.m.showHelp {
+		t.Errorf("Esc should close the help:\n%s", got)
 	}
 	r.press("?")
 	if r.m.helpScroll != 0 {
@@ -1351,7 +1355,7 @@ func TestTheBoostCountsWhenRankingBecauseThatIsWhatWasCompared(t *testing.T) {
 func helpText(r *rig) string {
 	r.m.helpScroll = 0
 	var all []string
-	for i := 0; i < 200; i++ {
+	for i := 0; i < 2000; i++ {
 		all = append(all, strings.Join(strings.Fields(r.view()), " "))
 		before := r.m.helpScroll
 		r.press("j")
@@ -1367,12 +1371,12 @@ func TestHelpExplainsEveryKeyInSentences(t *testing.T) {
 	r.m.Update(tea.WindowSizeMsg{Width: 100, Height: 80}) // tall enough that every sentence is whole in one view
 	r.press("?")
 	text := helpText(r)
-	r.press("x")
+	r.press("esc")
 	// and a small terminal can still reach all of it by scrolling
 	r.m.Update(tea.WindowSizeMsg{Width: 100, Height: 14})
 	r.press("?")
 	small := helpText(r)
-	r.press("x")
+	r.press("esc")
 	for _, want := range []string{"Moving around", "Reading", "Training", "What the marks mean", "Other", "Quit."} {
 		if !strings.Contains(small, want) {
 			t.Errorf("scrolling a small terminal never reaches %q", want)
@@ -1411,7 +1415,7 @@ func TestHelpFitsEveryTerminalSize(t *testing.T) {
 				break
 			}
 		}
-		r.press("x")
+		r.press("esc")
 	}
 }
 

@@ -72,7 +72,8 @@ func realEnv() cli.Env {
 	env.PersistedFocus = func() bool { return persistedFocus(cfg.Paths.DB) }
 	env.Daemon = func(context.Context) error { return runDaemon(cfg) }
 	env.Menubar = func(ctx context.Context) error { return runMenubar(ctx, cfg) }
-	env.TUI = func() error { return runTUI(cfg) }
+	env.TUI = func() error { return runTUI(cfg, "", "", false) }
+	env.Guide = func(section, search string) error { return runTUI(cfg, section, search, true) }
 	for source := range cfg.Alert.Source {
 		env.AlertSources = append(env.AlertSources, source)
 	}
@@ -273,7 +274,7 @@ end tell`
 
 // runTUI opens the terminal UI. It reads the same database as the worker (SQLite allows that) and asks the worker for the session
 // status, which it does without: with no worker the UI is for review and training.
-func runTUI(cfg config.Config) error {
+func runTUI(cfg config.Config, helpSection, helpSearch string, helpOnly bool) error {
 	if err := os.MkdirAll(cfg.Paths.Dir, 0o700); err != nil {
 		return err
 	}
@@ -285,6 +286,7 @@ func runTUI(cfg config.Config) error {
 	client := session.NewClient(cfg.Paths.Socket)
 	return tui.Run(tui.Config{
 		Data: db, Worker: client, Label: cfg.Menubar.Label,
+		HelpOnly: helpOnly, HelpSection: helpSection, HelpSearch: helpSearch,
 		// The Focus tab does everything the command line does, through the worker.
 		Control: client,
 		// The Routines tab starts and steers routines through the worker and reads the routines file itself.
