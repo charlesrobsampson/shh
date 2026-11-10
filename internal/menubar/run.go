@@ -61,7 +61,10 @@ type Config struct {
 	// GoneAfter is how many polls in a row may find no worker before Run gives up; 2 when zero. The menu bar item exists for the
 	// worker's sake, so it leaves when the worker does.
 	GoneAfter int
-	OnError   func(error)
+	// Gone, if set, is asked at every poll: true means the process that started this one (the worker) is no longer there, and the item
+	// leaves at once. Without it a new worker that answers on the same socket would keep an old item alive beside its own.
+	Gone    func() bool
+	OnError func(error)
 }
 
 // Run keeps the menu bar item up to date until ctx ends or the worker is gone: once per Interval it asks the worker for its status
@@ -158,6 +161,9 @@ func (r *runner) launch() error {
 
 // refresh polls the worker and updates the item. It reports whether the worker is gone.
 func (r *runner) refresh() (gone bool) {
+	if r.cfg.Gone != nil && r.cfg.Gone() {
+		return true
+	}
 	st, err := r.cfg.Controller.Status()
 	if errors.Is(err, session.ErrNotRunning) {
 		r.misses++

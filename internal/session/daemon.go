@@ -21,6 +21,9 @@ type DaemonConfig struct {
 	// the daemon moves them when others come and go). While it returns true the daemon does not count as idle.
 	Busy    func() bool
 	OnError func(error)
+	// OnReady, if set, is called once the daemon owns the lock and the socket. Anything that belongs to this daemon alone (its menu bar
+	// item) is started here, not before: a daemon that loses the race for the lock must leave nothing behind.
+	OnReady func()
 }
 
 // RunDaemon is the background worker process: it takes the single-instance lock, serves the socket and runs the worker until ctx
@@ -39,6 +42,9 @@ func RunDaemon(ctx context.Context, cfg DaemonConfig) error {
 	server, err := Listen(cfg.SocketPath, cfg.Worker)
 	if err != nil {
 		return err
+	}
+	if cfg.OnReady != nil {
+		cfg.OnReady()
 	}
 
 	ctx, cancel := context.WithCancel(ctx)

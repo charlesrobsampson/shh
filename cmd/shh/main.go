@@ -220,14 +220,28 @@ func runDaemon(cfg config.Config) error {
 	if err != nil {
 		return err
 	}
-	if cfg.Menubar.Enabled {
-		if err := spawnMenubar(cfg); err != nil {
-			onError(fmt.Errorf("starting the menu bar item: %w", err))
-		}
-	}
 	logger.Println("shh worker started")
 	defer logger.Println("shh worker stopped")
+	// The menu bar item is this worker's: started once the worker owns the socket (a second worker that loses the race for it must not
+	// leave an item behind), and sent away when the worker goes, so a restarted worker is not left with its old one beside the new.
+	var menubarProc *os.Process
+	defer func() {
+		if menubarProc != nil {
+			_ = menubarProc.Signal(syscall.SIGTERM)
+		}
+	}()
 	return session.RunDaemon(ctx, session.DaemonConfig{
+		OnReady: func() {
+			if !cfg.Menubar.Enabled {
+				return
+			}
+			proc, err := spawnMenubar(cfg)
+			if err != nil {
+				onError(fmt.Errorf("starting the menu bar item: %w", err))
+				return
+			}
+			menubarProc = proc
+		},
 		Worker: worker, Clock: clock.Real{}, SocketPath: cfg.Paths.Socket,
 		LockPath: filepath.Join(cfg.Paths.Dir, "shh.lock"), PIDPath: cfg.Paths.PID, OnError: onError,
 		// Banners stay until dismissed, and only this process can lay them out, so do not leave while any are up.
@@ -239,29 +253,31 @@ func runDaemon(cfg config.Config) error {
 
 // spawnMenubar starts `shh menubar` as a child of the worker. It is not waited for or killed: it polls the worker's socket and
 // leaves on its own when the worker is gone.
-func spawnMenubar(cfg config.Config) error {
+func spawnMenubar(cfg config.Config) (*os.Process, error) {
 	exe, err := os.Executable()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	logFile, err := os.OpenFile(filepath.Join(cfg.Paths.Dir, "shh.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer logFile.Close()
 	cmd := exec.Command(exe, "menubar")
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	if err := cmd.Start(); err != nil {
-		return err
+		return nil, err
 	}
 	go cmd.Wait() // reap it when it ends
-	return nil
+	return cmd.Process, nil
 }
 
 // runMenubar is the menu bar item's process: a status item driven by the worker over its socket.
 func runMenubar(ctx context.Context, cfg config.Config) error {
 	logger := log.New(os.Stderr, "menubar: ", log.LstdFlags)
+	parent := os.Getppid() // the worker that started it: when that changes, the worker is gone and so is this item
 	return menubar.Run(ctx, menubar.Config{
+		Gone:       func() bool { return os.Getppid() != parent },
 		Controller: session.NewClient(cfg.Paths.Socket),
 		Label:      cfg.Menubar.Label,
 		Open:       openUI,

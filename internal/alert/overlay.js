@@ -149,13 +149,21 @@ function setButtonTitle(button, text) {
     button.setAttributedTitle($.NSAttributedString.alloc.initWithStringAttributes($(text), attributes));
   } catch (e) { /* the system's text color stays */ }
 }
-function paintButton(button) {
+// A button with a color has no bezel of its own: a box of that color sits behind it as its face (the same kind of box the banner itself
+// is made of), and layoutButtons keeps each box under its button.
+const backdrops = [];
+function paintButton(button, i) {
   if (!buttonFill) return;
   try {
     button.setBordered(false);
-    button.setWantsLayer(true);
-    button.layer.setBackgroundColor(buttonFill.CGColor);
-    button.layer.setCornerRadius(6);
+    const box = $.NSBox.alloc.initWithFrame($.NSMakeRect(0, 0, 10, 10));
+    box.setBoxType($.NSBoxCustom);
+    box.setTitlePosition($.NSNoTitle);
+    box.setBorderWidth(0);
+    box.setCornerRadius(6);
+    box.setFillColor(buttonFill);
+    view.addSubview(box); // before the button is added, so it is behind it
+    backdrops[i] = box;
   } catch (e) { button.setBordered(true); /* the system's look stays */ }
 }
 
@@ -169,7 +177,7 @@ const buttons = cfg.buttons.map((spec, i) => {
   button.setTarget(actions);
   button.setAction('press:');
   setButtonTitle(button, spec.label);
-  paintButton(button);
+  paintButton(button, i);
   view.addSubview(button);
   return button;
 });
@@ -179,6 +187,12 @@ function layoutButtons() {
   const gap = 8;
   const each = Math.min(96, (cfg.width - 32 - gap * (shown.length - 1)) / Math.max(shown.length, 1));
   shown.forEach((b, n) => b.setFrame($.NSMakeRect(16 + n * (each + gap), 8, each, 24)));
+  buttons.forEach((b, i) => {
+    const box = backdrops[i];
+    if (!box) return;
+    box.setHidden(b.isHidden);
+    if (!b.isHidden) box.setFrame(b.frame);
+  });
 }
 layoutButtons();
 

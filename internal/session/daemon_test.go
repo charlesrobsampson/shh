@@ -302,3 +302,29 @@ func TestTheDaemonStaysUpWhileSomethingIsOnScreenAndLeavesAfterwards(t *testing.
 		t.Fatal("the daemon never left after the banners were gone")
 	}
 }
+
+func TestOnReadyRunsOnceTheDaemonOwnsTheSocketAndNeverForOneThatLosesTheRace(t *testing.T) {
+	r := newDaemonRig(t)
+	var ready atomic.Int32
+	r.cfg.OnReady = func() {
+		// by now the socket exists, which is what the menu bar item the worker starts here connects to
+		if _, err := os.Stat(r.cfg.SocketPath); err != nil {
+			t.Errorf("OnReady ran before the daemon owned the socket: %v", err)
+		}
+		ready.Add(1)
+	}
+	r.worker.SetBaseline(30)
+	r.start()
+	if ready.Load() != 1 {
+		t.Fatalf("OnReady ran %d times", ready.Load())
+	}
+	other := newWorkerRig(t)
+	second := r.cfg
+	second.Worker, second.Clock = other.worker, other.clock
+	if err := session.RunDaemon(context.Background(), second); !errors.Is(err, session.ErrAlreadyRunning) {
+		t.Fatalf("err = %v", err)
+	}
+	if ready.Load() != 1 {
+		t.Errorf("a daemon that lost the race for the lock started its own menu bar item (OnReady ran %d times): that is where the extra items came from", ready.Load())
+	}
+}
