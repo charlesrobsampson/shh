@@ -1483,7 +1483,7 @@ var helpSections = []struct {
 		{"X", "Turn focus off completely, baseline included. It asks first: y confirms, n or Esc keeps it."},
 	}},
 	{"Routines tab", []helpTopic{
-		{"what you see", "The routine that is running, if any, with the step it is on, how far through it is and what comes next (or the step it is waiting for you to start). Below it are the routines saved in routines.json, each with its steps written as the shh commands that do them. Edit that file to change them; the next run uses the new text. shh routine example prints a file to start from."},
+		{"what you see", "The routine that is running, if any, with the step it is on, how far through it is and what comes next (or the step it is waiting for you to start). Below it are the routines saved in routines.json, each with its steps written as the shh commands that do them. Under "No routine is running" a last: line gives the summary of the run that ended, for routines whose summary setting includes ui. Edit that file to change them; the next run uses the new text. shh routine example prints a file to start from."},
 		{"j / k, Enter", "Select a routine and start it with Enter (or s). Only one runs at a time."},
 		{"n", "Go on: start the step that is waiting for you, or end the running step early and move to the next. Steps that only set the baseline are applied on the way."},
 		{"b", "Restart the step before this one (the step that just ended, while waiting)."},

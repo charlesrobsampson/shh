@@ -694,3 +694,93 @@ func TestANextOnASessionBeforeABaselineStepAppliesTheBaseline(t *testing.T) {
 		t.Errorf("skipping work should still apply the baseline step after it: baseline = %d", got)
 	}
 }
+
+func TestTheBannerOfAStepThatAsksCarriesAStartNextButton(t *testing.T) {
+	r := newRoutineRig(t, askRoutine("stay"))
+	r.start("ask")
+	r.pass(25 * time.Minute)
+	shown := r.alerter.Shown()
+	if len(shown) != 1 || len(shown[0].Actions) != 1 || shown[0].Actions[0].ID != "next" || shown[0].Actions[0].Label != "Start next" || shown[0].ActionToken == "" {
+		t.Fatalf("shown = %+v", shown)
+	}
+	if err := r.worker.RoutineAction(shown[0].ActionToken, "next"); err != nil {
+		t.Fatal(err)
+	}
+	if v := r.info().Active; v == nil || v.Waiting || v.Step != "break" || r.top().Percent != 30 {
+		t.Errorf("the button should start the break: %+v", v)
+	}
+}
+
+func TestTheBannerOfAStepThatMovedOnItselfCarriesASkipButton(t *testing.T) {
+	r := newRoutineRig(t, pomodoroLite)
+	r.start("pomo")
+	r.pass(25 * time.Minute) // work ends, its banner says the break began
+	shown := r.alerter.Shown()
+	if len(shown) != 1 || len(shown[0].Actions) != 1 || shown[0].Actions[0].ID != "skip" {
+		t.Fatalf("shown = %+v", shown)
+	}
+	if err := r.worker.RoutineAction(shown[0].ActionToken, "skip"); err != nil {
+		t.Fatal(err)
+	}
+	if v := r.info().Active; v == nil || v.Step != "work (2/2)" {
+		t.Errorf("skip should end the break that had begun: %+v", v)
+	}
+}
+
+func TestABannerButtonLeftOnScreenCannotActOnALaterStep(t *testing.T) {
+	r := newRoutineRig(t, pomodoroLite)
+	r.start("pomo")
+	r.pass(25 * time.Minute)
+	token := r.alerter.Shown()[0].ActionToken
+	r.pass(5 * time.Minute) // the break ends by itself and the second work begins
+	if err := r.worker.RoutineAction(token, "skip"); err != nil {
+		t.Fatal(err)
+	}
+	if v := r.info().Active; v == nil || v.Step != "work (2/2)" || r.top().Remaining < 24*time.Minute {
+		t.Errorf("an old banner's button must do nothing: %+v, %v left", v, r.top().Remaining)
+	}
+	for _, bad := range []string{"", "nonsense", "1:x", "999:0"} {
+		if err := r.worker.RoutineAction(bad, "skip"); err != nil {
+			t.Errorf("token %q: %v", bad, err)
+		}
+	}
+	if err := r.worker.RoutineAction(token, "unknown-button"); err != nil {
+		t.Error(err)
+	}
+	r.worker.RoutineStop()
+	if err := r.worker.RoutineAction(token, "skip"); err != nil {
+		t.Errorf("a button after the run ended: %v", err)
+	}
+}
+
+func TestTheSummaryCarriesWhereTheRoutineWantsItShown(t *testing.T) {
+	r := newRoutineRig(t, `{"routines": {"quiet": {"summary": ["menu", "ui"], "steps": ["off 10m x"]}, "loud": {"steps": ["off 10m x"]}}}`)
+	r.start("quiet")
+	r.pass(10 * time.Minute)
+	last := r.worker.RoutineLast()
+	if last == nil || last.Name != "quiet" || !last.Shows("menu") || !last.Shows("ui") || last.Shows("banner") {
+		t.Fatalf("last = %+v", last)
+	}
+	if last.Line() != "quiet finished: 1 steps in 10m. Held back 0 notifications, let through 0." {
+		t.Errorf("line = %q", last.Line())
+	}
+	r.start("loud")
+	if r.worker.RoutineLast().Name != "quiet" {
+		t.Error("while a run is going, the last summary is still the one that ended")
+	}
+	r.pass(10 * time.Minute)
+	if l := r.worker.RoutineLast(); l.Name != "loud" || !l.Shows("banner") || !l.Shows("ui") || l.Shows("menu") {
+		t.Errorf("defaults: %+v", l)
+	}
+}
+
+func TestNoRunHasEndedMeansNoLastSummary(t *testing.T) {
+	r := newRoutineRig(t, pomodoroLite)
+	if r.worker.RoutineLast() != nil {
+		t.Error("nothing has run")
+	}
+	r.start("pomo")
+	if r.worker.RoutineLast() != nil {
+		t.Error("a run that has not ended has no summary")
+	}
+}

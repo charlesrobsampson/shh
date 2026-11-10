@@ -15,6 +15,16 @@ type Alert struct {
 	// NotificationID is the stored notification this alert is about; 0 when there is none. It is what lets a banner's Flag button say
 	// which notification to mark for review.
 	NotificationID int64
+	// Actions are extra buttons this alert brings with it, after the configured ones: each does something in shh when pressed and then
+	// dismisses the banner. ActionToken is handed back with the button's ID, so the receiver can tell which alert it was.
+	Actions     []Action
+	ActionToken string
+}
+
+// Action is a button that belongs to one alert, such as "Start next" on the banner that says a routine step is over.
+type Action struct {
+	ID    string
+	Label string
 }
 
 // Alerter shows an alert on screen.

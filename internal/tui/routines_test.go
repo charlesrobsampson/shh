@@ -671,3 +671,17 @@ func TestArrowKeysAlsoWorkInTheOtherPrompts(t *testing.T) {
 		t.Errorf("the start prompt should take the fixed text: %q", got)
 	}
 }
+
+func TestTheRoutinesTabShowsTheLastRunWhenTheRoutineAsksForTheUI(t *testing.T) {
+	r, _ := routinesRig(t)
+	r.worker.view = session.StatusView{LastRoutine: &session.RoutineSummary{Name: "pomo", Reason: "finished", Steps: 4, ElapsedSecs: 3600, Held: 3, Let: 1, Where: []string{"ui"}}}
+	r.refresh()
+	if v := r.view(); !strings.Contains(v, "last: pomo finished: 4 steps in 1h. Held back 3 notifications, let through 1.") {
+		t.Errorf("view:\n%s", v)
+	}
+	r.worker.view.LastRoutine.Where = []string{"banner"}
+	r.refresh()
+	if v := r.view(); strings.Contains(v, "last:") {
+		t.Errorf("a routine that did not ask for the UI is not shown there:\n%s", v)
+	}
+}

@@ -167,6 +167,9 @@ func (s *Server) handle(req Request) Response {
 	}
 	view := statusView(st, w.cfg.Clock.Now())
 	view.Routine = w.routines.View()
+	if view.Routine == nil {
+		view.LastRoutine = w.routines.Last()
+	}
 	resp := Response{OK: true, Status: &view}
 	if strings.HasPrefix(req.Cmd, "routine_") {
 		info, err := w.RoutineInfo()

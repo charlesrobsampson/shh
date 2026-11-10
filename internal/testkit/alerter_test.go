@@ -2,6 +2,7 @@ package testkit_test
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/charlesrobsampson/shh/internal/alert"
@@ -26,7 +27,7 @@ func TestFakeAlerterRecordsWhatItShows(t *testing.T) {
 	a.Show(second)
 
 	got := a.Shown()
-	if len(got) != 2 || got[0] != first || got[1] != second {
+	if len(got) != 2 || !reflect.DeepEqual(got[0], first) || !reflect.DeepEqual(got[1], second) {
 		t.Fatalf("Shown = %+v, want both alerts in order", got)
 	}
 	got[0].Title = "changed"

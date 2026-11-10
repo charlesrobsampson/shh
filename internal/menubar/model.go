@@ -6,6 +6,7 @@ package menubar
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charlesrobsampson/shh/internal/decide"
 	"github.com/charlesrobsampson/shh/internal/session"
@@ -38,6 +39,9 @@ type Item struct {
 	Title     string `json:"title,omitempty"`
 	Separator bool   `json:"separator,omitempty"`
 }
+
+// lastRoutineFor is how long after a routine ends its summary stays in the menu, for a routine that asks for it there.
+const lastRoutineFor = time.Hour
 
 // figureSpace is as wide as a digit, so padding with it keeps the title the same width as the digits change.
 const figureSpace = " "
@@ -102,6 +106,9 @@ func items(v session.StatusView) []Item {
 	// one, which keeps the menu short and stops it reading like a log.
 	if r := v.Routine; r != nil {
 		out = append(out, Item{Title: fmt.Sprintf("Routine %s · step %d of %d", r.Name, r.Position+1, r.Total)})
+	}
+	if l := v.LastRoutine; l != nil && v.Routine == nil && l.Shows("menu") && !v.Now.IsZero() && v.Now.Sub(l.Ended) < lastRoutineFor {
+		out = append(out, Item{Title: "Last routine: " + l.Line()}, Item{Separator: true})
 	}
 	if top == nil {
 		out = append(out, Item{Title: "Focus is off"})

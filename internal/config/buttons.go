@@ -49,6 +49,8 @@ type Button struct {
 	// CollapseLabel is only set for preview, and FlaggedLabel only for flag.
 	CollapseLabel string
 	FlaggedLabel  string
+	// ID is only set for an action button, one an alert brings with it (see alert.Action) and the configuration does not list.
+	ID string
 }
 
 // ButtonsFor is the full button list for an alert, left to right: the per-source list if there is one, else the per-kind list, else
@@ -68,7 +70,7 @@ func normalize(entries []ButtonEntry) []Button {
 	if entries == nil {
 		out := make([]Button, 0, len(buttonSpecs))
 		for _, s := range buttonSpecs {
-			out = append(out, Button{s.Type, s.Label, s.Enabled, defaultCollapse(s.Type), defaultFlagged(s.Type)})
+			out = append(out, Button{Type: s.Type, Label: s.Label, Enabled: s.Enabled, CollapseLabel: defaultCollapse(s.Type), FlaggedLabel: defaultFlagged(s.Type)})
 		}
 		return out
 	}
@@ -94,7 +96,7 @@ func normalize(entries []ButtonEntry) []Button {
 	}
 	for _, s := range buttonSpecs {
 		if !seen[s.Type] {
-			out = append(out, Button{s.Type, s.Label, false, defaultCollapse(s.Type), defaultFlagged(s.Type)})
+			out = append(out, Button{Type: s.Type, Label: s.Label, CollapseLabel: defaultCollapse(s.Type), FlaggedLabel: defaultFlagged(s.Type)})
 		}
 	}
 	return out

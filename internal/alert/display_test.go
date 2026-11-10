@@ -313,3 +313,27 @@ func TestTheFlagButtonCanBeTurnedOffOrRelabelled(t *testing.T) {
 		t.Errorf("buttons = %+v", custom.Buttons)
 	}
 }
+
+func TestAnAlertsOwnActionsBecomeButtonsAfterTheConfiguredOnes(t *testing.T) {
+	primary := &recordingBackend{}
+	d := alert.NewDisplay(loadConfig(t, "{}").Alert, primary, nil, nil)
+	if err := d.Show(alert.Alert{Kind: config.KindMessage, Source: "Routine", Title: "work is over", Body: "Next: break",
+		ActionToken: "9:2", Actions: []alert.Action{{ID: "next", Label: "Start next"}}}); err != nil {
+		t.Fatal(err)
+	}
+	req := primary.requests[0]
+	if req.ActionToken != "9:2" {
+		t.Errorf("token = %q", req.ActionToken)
+	}
+	last := req.Buttons[len(req.Buttons)-1]
+	if last.Type != alert.ButtonAction || last.ID != "next" || last.Label != "Start next" {
+		t.Errorf("buttons = %+v", req.Buttons)
+	}
+	// and the banner has room for the button row even when it has no other button
+	plain := &recordingBackend{}
+	bare := alert.NewDisplay(config.Alert{}, plain, nil, nil)
+	_ = bare.Show(alert.Alert{Title: "t", Body: "b", Actions: []alert.Action{{ID: "x", Label: "X"}}})
+	if len(plain.requests) == 1 && plain.requests[0].Height < alert.ButtonRowHeight {
+		t.Errorf("height = %d", plain.requests[0].Height)
+	}
+}

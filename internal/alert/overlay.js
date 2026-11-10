@@ -177,6 +177,11 @@ let flagged = false;
 function press(spec) {
   if (spec.type === 'dismiss') finish('dismissed');
   else if (spec.type === 'goto') finish('opened');
+  else if (spec.type === 'action') {
+    // A button an alert brought with it: tell Go which one, then go away like Dismiss. The line is written before the script stops.
+    emit('action ' + spec.id);
+    finish('dismissed');
+  }
   else if (spec.type === 'flag') {
     // A toggle: pressing it marks the notification for review in the Train tab and shows the flagged label; pressing it again clears
     // the mark. The script tells Go the state it now has (1 or 0), not just that it was pressed, so the two cannot drift apart.

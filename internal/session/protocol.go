@@ -2,7 +2,12 @@ package session
 
 import (
 	"errors"
+	"fmt"
+	"slices"
+	"strings"
 	"time"
+
+	"github.com/charlesrobsampson/shh/internal/decide"
 )
 
 // The worker speaks JSON lines over a unix socket. A client sends one Request per line and gets one Response per line. After a
@@ -93,7 +98,27 @@ type RoutineSummary struct {
 	ElapsedSecs int       `json:"elapsed_secs"`
 	Held        int       `json:"held"`
 	Let         int       `json:"let"`
+	// Where is the places the routine says its summary should be shown: banner, menu, ui.
+	Where []string `json:"where,omitempty"`
 }
+
+// Sentence is the summary as one sentence: how many steps, how long, and what was held back and let through.
+func (s RoutineSummary) Sentence() string {
+	took := decide.FormatRemaining(s.ElapsedSecs)
+	held := fmt.Sprintf("held back %d notifications", s.Held)
+	if s.Held == 1 {
+		held = "held back 1 notification"
+	}
+	return fmt.Sprintf("%d steps in %s. %s, let through %d.", s.Steps, took, strings.ToUpper(held[:1])+held[1:], s.Let)
+}
+
+// Line is the summary with the routine and how it ended in front: "pomodoro finished: 4 steps in 1h15m. ...".
+func (s RoutineSummary) Line() string {
+	return fmt.Sprintf("%s %s: %s", s.Name, s.Reason, s.Sentence())
+}
+
+// Shows says whether the routine asked for its summary to be shown there.
+func (s RoutineSummary) Shows(where string) bool { return slices.Contains(s.Where, where) }
 
 // RoutineInfo is the answer to the routine commands.
 type RoutineInfo struct {
@@ -117,6 +142,9 @@ type StatusView struct {
 	Now    time.Time   `json:"now"`
 	// Routine is the routine run in progress, if there is one.
 	Routine *RoutineView `json:"routine,omitempty"`
+	// LastRoutine is the run that ended most recently, while none is in progress, for the places its summary is to be shown (see
+	// RoutineSummary.Where).
+	LastRoutine *RoutineSummary `json:"last_routine,omitempty"`
 	// Build identifies the executable the worker is running (see BuildID), so a command can tell when the worker predates the
 	// binary it was typed with, which would otherwise be easy to mistake for a bug in the new code.
 	Build string `json:"build,omitempty"`

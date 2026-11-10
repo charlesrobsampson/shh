@@ -374,6 +374,9 @@ func (w *Worker) RoutineStart(name string) error { return w.routines.Start(name)
 // RoutineNext starts the step a waiting routine is waiting on, or skips to the next step of a running one.
 func (w *Worker) RoutineNext() error { return w.routines.Next() }
 
+// RoutineAction is a button on a routine's banner being pressed (see alert.Action).
+func (w *Worker) RoutineAction(token, id string) error { return w.routines.Action(token, id) }
+
 // RoutineBack restarts the step before the one in focus.
 func (w *Worker) RoutineBack() error { return w.routines.Back() }
 
@@ -382,6 +385,9 @@ func (w *Worker) RoutineStop() error { return w.routines.Stop() }
 
 // RoutineActive says whether a routine run is in progress. The worker must stay up while one is, even with nothing in force.
 func (w *Worker) RoutineActive() bool { return w.routines.Active() }
+
+// RoutineLast is the summary of the run that ended most recently, or nil.
+func (w *Worker) RoutineLast() *RoutineSummary { return w.routines.Last() }
 
 // RoutineInfo is the routine run in progress and the last one that ended.
 func (w *Worker) RoutineInfo() (RoutineInfo, error) { return w.routines.Info() }

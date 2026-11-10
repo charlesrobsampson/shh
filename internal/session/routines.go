@@ -3,7 +3,6 @@ package session
 import (
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -34,6 +33,10 @@ type RoutineLoader func() ([]routine.Routine, error)
 type routineRunner struct {
 	w  *Worker
 	mu sync.Mutex
+	// last is the summary of the run that ended most recently, kept for the run lastID so status polls do not rebuild it.
+	lastMu sync.Mutex
+	last   *RoutineSummary
+	lastID int64
 }
 
 func newRoutineRunner(w *Worker) *routineRunner { return &routineRunner{w: w} }
@@ -73,6 +76,30 @@ func (r *routineRunner) Start(name string) error {
 func (r *routineRunner) Next() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.next()
+}
+
+// Action is a banner button being pressed. The token says which run and which step the banner was about; if the run has moved on
+// (or ended) since, the press does nothing, since it would act on a step the banner was not about.
+func (r *routineRunner) Action(token, id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var runID int64
+	var pos int
+	if _, err := fmt.Sscanf(token, "%d:%d", &runID, &pos); err != nil {
+		return nil
+	}
+	run, ok, err := r.w.cfg.Store.ActiveRoutineRun()
+	if err != nil || !ok || run.ID != runID || run.Position != pos {
+		return err
+	}
+	if id != "next" && id != "skip" {
+		return nil
+	}
+	return r.next()
+}
+
+func (r *routineRunner) next() error {
 	run, rt, plan, err := r.active()
 	if err != nil {
 		return err
@@ -210,7 +237,7 @@ func (r *routineRunner) advance(run store.RoutineRun, rt routine.Routine, plan [
 	next := nextSession(plan, pos+1)
 	last := next >= len(plan)
 	if natural {
-		r.announce(rt, plan, pos, next, last)
+		r.announce(run, rt, plan, pos, next, last)
 	}
 	switch {
 	case last:
@@ -358,7 +385,7 @@ func (r *routineRunner) finish(run store.RoutineRun, rt *routine.Routine, reason
 }
 
 // announce says that the step at pos is over, if its alert asks for that. A banner says what comes next and how to carry on.
-func (r *routineRunner) announce(rt routine.Routine, plan []routine.Planned, pos, nextPos int, last bool) {
+func (r *routineRunner) announce(run store.RoutineRun, rt routine.Routine, plan []routine.Planned, pos, nextPos int, last bool) {
 	step := plan[pos]
 	if step.Alert == routine.AlertSound && !last {
 		r.w.playSound()
@@ -372,7 +399,14 @@ func (r *routineRunner) announce(rt routine.Routine, plan []routine.Planned, pos
 	if step.Advance == routine.AdvanceAsk {
 		body += ". Start it with: shh routine next"
 	}
-	r.show(alert.Alert{Kind: config.KindMessage, Source: "Routine", Title: step.Name + " is over", Body: body})
+	// The banner's button does what the body says: start the step that waits, or skip the one that began on its own. It is tied to the
+	// run and the step it was shown for, so a banner left on screen cannot act on a later step.
+	act := alert.Action{ID: "skip", Label: "Skip"}
+	if step.Advance == routine.AdvanceAsk {
+		act = alert.Action{ID: "next", Label: "Start next"}
+	}
+	r.show(alert.Alert{Kind: config.KindMessage, Source: "Routine", Title: step.Name + " is over", Body: body,
+		ActionToken: fmt.Sprintf("%d:%d", run.ID, nextPos), Actions: []alert.Action{act}})
 }
 
 func (r *routineRunner) show(a alert.Alert) { r.w.say(a) }
@@ -458,6 +492,13 @@ func (r *routineRunner) summary(run store.RoutineRun) RoutineSummary {
 	if run.EndedAt != nil {
 		s.Ended = *run.EndedAt
 	}
+	s.Where = []string{"banner", "ui"} // what a routine says when it says nothing, and for one that is no longer in the file
+	if rt, err := r.find(run.Routine); err == nil {
+		s.Where = nil
+		for _, w := range rt.Summary {
+			s.Where = append(s.Where, string(w))
+		}
+	}
 	if steps, err := r.w.cfg.Store.RoutineRunSteps(run.ID); err == nil {
 		started := map[int]bool{}
 		for _, st := range steps {
@@ -469,13 +510,31 @@ func (r *routineRunner) summary(run store.RoutineRun) RoutineSummary {
 }
 
 // describeSummary writes a finished run's summary as one sentence, for the banner and the command line.
-func describeSummary(s RoutineSummary) string {
-	took := decide.FormatRemaining(s.ElapsedSecs)
-	held := fmt.Sprintf("held back %d", s.Held)
-	if s.Held == 1 {
-		held = "held back 1 notification"
-	} else {
-		held += " notifications"
+func describeSummary(s RoutineSummary) string { return s.Sentence() }
+
+// Last is the summary of the run that ended most recently, or nil if none has. It is worked out once per run, since clients ask for it
+// with every status poll.
+func (r *routineRunner) Last() *RoutineSummary {
+	runs, err := r.w.cfg.Store.RoutineRuns(2) // the newest may be the one in progress
+	if err != nil {
+		return nil
 	}
-	return fmt.Sprintf("%d steps in %s. %s, let through %d.", s.Steps, took, strings.ToUpper(held[:1])+held[1:], s.Let)
+	var ended *store.RoutineRun
+	for i := range runs {
+		if runs[i].EndedAt != nil {
+			ended = &runs[i]
+			break
+		}
+	}
+	if ended == nil {
+		return nil
+	}
+	r.lastMu.Lock()
+	defer r.lastMu.Unlock()
+	if r.last == nil || r.lastID != ended.ID {
+		s := r.summary(*ended)
+		r.last, r.lastID = &s, ended.ID
+	}
+	s := *r.last
+	return &s
 }

@@ -37,6 +37,9 @@ type OverlayConfig struct {
 	// OnFlag hears that the Flag button of a banner was switched on or off, with the id of the notification it is about, so it can be
 	// marked (or unmarked) for review. Called from the goroutine that reads the banner's output, only when the state changes. Optional.
 	OnFlag func(notificationID int64, flagged bool)
+	// OnAction hears that an action button of a banner was pressed: the alert's ActionToken and the button's ID. Called from the
+	// goroutine that reads the banner's output. Optional.
+	OnAction func(token, id string)
 }
 
 // Overlay draws each banner in its own osascript process (see docs/spikes/03-banner.md), in a window of its own that the banner
@@ -117,12 +120,14 @@ type bannerButton struct {
 	CollapseLabel string `json:"collapseLabel,omitempty"`
 	// FlaggedLabel is what the Flag button says once it has been pressed.
 	FlaggedLabel string `json:"flaggedLabel,omitempty"`
+	// ID is what an action button reports when it is pressed.
+	ID string `json:"id,omitempty"`
 }
 
 func bannerEnv(r Request, at layoutMessage) []string {
 	buttons := make([]bannerButton, 0, len(r.Buttons))
 	for _, b := range r.Buttons {
-		buttons = append(buttons, bannerButton{Type: b.Type, Label: b.Label, CollapseLabel: b.CollapseLabel, FlaggedLabel: b.FlaggedLabel})
+		buttons = append(buttons, bannerButton{Type: b.Type, Label: b.Label, CollapseLabel: b.CollapseLabel, FlaggedLabel: b.FlaggedLabel, ID: b.ID})
 	}
 	spec, _ := json.Marshal(bannerSpec{
 		Header: strings.TrimSpace(r.Source), Title: r.Title, Body: r.Body, Bundle: r.BundleID, Color: r.Style.Color, Width: r.Width, Height: r.Height,
@@ -233,6 +238,15 @@ func (o *Overlay) onEvent(b *banner, line string) {
 	field, value, _ := strings.Cut(line, " ")
 	if field == "flag" {
 		o.flag(b, value == "1")
+		return
+	}
+	if field == "action" {
+		o.mu.Lock()
+		ok := o.onScreenLocked(b)
+		o.mu.Unlock()
+		if ok && o.cfg.OnAction != nil {
+			o.cfg.OnAction(b.req.ActionToken, value)
+		}
 		return
 	}
 	n, err := strconv.Atoi(value)

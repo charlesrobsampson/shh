@@ -132,10 +132,11 @@ func persistedFocus(dbPath string) bool {
 
 // newAlerter draws alerts in the AppKit overlay and falls back to a Notification Center notification (titled with the own-banner
 // prefix so the suppressor lets it through) if the overlay cannot run or dies.
-func newAlerter(cfg config.Config, onError func(error), onFlag func(notificationID int64, flagged bool)) (alert.Alerter, *alert.Overlay) {
+func newAlerter(cfg config.Config, onError func(error), onFlag func(notificationID int64, flagged bool), onAction func(token, id string)) (alert.Alerter, *alert.Overlay) {
 	fallback := alert.NewFallback(alert.FallbackConfig{OwnPrefix: ingest.OwnTitlePrefix})
 	overlay := alert.NewOverlay(alert.OverlayConfig{
-		OnFlag: onFlag,
+		OnFlag:   onFlag,
+		OnAction: onAction,
 		OnFailure: func(req alert.Request, err error) {
 			onError(fmt.Errorf("the alert overlay failed (%w); using a notification instead", err))
 			if showErr := fallback.Show(req); showErr != nil {
@@ -177,6 +178,8 @@ func runDaemon(cfg config.Config) error {
 		return err
 	}
 
+	// A routine's banner can carry a button ("Start next", "Skip"); the worker, made just below, is the one that acts on it.
+	var worker *session.Worker
 	// A banner's Flag button marks its notification for review in the Train tab (and pressing it again clears the mark).
 	alerter, overlay := newAlerter(cfg, onError, func(id int64, flagged bool) {
 		if id < 0 {
@@ -185,8 +188,15 @@ func runDaemon(cfg config.Config) error {
 		if err := db.SetFlagged(id, flagged); err != nil {
 			onError(fmt.Errorf("changing the flag on notification %d: %w", id, err))
 		}
+	}, func(token, id string) {
+		if worker == nil {
+			return
+		}
+		if err := worker.RoutineAction(token, id); err != nil {
+			onError(fmt.Errorf("the %q button of a routine banner: %w", id, err))
+		}
 	})
-	worker, err := session.NewWorker(session.Config{
+	worker, err = session.NewWorker(session.Config{
 		Store: db, Source: ingest.NewMacOS(ingest.DefaultPaths(home)...), Clock: clock.Real{}, Rules: r, Embedder: embedder,
 		Alerter:    alerter,
 		Suppressor: suppress.NewAccessibility(suppress.AccessibilityConfig{OwnPrefix: ingest.OwnTitlePrefix, OnError: onError}),

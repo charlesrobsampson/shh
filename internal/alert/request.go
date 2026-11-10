@@ -14,9 +14,11 @@ type Request struct {
 	BundleID string
 	// NotificationID is the stored notification the alert is about, when there is one.
 	NotificationID int64
-	Title          string
-	Body           string
-	Style          config.Style
+	// ActionToken goes back with the ID of an action button that was pressed.
+	ActionToken string
+	Title       string
+	Body        string
+	Style       config.Style
 	// Width comes from Style.Size and Height from the body text and the button row, both in points.
 	Width, Height int
 	// Buttons are the buttons to draw, left to right: enabled in the configuration and applicable to this alert.

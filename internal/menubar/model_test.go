@@ -3,6 +3,7 @@ package menubar_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charlesrobsampson/shh/internal/menubar"
 	"github.com/charlesrobsampson/shh/internal/session"
@@ -161,5 +162,29 @@ func TestARunningRoutineShowsItsStepInTheTitleAndItsOwnMenuItems(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("while waiting the next item should say it starts the step: %+v", w.Items)
+	}
+}
+
+func TestTheLastRoutineIsInTheMenuOnlyWhenItAsksForItAndOnlyForAWhile(t *testing.T) {
+	end := time.Date(2026, 11, 10, 15, 0, 0, 0, time.UTC)
+	last := &session.RoutineSummary{Name: "pomo", Reason: "finished", Steps: 4, ElapsedSecs: 3600, Held: 3, Let: 1, Ended: end, Where: []string{"menu"}}
+	view := func(l *session.RoutineSummary, after time.Duration) menubar.View {
+		return menubar.Build(session.StatusView{Now: end.Add(after), LastRoutine: l}, "shh")
+	}
+	v := view(last, time.Minute)
+	if len(v.Items) < 2 || v.Items[0].Title != "Last routine: pomo finished: 4 steps in 1h. Held back 3 notifications, let through 1." {
+		t.Errorf("items = %+v", v.Items)
+	}
+	if got := view(last, 2*time.Hour); strings.Contains(ids(got), "Last routine") {
+		t.Errorf("an old summary should have gone from the menu: %s", ids(got))
+	}
+	banner := *last
+	banner.Where = []string{"banner", "ui"}
+	if got := view(&banner, time.Minute); strings.Contains(ids(got), "Last routine") {
+		t.Errorf("a routine that did not ask for the menu stays out of it: %s", ids(got))
+	}
+	running := menubar.Build(session.StatusView{Now: end, LastRoutine: last, Routine: &session.RoutineView{Name: "x", Step: "s"}}, "shh")
+	if strings.Contains(ids(running), "Last routine") {
+		t.Error("while a routine runs the old summary is not shown")
 	}
 }

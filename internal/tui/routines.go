@@ -161,6 +161,9 @@ func (m *Model) routinesView() string {
 		lines = append(lines, "  "+bold.Render("shh is not running")+dim.Render(" · Enter starts it along with the routine"))
 	case m.status.Routine == nil:
 		lines = append(lines, "  "+bold.Render("No routine is running"))
+		if l := m.status.LastRoutine; l != nil && l.Shows("ui") {
+			lines = append(lines, "  "+dim.Render("last: "+oneLine(l.Line())))
+		}
 	default:
 		r := m.status.Routine
 		lines = append(lines, "  "+bold.Render("Running ")+routineLine(*r))
