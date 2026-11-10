@@ -133,6 +133,8 @@ type Model struct {
 	// saved is the routines last read from the file, and savedErr why they could not be.
 	saved    []routine.Routine
 	savedErr string
+	// trigForm is the trigger being changed on top of the editor; nil when none is.
+	trigForm *triggerForm
 	// editor is the routine being made or changed on the Routines tab; nil when none is.
 	editor *routineEditor
 	// afterRoutine is what to do once the user agrees to end the running routine, which was in the way of what they asked for.
@@ -294,6 +296,10 @@ func (m *Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.showHelp {
 		return m.helpKey(msg)
+	}
+	if m.trigForm != nil {
+		m.triggerFormKey(msg.String())
+		return m, m.takeBlink()
 	}
 	if m.editor != nil {
 		m.editorKey(msg.String())
@@ -1333,7 +1339,9 @@ func (m *Model) messageLine() string {
 		if items := m.focusItems(); m.tab == TabFocus && m.focusCursor < len(items) {
 			right = commandText(items[m.focusCursor].cmd) // what the selected row is, as a command, so the menu teaches the command line
 		}
-		if m.editor != nil {
+		if m.trigForm != nil {
+			right = "" // the form shows its trigger as words itself
+		} else if m.editor != nil {
 			right = commandText(addCommand(m.editor.draft, m.editor.original != ""))
 		} else if m.tab == TabRoutines && m.routineCursor < len(m.saved) {
 			right = commandText("shh routine run " + m.saved[m.routineCursor].Name)
@@ -1364,8 +1372,11 @@ func (m *Model) keyHints() string {
 	case TabFocus:
 		return "j/k select · Enter run it · or its key: s b f p + - x X · Tab switch"
 	case TabRoutines:
+		if m.trigForm != nil {
+			return triggerFormHint(m.trigForm)
+		}
 		if m.editor != nil {
-			return "j/k move · Enter change · a add a step · d delete · J/K reorder · s save · Esc cancel"
+			return "j/k move · Enter change · a add · d delete · J/K reorder steps · s save · Esc cancel"
 		}
 		return "j/k select · Enter start · n next · b back · x stop · a new · e edit · c copy · d delete"
 	case TabTrain:

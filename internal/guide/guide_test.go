@@ -165,7 +165,7 @@ func TestTheGuideDocumentsTheRoutineFeatures(t *testing.T) {
 		"cycle", "shh routine add", "-t", "--replace", "shh routine remove", "shh routine next", "shh routine back", "shh routine unqueue",
 		"--end-routine", "--continue-routine", "--after-routine", "interrupt", "queue", "Start next", "Skip",
 		"shh guide", "shh routine list", "shh routine example",
-		"triggers", "except", "--reminder", "--ask", "--when-busy", "--grace", "--until-alert", "--disabled", "shh routine skip", "shh daemon", "at login", "shh worker start", "shh worker stop", "shh worker restart", "shh worker status", "weekdays",
+		"triggers", "trigger form", "Switched on", "Skip the selected routine", "except", "--reminder", "--ask", "--when-busy", "--grace", "--until-alert", "--disabled", "shh routine skip", "shh daemon", "at login", "shh worker start", "shh worker stop", "shh worker restart", "shh worker status", "weekdays",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the guide never mentions %q", want)

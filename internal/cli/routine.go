@@ -90,22 +90,8 @@ func describeRoutine(r routine.Routine, all []routine.Routine, now time.Time) st
 	return b.String()
 }
 
-// startWhen says when a start is, in words that need no calendar: "today 09:00", "tomorrow 09:00", "Wed 09:00" within the week, and
-// with the date after that.
-func startWhen(start, now time.Time) string {
-	start, now = start.In(now.Location()), now.In(now.Location())
-	days := int(time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, now.Location()).Sub(time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())).Hours()/24 + 0.5)
-	clock := start.Format("15:04")
-	switch {
-	case days <= 0:
-		return "today " + clock
-	case days == 1:
-		return "tomorrow " + clock
-	case days < 7:
-		return start.Format("Mon") + " " + clock
-	}
-	return start.Format("Mon 2 Jan") + " " + clock
-}
+// startWhen says when a start is, in words that need no calendar.
+func startWhen(start, now time.Time) string { return routine.StartWhen(start, now) }
 
 func (e *Env) now() time.Time {
 	if e.Now != nil {

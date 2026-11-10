@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"github.com/charlesrobsampson/shh/internal/routine"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -18,6 +19,8 @@ type RoutineControl interface {
 	RoutineBack() (session.RoutineInfo, error)
 	RoutineStop() (session.RoutineInfo, error)
 	RoutineUnqueue() (session.RoutineInfo, error)
+	RoutineSkip(name string) (session.RoutineInfo, error)
+	RoutineUnskip(name string) (session.RoutineInfo, error)
 }
 
 // listless says whether the tab shows no list of notifications, so the notification keys have nothing to act on.
@@ -36,6 +39,47 @@ func (m *Model) loadSaved() {
 	}
 	m.saved = saved
 	m.routineCursor = max(0, min(m.routineCursor, len(saved)-1))
+}
+
+// upcomingFor is the worker's word on a routine's next scheduled start, if it has given one.
+func (m *Model) upcomingFor(name string) (session.UpcomingStart, bool) {
+	if !m.haveStatus {
+		return session.UpcomingStart{}, false
+	}
+	for _, u := range m.status.Upcoming {
+		if strings.EqualFold(u.Routine, name) {
+			return u, true
+		}
+	}
+	return session.UpcomingStart{}, false
+}
+
+// triggerLine is a routine's triggers and when it starts next, for the list: "⏰ weekdays at 09:00 · fri at 10:00 --ask · next Mon 09:00".
+// The worker's word is used when it has one (it knows what was skipped), and the file's otherwise.
+func (m *Model) triggerLine(r routine.Routine) string {
+	var parts []string
+	for _, t := range r.Triggers {
+		parts = append(parts, t.Command())
+	}
+	// When it starts next comes first, so a narrow screen cuts the triggers and not that.
+	now := m.cfg.Now()
+	var next string
+	switch u, ok := m.upcomingFor(r.Name); {
+	case ok && u.Skipped:
+		next = "next " + routine.StartWhen(u.Start, now) + " SKIPPED"
+		if u.Then != nil {
+			next += ", then " + routine.StartWhen(*u.Then, now)
+		}
+	case ok:
+		next = "next " + routine.StartWhen(u.Start, now)
+	default:
+		if start, _, found := r.NextStart(now); found {
+			next = "next " + routine.StartWhen(start, now)
+		} else {
+			next = "all switched off"
+		}
+	}
+	return "⏰ " + next + " · " + strings.Join(parts, " · ")
 }
 
 // routineKey handles the keys that mean something only on the Routines tab, and says whether the key was one.
@@ -62,6 +106,24 @@ func (m *Model) routineKey(key string) bool {
 		m.copyRoutine()
 	case "d":
 		m.confirmDelete()
+	case "S":
+		if m.routineCursor >= len(m.saved) {
+			return true
+		}
+		r := m.saved[m.routineCursor]
+		if _, _, ok := r.NextStart(m.cfg.Now()); !ok {
+			m.notice = r.Name + " has no trigger switched on, so there is no start to skip"
+			return true
+		}
+		if u, ok := m.upcomingFor(r.Name); ok && u.Skipped {
+			m.routineDo("shh routine skip --undo "+r.Name, func(c RoutineControl) (session.RoutineInfo, error) { return c.RoutineUnskip(r.Name) },
+				func(session.RoutineInfo) string { return "the next start of " + r.Name + " is back on" }, true)
+			return true
+		}
+		m.routineDo("shh routine skip "+r.Name, func(c RoutineControl) (session.RoutineInfo, error) { return c.RoutineSkip(r.Name) },
+			func(session.RoutineInfo) string {
+				return "skipped the next start of " + r.Name + " (S again takes it back)"
+			}, true)
 	case "u":
 		if m.status.Routine == nil || m.status.Routine.Queued == "" {
 			m.notice = "nothing is queued for when the routine ends"
@@ -190,6 +252,9 @@ func routineLineOnly(r session.RoutineView) string {
 
 // routinesView is the Routines tab: the run in progress, if any, and the saved routines to start one from.
 func (m *Model) routinesView() string {
+	if m.trigForm != nil {
+		return m.triggerFormView()
+	}
 	if m.editor != nil {
 		return m.editorView()
 	}
@@ -218,12 +283,17 @@ func (m *Model) routinesView() string {
 	case len(m.saved) == 0:
 		lines = append(lines, "  "+dim.Render("none yet · shh routine example prints a routines.json to start from"))
 	}
-	room := max(1, (m.bodyHeight()-len(lines))/2)
-	first := 0
-	if m.routineCursor >= room {
-		first = m.routineCursor - room + 1
+	// A routine takes two lines, or three when it has triggers. Show what fits around the selected one.
+	height := func(r routine.Routine) int { return 2 + min(len(r.Triggers), 1) }
+	room := max(1, m.bodyHeight()-len(lines))
+	first := max(0, min(m.routineCursor, len(m.saved)-1))
+	if len(m.saved) > 0 {
+		for used := height(m.saved[first]); first > 0 && used+height(m.saved[first-1]) <= room; first-- {
+			used += height(m.saved[first-1])
+		}
 	}
-	for i := first; i < min(len(m.saved), first+room); i++ {
+	for i, used := first, 0; i < len(m.saved) && (used == 0 || used+height(m.saved[i]) <= room); i++ {
+		used += height(m.saved[i])
 		r := m.saved[i]
 		selected := i == m.routineCursor
 		cursor := "  "
@@ -238,6 +308,9 @@ func (m *Model) routinesView() string {
 			row += rowStyle(lipgloss.NewStyle(), strings.Repeat(" ", gap))
 		}
 		lines = append(lines, row, "      "+dim.Render(oneLine(r.Outline()))+total)
+		if len(r.Triggers) > 0 {
+			lines = append(lines, "      "+dim.Render(m.triggerLine(r)))
+		}
 	}
 	return pad(lines, m.bodyHeight(), m.width)
 }

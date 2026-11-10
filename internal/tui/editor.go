@@ -25,6 +25,9 @@ const (
 	rowAddStep   // "+ add a step"
 	rowFinish    // a step of the finish; index says which
 	rowAddFinish // "+ add a finish step"
+	rowTrigger   // a trigger of the routine; index says which
+	rowAddTrigger
+	rowTriggerField // a value of the trigger form, typed in a box; index says which row of it
 )
 
 type editorRow struct {
@@ -75,7 +78,11 @@ func (e *routineEditor) rows() []editorRow {
 	for i := range e.draft.Finish {
 		rows = append(rows, editorRow{rowFinish, i})
 	}
-	return append(rows, editorRow{rowAddFinish, 0})
+	rows = append(rows, editorRow{rowAddFinish, 0})
+	for i := range e.draft.Triggers {
+		rows = append(rows, editorRow{rowTrigger, i})
+	}
+	return append(rows, editorRow{rowAddTrigger, 0})
 }
 
 func (e *routineEditor) current() editorRow {
@@ -198,6 +205,10 @@ func (m *Model) editRow(row editorRow, _ bool) {
 		m.openField("finish step", e.draft.Finish[row.index].Command(), stepHint, row)
 	case rowAddStep, rowAddFinish:
 		m.openField("new step", "", stepHint, row)
+	case rowTrigger:
+		m.openTriggerForm(row.index)
+	case rowAddTrigger:
+		m.openTriggerForm(-1)
 	}
 }
 
@@ -232,6 +243,9 @@ func (m *Model) submitField(p *prompt) {
 			}
 		}
 		e.draft.Repeat = n
+	case rowTriggerField:
+		m.submitTriggerField(p)
+		return // the form is the one that has changed, not the routine
 	case rowStep, rowFinish, rowAddStep, rowAddFinish:
 		step, err := routine.ParseCommand(text)
 		if err != nil {
@@ -270,6 +284,9 @@ func shortStepError(err error) string {
 // addStepAfter (a) inserts a step after the one under the cursor, as a blank to be typed in.
 func (m *Model) addStepAfter(row editorRow) {
 	switch row.kind {
+	case rowTrigger, rowAddTrigger:
+		m.openTriggerForm(-1)
+		return
 	case rowStep, rowAddStep:
 		m.openField("new step", "", stepHint, editorRow{rowAddStep, 0})
 	case rowFinish, rowAddFinish:
@@ -291,8 +308,10 @@ func (m *Model) deleteRow(row editorRow) {
 		e.draft.Steps = slices.Delete(e.draft.Steps, row.index, row.index+1)
 	case rowFinish:
 		e.draft.Finish = slices.Delete(e.draft.Finish, row.index, row.index+1)
+	case rowTrigger:
+		e.draft.Triggers = slices.Delete(e.draft.Triggers, row.index, row.index+1)
 	default:
-		m.notice = "d deletes a step: select one first"
+		m.notice = "d deletes a step or a trigger: select one first"
 		return
 	}
 	e.dirty = true
@@ -406,6 +425,9 @@ func addCommand(r routine.Routine, replace bool) string {
 	for _, s := range r.Finish {
 		parts = append(parts, "-f", shellWord(s.Command()))
 	}
+	for _, t := range r.Triggers {
+		parts = append(parts, "-t", shellWord(t.Command()))
+	}
 	if r.Waiting != "" && r.Waiting != routine.WaitStay {
 		parts = append(parts, "-w", string(r.Waiting))
 	}
@@ -453,6 +475,8 @@ func (m *Model) editorView() string {
 			add("  " + bold.Underline(true).Render("Steps") + dim.Render("  (run in order, repeated)"))
 		case row.kind == rowFinish && row.index == 0, row.kind == rowAddFinish && len(e.draft.Finish) == 0:
 			add("  " + bold.Underline(true).Render("Finish") + dim.Render("  (run once, after the last round)"))
+		case row.kind == rowTrigger && row.index == 0, row.kind == rowAddTrigger && len(e.draft.Triggers) == 0:
+			add("  " + bold.Underline(true).Render("Triggers") + dim.Render("  (ways it starts by itself)"))
 		}
 		if i == cursor {
 			at = len(body)
@@ -499,6 +523,10 @@ func (m *Model) editorRow(e *routineEditor, row editorRow, selected bool) string
 		label, value = "+", "add a step"
 	case rowAddFinish:
 		label, value = "+", "add a finish step"
+	case rowTrigger:
+		label, value = fmt.Sprintf("%d", row.index+1), e.draft.Triggers[row.index].Command()
+	case rowAddTrigger:
+		label, value = "+", "add a trigger"
 	}
 	cell := func(style lipgloss.Style, text string) string { return style.Reverse(selected).Render(text) }
 	cursor := " "
@@ -506,7 +534,7 @@ func (m *Model) editorRow(e *routineEditor, row editorRow, selected bool) string
 		cursor = ">"
 	}
 	valueStyle := lipgloss.NewStyle()
-	if row.kind == rowAddStep || row.kind == rowAddFinish {
+	if row.kind == rowAddStep || row.kind == rowAddFinish || row.kind == rowAddTrigger {
 		valueStyle = dim
 	}
 	indent := "  "

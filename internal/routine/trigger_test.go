@@ -251,3 +251,35 @@ func TestTriggersSurviveSavingAndReading(t *testing.T) {
 		t.Errorf("file:\n%s", text)
 	}
 }
+
+func TestStartWhenSaysTodayTomorrowTheWeekdayOrTheDate(t *testing.T) {
+	now := time.Date(2026, 11, 9, 7, 0, 0, 0, time.UTC) // monday
+	at := func(day, hh, mm int) time.Time { return time.Date(2026, 11, day, hh, mm, 0, 0, time.UTC) }
+	for _, tt := range []struct {
+		start time.Time
+		want  string
+	}{
+		{at(9, 9, 0), "today 09:00"}, {at(10, 9, 5), "tomorrow 09:05"}, {at(11, 17, 30), "Wed 17:30"}, {at(15, 8, 0), "Sun 08:00"}, {at(16, 9, 0), "Mon 16 Nov 09:00"},
+	} {
+		if got := routine.StartWhen(tt.start, now); got != tt.want {
+			t.Errorf("StartWhen(%v) = %q, want %q", tt.start, got, tt.want)
+		}
+	}
+	late := time.Date(2026, 11, 9, 23, 30, 0, 0, time.UTC)
+	if got := routine.StartWhen(time.Date(2026, 11, 10, 0, 30, 0, 0, time.UTC), late); got != "tomorrow 00:30" {
+		t.Errorf("an hour later but the next calendar day is tomorrow: %q", got)
+	}
+}
+
+func TestParseGraceTakesZeroOrALengthUpToSixHours(t *testing.T) {
+	for text, want := range map[string]time.Duration{"0": 0, "10m": 10 * time.Minute, "6h": 6 * time.Hour, " 5m ": 5 * time.Minute} {
+		if got, err := routine.ParseGrace(text); err != nil || got != want {
+			t.Errorf("%q: %v %v", text, got, err)
+		}
+	}
+	for _, text := range []string{"7h", "soon", ""} {
+		if _, err := routine.ParseGrace(text); err == nil {
+			t.Errorf("%q should be refused", text)
+		}
+	}
+}

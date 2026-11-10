@@ -196,3 +196,22 @@ func TestAQueuedSessionIsListedUnderTheRoutine(t *testing.T) {
 		t.Errorf("menu = %s", ids(v))
 	}
 }
+
+func TestTheMenuSaysWhenARoutineStartsNextExceptWhileOneRuns(t *testing.T) {
+	now := time.Date(2026, 11, 9, 7, 0, 0, 0, time.UTC)
+	up := []session.UpcomingStart{{Routine: "morning", Start: now.Add(2 * time.Hour)}, {Routine: "late", Start: now.Add(10 * time.Hour)}}
+	v := menubar.Build(session.StatusView{Now: now, Upcoming: up}, "shh")
+	if v.Items[0].Title != "Next: morning today 09:00" {
+		t.Errorf("items = %+v", v.Items)
+	}
+	up[0].Skipped = true
+	if v = menubar.Build(session.StatusView{Now: now, Upcoming: up}, "shh"); v.Items[0].Title != "Next: morning today 09:00 (skipped)" {
+		t.Errorf("items = %+v", v.Items)
+	}
+	running := menubar.Build(session.StatusView{Now: now, Upcoming: up, Routine: &session.RoutineView{Name: "x", Step: "s"}}, "shh")
+	for _, it := range running.Items {
+		if strings.HasPrefix(it.Title, "Next:") {
+			t.Error("while a routine runs the menu is about it, not the next one")
+		}
+	}
+}

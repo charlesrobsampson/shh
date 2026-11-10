@@ -36,6 +36,12 @@ func (f *fakeRoutines) RoutineNext() (session.RoutineInfo, error)    { return f.
 func (f *fakeRoutines) RoutineBack() (session.RoutineInfo, error)    { return f.answer("back") }
 func (f *fakeRoutines) RoutineStop() (session.RoutineInfo, error)    { return f.answer("stop") }
 func (f *fakeRoutines) RoutineUnqueue() (session.RoutineInfo, error) { return f.answer("unqueue") }
+func (f *fakeRoutines) RoutineSkip(name string) (session.RoutineInfo, error) {
+	return f.answer("skip " + name)
+}
+func (f *fakeRoutines) RoutineUnskip(name string) (session.RoutineInfo, error) {
+	return f.answer("unskip " + name)
+}
 
 const tuiRoutines = `{"routines": {
   "pomo": {"description": "short and sweet", "repeat": 2, "steps": ["75% 25m work --alert banner", "off 5m break"], "finish": ["off 15m long break"]},
@@ -271,15 +277,15 @@ func TestTheDollarKeyJumpsToRoutinesAndTheTabBarListsIt(t *testing.T) {
 // ---- the editor ----
 
 // editorRig is a routines rig whose save and remove act on a file text, as the real ones act on the file.
-func editorRig(t *testing.T) (*rig, *string, *[]string) {
+func editorRig(t *testing.T) (*rig, *string, *[]string) { return editorRigText(t, tuiRoutines) }
+
+func editorRigText(t *testing.T, text string) (*rig, *string, *[]string) {
 	t.Helper()
 	r, _ := routinesRig(t)
-	text := tuiRoutines
 	var log []string
-	r.m.cfg.Saved = func() ([]routine.Routine, error) { return routine.Parse("routines.json", []byte(text)) }
 	dir := t.TempDir()
 	path := dir + "/routines.json"
-	_ = os.WriteFile(path, []byte(tuiRoutines), 0o600)
+	_ = os.WriteFile(path, []byte(text), 0o600)
 	r.m.cfg.Saved = func() ([]routine.Routine, error) { return routine.Load(path) }
 	r.m.cfg.SaveRoutine = func(rt routine.Routine, replace bool) error {
 		log = append(log, fmt.Sprintf("save %s replace=%v", rt.Name, replace))

@@ -319,6 +319,18 @@ func parseGrace(v string) (time.Duration, error) {
 	return decide.ParseDuration(v)
 }
 
+// ParseGrace reads a grace period for a trigger: 0, or a length such as 10m, up to six hours.
+func ParseGrace(text string) (time.Duration, error) {
+	g, err := parseGrace(strings.TrimSpace(text))
+	if err != nil {
+		return 0, err
+	}
+	if g < 0 || g > maxGrace {
+		return 0, fmt.Errorf("grace %v is not between 0 and %v", g, maxGrace)
+	}
+	return g, nil
+}
+
 // Command writes the trigger as the words that ParseTrigger reads back.
 func (t Trigger) Command() string {
 	parts := []string{daysWord(t.Days), "at", t.At}
@@ -395,6 +407,25 @@ func (t Trigger) NextStart(after time.Time) (time.Time, bool) {
 		}
 	}
 	return time.Time{}, false
+}
+
+// StartWhen says when a start is in words that need no calendar: "today 09:00", "tomorrow 09:00", "Wed 09:00" within the week, and with
+// the date after that. now's time zone is the one used.
+func StartWhen(start, now time.Time) string {
+	loc := now.Location()
+	start = start.In(loc)
+	midnight := func(t time.Time) time.Time { return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, loc) }
+	days := int(midnight(start).Sub(midnight(now)).Hours()/24 + 0.5)
+	clock := start.Format("15:04")
+	switch {
+	case days <= 0:
+		return "today " + clock
+	case days == 1:
+		return "tomorrow " + clock
+	case days < 7:
+		return start.Format("Mon") + " " + clock
+	}
+	return start.Format("Mon 2 Jan") + " " + clock
 }
 
 // NextStart is the first start of any enabled trigger after the given moment, and which trigger it is.
