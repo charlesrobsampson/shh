@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charlesrobsampson/shh/internal/decide"
 	"github.com/charlesrobsampson/shh/internal/routine"
@@ -44,20 +45,55 @@ func (c *routineListCmd) Run(env *Env) error {
 		if i > 0 {
 			fmt.Fprintln(env.Stdout)
 		}
-		fmt.Fprint(env.Stdout, describeRoutine(r, routines))
+		fmt.Fprint(env.Stdout, describeRoutine(r, routines, env.now()))
 	}
 	return nil
 }
 
 // describeRoutine writes a routine for people: its name and description, then its plan on one line.
-func describeRoutine(r routine.Routine, all []routine.Routine) string {
+func describeRoutine(r routine.Routine, all []routine.Routine, now time.Time) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s", r.Name)
 	if r.Description != "" {
 		fmt.Fprintf(&b, "  %s", r.Description)
 	}
 	fmt.Fprintf(&b, "\n  %s  (%s)\n", stepsLine(r), r.Length(all))
+	if len(r.Triggers) > 0 {
+		fmt.Fprintln(&b, "  starts by itself:")
+		for _, t := range r.Triggers {
+			fmt.Fprintf(&b, "    %s\n", t.Command())
+		}
+		if start, _, ok := r.NextStart(now); ok {
+			fmt.Fprintf(&b, "  next start: %s\n", startWhen(start, now))
+		} else {
+			fmt.Fprintln(&b, "  next start: none (every trigger is disabled)")
+		}
+	}
 	return b.String()
+}
+
+// startWhen says when a start is, in words that need no calendar: "today 09:00", "tomorrow 09:00", "Wed 09:00" within the week, and
+// with the date after that.
+func startWhen(start, now time.Time) string {
+	start, now = start.In(now.Location()), now.In(now.Location())
+	days := int(time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, now.Location()).Sub(time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())).Hours()/24 + 0.5)
+	clock := start.Format("15:04")
+	switch {
+	case days <= 0:
+		return "today " + clock
+	case days == 1:
+		return "tomorrow " + clock
+	case days < 7:
+		return start.Format("Mon") + " " + clock
+	}
+	return start.Format("Mon 2 Jan") + " " + clock
+}
+
+func (e *Env) now() time.Time {
+	if e.Now != nil {
+		return e.Now()
+	}
+	return time.Now()
 }
 
 func stepsLine(r routine.Routine) string { return r.Outline() }
@@ -83,6 +119,7 @@ type routineAddCmd struct {
 	Steps       []string `arg:"" optional:"" help:"Each step as a shh command in quotes: \"75% 25m work --alert banner\", \"off 5m break\", \"baseline 30%\". Add --ask to a step to wait for approval before the next."`
 	Description string   `short:"d" help:"A line saying what the routine is for."`
 	Repeat      string   `short:"r" default:"1" help:"How many times the steps run: a number, or forever to go round until stopped."`
+	Trigger     []string `short:"t" sep:"none" help:"A way to start it by itself, in words: \"weekdays except fri at 09:00 until 12:00 --reminder 5m\" (repeat the flag for more than one)."`
 	Finish      []string `short:"f" sep:"none" help:"A step to run once after the last round (repeat the flag for more than one)."`
 	Waiting     string   `short:"w" default:"stay" enum:"stay,next,baseline" help:"What focus does while the routine waits for you: stay (keep the level), next (the next step's level, timer held) or baseline."`
 	Summary     []string `default:"banner,ui" enum:"banner,menu,ui" help:"Where to show the summary of a finished run."`
@@ -109,6 +146,13 @@ func (c *routineAddCmd) Run(env *Env) error {
 		}
 		r.Steps = append(r.Steps, step)
 	}
+	for i, text := range c.Trigger {
+		trigger, err := routine.ParseTrigger(text)
+		if err != nil {
+			return fmt.Errorf("--trigger %d (%q): %w", i+1, text, err)
+		}
+		r.Triggers = append(r.Triggers, trigger)
+	}
 	for i, text := range c.Finish {
 		step, err := routine.ParseCommand(text)
 		if err != nil {
@@ -131,7 +175,7 @@ func (c *routineAddCmd) Run(env *Env) error {
 	saved, _ := routine.Check(r)
 	fmt.Fprintf(env.Stdout, "Saved %s in %s\n", saved.Name, env.RoutinesPath)
 	all, _ := routine.Load(env.RoutinesPath)
-	fmt.Fprint(env.Stdout, describeRoutine(saved, all))
+	fmt.Fprint(env.Stdout, describeRoutine(saved, all, env.now()))
 	fmt.Fprintf(env.Stdout, "Start it with: shh routine run %s\n", saved.Name)
 	return nil
 }

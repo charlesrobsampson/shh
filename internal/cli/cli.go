@@ -31,6 +31,8 @@ type Env struct {
 	IsTerminal bool
 	// Stdin is where questions are answered from; nil means they cannot be asked.
 	Stdin io.Reader
+	// Now is the clock, for showing when a routine starts next; time.Now when nil.
+	Now func() time.Time
 	// RoutinesPath is the saved routines file, which the list and example commands read without a worker.
 	RoutinesPath string
 	// TUI opens the terminal UI. Nil when it is not available.

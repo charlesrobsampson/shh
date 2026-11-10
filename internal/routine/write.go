@@ -271,6 +271,7 @@ type outRoutine struct {
 	Finish      []string `json:"finish,omitempty"`
 	Waiting     string   `json:"waiting,omitempty"`
 	Summary     []string `json:"summary,omitempty"`
+	Triggers    []string `json:"triggers,omitempty"`
 }
 
 var defaultSummary = []Where{WhereBanner, WhereUI}
@@ -301,6 +302,9 @@ func marshalRoutine(r Routine, indent string) ([]byte, error) {
 		for _, w := range r.Summary {
 			out.Summary = append(out.Summary, string(w))
 		}
+	}
+	for _, t := range r.Triggers {
+		out.Triggers = append(out.Triggers, t.Command())
 	}
 	// An encoder, not json.Marshal: that one writes & < > as \u0026 and the like, which would make a file full of noise.
 	encode := func(v any, prefix string) ([]byte, error) {

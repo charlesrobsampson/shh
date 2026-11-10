@@ -89,6 +89,8 @@ type Routine struct {
 	Finish  []Step
 	Waiting Waiting
 	Summary []Where
+	// Triggers are the ways it starts by itself; none for a routine that is only ever started by hand.
+	Triggers []Trigger
 }
 
 // Forever as a routine's Repeat means going round until stopped.
@@ -211,13 +213,52 @@ func (f *fileRepeat) UnmarshalJSON(data []byte) error {
 	return json.Unmarshal(data, &f.n)
 }
 
+// fileDays is days or except as written: one word ("weekdays", "mon-fri") or a list of them.
+type fileDays []string
+
+func (f *fileDays) UnmarshalJSON(data []byte) error {
+	var one string
+	if json.Unmarshal(data, &one) == nil {
+		*f = fileDays{one}
+		return nil
+	}
+	return json.Unmarshal(data, (*[]string)(f))
+}
+
+// fileTrigger is a trigger as written: an object, or a string of words such as "weekdays at 09:00 until 12:00".
+type fileTrigger struct {
+	Days       fileDays `json:"days"`
+	Except     fileDays `json:"except"`
+	At         *string  `json:"at"`
+	Until      *string  `json:"until"`
+	UntilAlert *string  `json:"until_alert"`
+	Reminder   *string  `json:"reminder"`
+	Ask        *bool    `json:"ask"`
+	WhenBusy   *string  `json:"when_busy"`
+	Grace      *string  `json:"grace"`
+	Enabled    *bool    `json:"enabled"`
+
+	command    string
+	fromString bool
+}
+
+func (f *fileTrigger) UnmarshalJSON(data []byte) error {
+	if trimmed := bytes.TrimSpace(data); len(trimmed) > 0 && trimmed[0] == '"' {
+		f.fromString = true
+		return json.Unmarshal(trimmed, &f.command)
+	}
+	type plain fileTrigger
+	return json.Unmarshal(data, (*plain)(f))
+}
+
 type fileRoutine struct {
-	Description *string     `json:"description"`
-	Repeat      *fileRepeat `json:"repeat"`
-	Steps       []fileStep  `json:"steps"`
-	Finish      []fileStep  `json:"finish"`
-	Waiting     *string     `json:"waiting"`
-	Summary     []string    `json:"summary"`
+	Description *string       `json:"description"`
+	Repeat      *fileRepeat   `json:"repeat"`
+	Steps       []fileStep    `json:"steps"`
+	Finish      []fileStep    `json:"finish"`
+	Waiting     *string       `json:"waiting"`
+	Summary     []string      `json:"summary"`
+	Triggers    []fileTrigger `json:"triggers"`
 }
 
 // file is routines.json: an object of routines keyed by name, so a name can only be there once (the decoder rejects a repeated key) and
@@ -328,6 +369,13 @@ func build(fr fileRoutine, name string) (Routine, error) {
 	}
 	if r.Repeat == Forever && len(r.Finish) > 0 {
 		return r, bad("finish", "a routine that repeats forever never gets to its finish steps: take them out, or give repeat a number")
+	}
+	for i, ft := range fr.Triggers {
+		t, err := buildTrigger(ft)
+		if err != nil {
+			return r, bad(fmt.Sprintf("triggers[%d]", i), "%v", err)
+		}
+		r.Triggers = append(r.Triggers, t)
 	}
 	if fr.Waiting != nil {
 		w := Waiting(*fr.Waiting)
@@ -476,7 +524,15 @@ const Example = `// Routines: named sequences of focus sessions, filed under the
     },
     "all day": {
       "repeat": "forever",                    // go round and round until stopped (so no finish steps)
-      "steps": ["75% 25m work", "off 5m break"]
+      "steps": ["75% 25m work", "off 5m break"],
+      // Triggers start the routine by themselves, any number of ways. Days (daily if left out; names, ranges like mon-fri, weekdays,
+      // weekends), except, at, and until: a hard stop that cuts whatever is running then. Flags: --reminder 5m (a banner before),
+      // --ask (a Start / Skip banner instead of starting), --when-busy ask|skip|start, --grace 15m (how late a start can still be made),
+      // --until-alert banner, --disabled. Or write one as an object: {"days": "weekdays", "at": "09:00", "until": "12:00"}.
+      "triggers": [
+        "weekdays except fri at 09:00 until 12:00 --reminder 5m",
+        "fri at 10:00 until 11:30 --ask"
+      ]
     }
   }
 }

@@ -549,3 +549,53 @@ func TestListSaysHowLongARoutineTakesIncludingCallsAndSetTimes(t *testing.T) {
 		}
 	}
 }
+
+func TestRoutineAddTakesTriggersAndListShowsWhenItStartsNext(t *testing.T) {
+	r := newRig(t, false)
+	r.env.Now = func() time.Time { return time.Date(2026, 11, 9, 7, 0, 0, 0, time.Local) } // a monday morning
+	out := r.mustRun("routine", "add", "morning", "75% 25m work", "-t", "weekdays except fri at 09:00 until 12:00 --reminder 5m", "-t", "fri at 10:00 --ask")
+	for _, want := range []string{"starts by itself:", "mon-thu at 09:00 until 12:00 --reminder 5m", "fri at 10:00 --ask", "next start: today 09:00"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("add output is missing %q:\n%s", want, out)
+		}
+	}
+	rs, err := routine.Load(r.routines)
+	if err != nil || len(rs) != 1 || len(rs[0].Triggers) != 2 {
+		t.Fatalf("%v %v", rs, err)
+	}
+	r.env.Now = func() time.Time { return time.Date(2026, 11, 9, 12, 30, 0, 0, time.Local) }
+	if list := r.mustRun("routine", "list"); !strings.Contains(list, "next start: tomorrow 09:00") {
+		t.Errorf("list:\n%s", list)
+	}
+	r.env.Now = func() time.Time { return time.Date(2026, 11, 12, 12, 30, 0, 0, time.Local) } // thursday afternoon
+	if list := r.mustRun("routine", "list"); !strings.Contains(list, "next start: tomorrow 10:00") {
+		t.Errorf("list:\n%s", list)
+	}
+	r.env.Now = func() time.Time { return time.Date(2026, 11, 13, 12, 30, 0, 0, time.Local) } // friday afternoon
+	if list := r.mustRun("routine", "list"); !strings.Contains(list, "next start: Mon 09:00") {
+		t.Errorf("list:\n%s", list)
+	}
+	r.env.Now = func() time.Time { return time.Date(2026, 11, 1, 12, 30, 0, 0, time.Local) } // sunday: monday is tomorrow
+	if list := r.mustRun("routine", "list"); !strings.Contains(list, "next start: tomorrow 09:00") {
+		t.Errorf("list:\n%s", list)
+	}
+}
+
+func TestListSaysWhenEveryTriggerIsDisabledAndStaysQuietForRoutinesWithNone(t *testing.T) {
+	r := newRig(t, false)
+	r.saveRoutines(`{"routines": {"off": {"steps": ["75% 25m x"], "triggers": ["mon at 09:00 --disabled"]}, "plain": {"steps": ["75% 25m x"]}}}`)
+	list := r.mustRun("routine", "list")
+	if !strings.Contains(list, "next start: none (every trigger is disabled)") || strings.Count(list, "next start") != 1 || strings.Count(list, "starts by itself") != 1 {
+		t.Errorf("list:\n%s", list)
+	}
+}
+
+func TestRoutineAddSaysWhichTriggerIsWrong(t *testing.T) {
+	r := newRig(t, false)
+	if code := r.run("routine", "add", "x", "75% 25m a", "-t", "weekdays at 09:00", "-t", "weekdays"); code == 0 || !strings.Contains(r.err.String(), `--trigger 2 ("weekdays")`) || !strings.Contains(r.err.String(), "needs a start time") {
+		t.Errorf("code %d stderr %q", code, r.err.String())
+	}
+	if _, err := os.Stat(r.routines); err == nil {
+		t.Error("nothing should be written")
+	}
+}
