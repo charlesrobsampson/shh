@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"github.com/charmbracelet/lipgloss"
 	"os"
 	"strings"
 	"testing"
@@ -531,5 +532,142 @@ func TestEditingKeysAreOffWithoutSaveSupport(t *testing.T) {
 	r.press("a")
 	if r.m.editor != nil || !strings.Contains(r.m.notice, "not available") {
 		t.Errorf("editor %v notice %q", r.m.editor, r.m.notice)
+	}
+}
+
+// ---- editing text in a prompt ----
+
+func openStepBox(t *testing.T) *rig {
+	t.Helper()
+	r, _, _ := editorRig(t)
+	r.press("e", "j", "j", "j", "j", "j", "enter") // the first step of pomo: "75% 25m work --alert banner"
+	if r.m.prompt == nil || r.m.prompt.text != "75% 25m work --alert banner" {
+		t.Fatalf("prompt = %+v", r.m.prompt)
+	}
+	return r
+}
+
+func TestArrowKeysMoveTheCursorSoATypoCanBeFixedInPlace(t *testing.T) {
+	r := openStepBox(t)
+	r.press("home", "right", "right", "delete") // "75% ..." -> "75 ..."? no: after 2 rights the cursor is after "75"
+	if got := r.m.prompt.text; got != "75 25m work --alert banner" {
+		t.Fatalf("delete removed the wrong thing: %q", got)
+	}
+	r.typeText("%")
+	if got := r.m.prompt.text; got != "75% 25m work --alert banner" {
+		t.Errorf("typing goes in at the cursor: %q", got)
+	}
+	r.press("end")
+	r.typeText(" --ask")
+	if got := r.m.prompt.text; got != "75% 25m work --alert banner --ask" {
+		t.Errorf("end goes to the end: %q", got)
+	}
+	r.press("left", "left", "left", "left", "backspace")
+	if got := r.m.prompt.text; got != "75% 25m work --alert banner -ask" {
+		// four lefts from the end sit after the first "-" of "--ask", and backspace removes it
+		t.Errorf("backspace removes the character before the cursor: %q", got)
+	}
+}
+
+func TestEditingInTheMiddleThenEnterSavesTheWholeText(t *testing.T) {
+	r := openStepBox(t)
+	r.press("home", "right", "right", "right", "right", "right", "right") // after "75% 25"
+	r.press("backspace", "backspace")
+	r.typeText("50")
+	if got := r.m.prompt.text; got != "75% 50m work --alert banner" {
+		t.Fatalf("text = %q", got)
+	}
+	r.press("enter")
+	if r.m.editor.draft.Steps[0].Length != 50*time.Minute || r.m.editor.draft.Steps[0].Alert != routine.AlertBanner {
+		t.Errorf("step = %+v", r.m.editor.draft.Steps[0])
+	}
+}
+
+func TestCursorKeysStopAtTheEdgesAndNeverLoseText(t *testing.T) {
+	r := openStepBox(t)
+	want := r.m.prompt.text
+	r.press("home", "left", "left", "backspace")
+	if r.m.prompt.text != want {
+		t.Errorf("left and backspace at the start change nothing: %q", r.m.prompt.text)
+	}
+	r.press("end", "right", "right", "delete")
+	if r.m.prompt.text != want {
+		t.Errorf("right and delete at the end change nothing: %q", r.m.prompt.text)
+	}
+}
+
+func TestControlKeysDeleteWordsAndLines(t *testing.T) {
+	r := openStepBox(t)
+	r.press("ctrl+w")
+	if got := r.m.prompt.text; got != "75% 25m work --alert " {
+		t.Errorf("ctrl+w deletes the word before the cursor: %q", got)
+	}
+	r.press("ctrl+a", "ctrl+k")
+	if r.m.prompt.text != "" {
+		t.Errorf("ctrl+k deletes to the end: %q", r.m.prompt.text)
+	}
+	r.typeText("abc def")
+	r.press("left", "left", "left", "ctrl+u")
+	if got := r.m.prompt.text; got != "def" {
+		t.Errorf("ctrl+u deletes to the start: %q", got)
+	}
+	r.press("end", "alt+left")
+	r.typeText("X")
+	if got := r.m.prompt.text; got != "Xdef" {
+		t.Errorf("alt+left jumps a word back: %q", got)
+	}
+	r.press("alt+right")
+	r.typeText("Y")
+	if got := r.m.prompt.text; got != "XdefY" {
+		t.Errorf("alt+right jumps a word forward: %q", got)
+	}
+}
+
+func TestTheBoxShowsTheCursorInTheMiddleOfTheText(t *testing.T) {
+	r := openStepBox(t)
+	r.m.cursorOn = true
+	r.press("home", "right", "right", "right")
+	bar := r.m.promptBar()
+	if !strings.Contains(bar, "75%") || !strings.Contains(bar, "25m work --alert banner") {
+		t.Errorf("the whole text should still be there: %q", bar)
+	}
+	if strings.Contains(bar, "█") {
+		t.Errorf("in the middle the cursor is the character under it, not an extra block: %q", bar)
+	}
+	r.press("end")
+	r.m.cursorOn = true
+	if !strings.Contains(r.m.promptBar(), "█") {
+		t.Error("at the end the cursor is a block")
+	}
+}
+
+func TestALongTextScrollsInsideTheBoxAndKeepsTheCursorInView(t *testing.T) {
+	r := openStepBox(t)
+	r.m.width = 50
+	r.press("ctrl+u") // from the end, this clears the line
+	r.typeText(strings.Repeat("abcdefghij ", 12) + "TAIL")
+	bar := r.m.promptBar()
+	if w := lipgloss.Width(bar); w > 50 {
+		t.Errorf("the bar is %d wide on a 50 wide screen:\n%q", w, bar)
+	}
+	if !strings.Contains(bar, "TAIL") {
+		t.Errorf("typing at the end should show the end: %q", bar)
+	}
+	r.press("home")
+	bar = r.m.promptBar()
+	if lipgloss.Width(bar) > 50 || !strings.Contains(bar, "abcdefghij") || strings.Contains(bar, "TAIL") {
+		t.Errorf("at the start it should show the start: %q", bar)
+	}
+}
+
+func TestArrowKeysAlsoWorkInTheOtherPrompts(t *testing.T) {
+	r := newRig(t)
+	r.press("f1", "s")
+	r.typeText("75% 25m writng")
+	r.press("left", "left")
+	r.typeText("i")
+	r.press("enter")
+	if got := r.lastCall(); !strings.Contains(got, `note="writing"`) {
+		t.Errorf("the start prompt should take the fixed text: %q", got)
 	}
 }

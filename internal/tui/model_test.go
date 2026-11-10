@@ -201,6 +201,26 @@ func key(k string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyRight}
 	case "backspace":
 		return tea.KeyMsg{Type: tea.KeyBackspace}
+	case "home":
+		return tea.KeyMsg{Type: tea.KeyHome}
+	case "end":
+		return tea.KeyMsg{Type: tea.KeyEnd}
+	case "delete":
+		return tea.KeyMsg{Type: tea.KeyDelete}
+	case "ctrl+a":
+		return tea.KeyMsg{Type: tea.KeyCtrlA}
+	case "ctrl+e":
+		return tea.KeyMsg{Type: tea.KeyCtrlE}
+	case "ctrl+u":
+		return tea.KeyMsg{Type: tea.KeyCtrlU}
+	case "ctrl+k":
+		return tea.KeyMsg{Type: tea.KeyCtrlK}
+	case "ctrl+w":
+		return tea.KeyMsg{Type: tea.KeyCtrlW}
+	case "alt+left":
+		return tea.KeyMsg{Type: tea.KeyLeft, Alt: true}
+	case "alt+right":
+		return tea.KeyMsg{Type: tea.KeyRight, Alt: true}
 	}
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
 }

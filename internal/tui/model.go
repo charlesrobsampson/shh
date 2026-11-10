@@ -482,6 +482,114 @@ type prompt struct {
 	// For an editor field: what is being asked, how to answer, and which row it is for.
 	label, help string
 	row         editorRow
+	// back is how many characters the cursor is from the end of the text: 0 types at the end, as a text set by the program does.
+	back int
+}
+
+// editKey handles the keys that edit the text of a prompt: typing and deleting at the cursor, and moving it. It reports whether the
+// key was one of them.
+func (p *prompt) editKey(msg tea.KeyMsg) bool {
+	r := []rune(p.text)
+	back := max(0, min(p.back, len(r)))
+	at := len(r) - back // where the cursor is, counting from the start
+	set := func(runes []rune, newBack int) {
+		p.text, p.back, p.err = string(runes), newBack, ""
+	}
+	switch msg.String() {
+	case "left", "ctrl+b":
+		p.back = min(back+1, len(r))
+	case "right", "ctrl+f":
+		p.back = max(back-1, 0)
+	case "home", "ctrl+a":
+		p.back = len(r)
+	case "end", "ctrl+e":
+		p.back = 0
+	case "alt+left", "alt+b", "ctrl+left":
+		p.back = len(r) - wordStart(r, at)
+	case "alt+right", "alt+f", "ctrl+right":
+		p.back = len(r) - wordEnd(r, at)
+	case "backspace", "ctrl+h":
+		if at > 0 {
+			set(append(r[:at-1:at-1], r[at:]...), back)
+		}
+	case "delete", "ctrl+d":
+		if back > 0 {
+			set(append(r[:at:at], r[at+1:]...), back-1)
+		}
+	case "ctrl+w", "alt+backspace":
+		if start := wordStart(r, at); start < at {
+			set(append(r[:start:start], r[at:]...), back)
+		}
+	case "ctrl+u":
+		set(r[at:], len(r)-at)
+	case "ctrl+k":
+		set(r[:at], 0)
+	default:
+		switch msg.Type {
+		case tea.KeyRunes, tea.KeySpace:
+			typed := msg.Runes
+			if msg.Type == tea.KeySpace && len(typed) == 0 { // the terminal's space key carries the space itself
+				typed = []rune{' '}
+			}
+			if len(r)+len(typed) <= promptLimit(p.kind) {
+				set(append(append(r[:at:at], typed...), r[at:]...), back)
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// wordStart is where the word before offset at begins (or the start of the text), wordEnd where the word after it ends.
+func wordStart(r []rune, at int) int {
+	for at > 0 && r[at-1] == ' ' {
+		at--
+	}
+	for at > 0 && r[at-1] != ' ' {
+		at--
+	}
+	return at
+}
+
+func wordEnd(r []rune, at int) int {
+	for at < len(r) && r[at] == ' ' {
+		at++
+	}
+	for at < len(r) && r[at] != ' ' {
+		at++
+	}
+	return at
+}
+
+// window cuts the text to what fits in room characters, keeping the cursor in view, and splits it around the cursor: what comes
+// before it, the character under it ("" at the end of the text) and what follows.
+func (p *prompt) window(room int) (before, under, after string) {
+	// Each character keeps its place (a control character shows as a space), so the cursor's offset still points at the right one.
+	r := []rune(p.text)
+	for i, c := range r {
+		if unicode.IsControl(c) {
+			r[i] = ' '
+		}
+	}
+	back := max(0, min(p.back, len(r)))
+	at := len(r) - back
+	room = max(3, room)
+	start := 0
+	if len(r)+1 > room { // the cursor needs a place too
+		start = max(0, min(at-room+1, len(r)-room+1))
+		if at < start {
+			start = at
+		}
+	}
+	end := min(len(r), start+room-1)
+	at = max(start, min(at, end))
+	before = string(r[start:at])
+	if at < end {
+		under = string(r[at])
+		after = string(r[at+1 : end])
+	}
+	return before, under, after
 }
 
 // promptLimit is how much can be typed: a label is short, a focus line with a note is not.
@@ -566,19 +674,8 @@ func (m *Model) promptKey(msg tea.KeyMsg) {
 		m.prompt = nil
 	case tea.KeyEnter:
 		m.submitPrompt()
-	case tea.KeyBackspace:
-		if r := []rune(p.text); len(r) > 0 {
-			p.text = string(r[:len(r)-1])
-		}
-		p.err = ""
-	case tea.KeyRunes, tea.KeySpace:
-		if len([]rune(p.text)) < promptLimit(p.kind) {
-			p.text += string(msg.Runes)
-			if msg.Type == tea.KeySpace && len(msg.Runes) == 0 { // the terminal's space key carries the space itself
-				p.text += " "
-			}
-		}
-		p.err = ""
+	default:
+		p.editKey(msg)
 	}
 }
 
@@ -1293,20 +1390,31 @@ func (p *prompt) hint() string {
 // label is typed in (yellow, underlined, with a blinking block cursor). The hint and any error are on the line below.
 func (m *Model) promptBar() string {
 	p := m.prompt
-	cursor := " "
-	if m.cursorOn {
-		cursor = "█"
-	}
 	question := p.question()
-	field := " " + oneLine(p.text) + cursor + " "
-	if p.kind == promptConfirmStopAll {
-		field = " y / n "
+	if p.kind == promptConfirmStopAll || p.kind == promptConfirmEndRoutine || p.kind == promptConfirmDelete {
+		field := " y / n "
+		question = fit(question, max(0, m.width-lipgloss.Width(field)))
+		fill := strings.Repeat(" ", max(0, m.width-lipgloss.Width(question)-lipgloss.Width(field)))
+		return statusStyle.Render(question) + inputStyle.Render(field) + statusStyle.Render(fill)
 	}
-	// Make everything fit the line: the box always shows in full, the question gives way.
-	fieldWidth := lipgloss.Width(field)
-	question = fit(question, max(0, m.width-fieldWidth))
-	fill := strings.Repeat(" ", max(0, m.width-lipgloss.Width(question)-fieldWidth))
-	return statusStyle.Render(question) + inputStyle.Render(field) + statusStyle.Render(fill)
+	// The box takes what the question leaves it, at least the room that is left after a third of the line; a text longer than that
+	// scrolls so the cursor stays in view.
+	questionRoom := min(lipgloss.Width(question), m.width/3)
+	before, under, after := p.window(m.width - questionRoom - 2)
+	box := inputStyle.Render(" "+before) + inputStyle.Render(after+" ")
+	switch {
+	case under == "" && m.cursorOn:
+		box = inputStyle.Render(" "+before) + inputStyle.Render("█") + inputStyle.Render(" ")
+	case under == "":
+		box = inputStyle.Render(" " + before + " ")
+	case m.cursorOn:
+		box = inputStyle.Render(" "+before) + inputStyle.Reverse(true).Render(under) + inputStyle.Render(after+" ")
+	default:
+		box = inputStyle.Render(" " + before + under + after + " ")
+	}
+	question = fit(question, max(0, m.width-lipgloss.Width(box)))
+	fill := strings.Repeat(" ", max(0, m.width-lipgloss.Width(question)-lipgloss.Width(box)))
+	return statusStyle.Render(question) + box + statusStyle.Render(fill)
 }
 
 // sessionText is what the focus session looks like in one line: "shh 28m · 65%", with the counts of what it has held back.
@@ -1401,6 +1509,11 @@ var helpSections = []struct {
 		{"•", "Not opened yet."},
 		{"✕ blocked", "shh held it back and it never reached you. A row with nothing here was alerted."},
 		{"⚑", "Flagged for review."},
+	}},
+	{"Typing in a box", []helpTopic{
+		{"← / →", "Move the cursor through what you have typed, so a typo can be fixed without retyping the rest. Home and End (or Ctrl-A and Ctrl-E) go to the start or the end; Alt-← and Alt-→ jump a word."},
+		{"Backspace, Del", "Delete the character before or under the cursor. Ctrl-W deletes the word before it, Ctrl-U everything before it, Ctrl-K everything after it."},
+		{"Enter, Esc", "Enter accepts the text; if it cannot be used, the box stays open with the reason under it. Esc cancels. A text longer than the box scrolls to keep the cursor in view."},
 	}},
 	{"Other", []helpTopic{
 		{"?", "This help. j and k scroll it, anything else closes it."},
