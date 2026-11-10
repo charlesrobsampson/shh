@@ -34,7 +34,7 @@ func TestDefaultsWhenTheFileIsMissing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := config.Style{Position: "top-right", Size: "medium", Color: "#ff9f0a", DurationSecs: 0, Sound: "Glass"}
+	want := config.Style{Position: "top-right", Size: "medium", Color: 208, DurationSecs: 0, Sound: "Glass"}
 	if got := cfg.Alert.Resolve(config.KindMessage, ""); got != want {
 		t.Errorf("default alert style = %+v, want %+v", got, want)
 	}
@@ -54,19 +54,19 @@ func TestDefaultsWhenTheFileIsMissing(t *testing.T) {
 
 func TestAnEmptyFileMeansDefaults(t *testing.T) {
 	cfg := load(t, "")
-	if got := cfg.Alert.Resolve(config.KindMessage, "").Color; got != "#ff9f0a" {
-		t.Errorf("color = %q, want the default", got)
+	if got := cfg.Alert.Resolve(config.KindMessage, "").Color; got != 208 {
+		t.Errorf("color = %d, want the default", got)
 	}
 }
 
 func TestPartialFileMergesOverDefaults(t *testing.T) {
 	cfg := load(t, `{
-  "alert": {"color": "#112233", "duration_secs": 5},
+  "alert": {"color": 33, "duration_secs": 5},
   "menubar": {"label": "🔇 shh"},
   "summarizer": {"backend": "ollama"}
 }`)
 	got := cfg.Alert.Resolve(config.KindMessage, "")
-	want := config.Style{Position: "top-right", Size: "medium", Color: "#112233", DurationSecs: 5, Sound: "Glass"}
+	want := config.Style{Position: "top-right", Size: "medium", Color: 33, DurationSecs: 5, Sound: "Glass"}
 	if got != want {
 		t.Errorf("alert style = %+v, want %+v (only color and duration change)", got, want)
 	}
@@ -78,13 +78,13 @@ func TestPartialFileMergesOverDefaults(t *testing.T) {
 func TestStyleResolutionLayersKindThenSource(t *testing.T) {
 	cfg := load(t, `{
   "alert": {
-    "color": "#111111",
+    "color": 233,
     "sound": "Glass",
     "size": "small",
-    "calendar": {"color": "#0a84ff", "sound": "Hero"},
+    "calendar": {"color": 39, "sound": "Hero"},
     "source": {
       "Slack": {"sound": "none", "position": "bottom-left"},
-      "Outlook": {"color": "#222222"}
+      "Outlook": {"color": 235}
     }
   }
 }`)
@@ -95,15 +95,15 @@ func TestStyleResolutionLayersKindThenSource(t *testing.T) {
 		want   config.Style
 	}{
 		{"plain message, unknown source", config.KindMessage, "Teams",
-			config.Style{Position: "top-right", Size: "small", Color: "#111111", DurationSecs: 0, Sound: "Glass"}},
+			config.Style{Position: "top-right", Size: "small", Color: 233, DurationSecs: 0, Sound: "Glass"}},
 		{"calendar kind overrides the base", config.KindCalendar, "",
-			config.Style{Position: "top-right", Size: "small", Color: "#0a84ff", DurationSecs: 0, Sound: "Hero"}},
+			config.Style{Position: "top-right", Size: "small", Color: 39, DurationSecs: 0, Sound: "Hero"}},
 		{"source override applies to messages", config.KindMessage, "Slack",
-			config.Style{Position: "bottom-left", Size: "small", Color: "#111111", DurationSecs: 0, Sound: "none"}},
+			config.Style{Position: "bottom-left", Size: "small", Color: 233, DurationSecs: 0, Sound: "none"}},
 		{"source wins over kind, other kind fields still apply", config.KindCalendar, "Slack",
-			config.Style{Position: "bottom-left", Size: "small", Color: "#0a84ff", DurationSecs: 0, Sound: "none"}},
+			config.Style{Position: "bottom-left", Size: "small", Color: 39, DurationSecs: 0, Sound: "none"}},
 		{"source color wins over kind color", config.KindCalendar, "Outlook",
-			config.Style{Position: "top-right", Size: "small", Color: "#222222", DurationSecs: 0, Sound: "Hero"}},
+			config.Style{Position: "top-right", Size: "small", Color: 235, DurationSecs: 0, Sound: "Hero"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -133,8 +133,10 @@ func TestInvalidValuesNameTheKey(t *testing.T) {
 	}{
 		{"unknown position", `{"alert": {"position": "middle"}}`, "alert.position"},
 		{"unknown size", `{"alert": {"size": "huge"}}`, "alert.size"},
-		{"color without a hash", `{"alert": {"color": "ff9f0a"}}`, "alert.color"},
+		{"color above 255", `{"alert": {"color": 256}}`, "alert.color"},
+		{"a negative color", `{"alert": {"color": -1}}`, "alert.color"},
 		{"color that is a name", `{"alert": {"color": "orange"}}`, "alert.color"},
+		{"color that is a hex string", `{"alert": {"color": "#ff9f0a"}}`, "alert.color"},
 		{"negative duration", `{"alert": {"duration_secs": -1}}`, "alert.duration_secs"},
 		{"duration of the wrong type", `{"alert": {"duration_secs": "soon"}}`, "alert.duration_secs"},
 		{"empty sound", `{"alert": {"sound": ""}}`, "alert.sound"},
@@ -163,12 +165,12 @@ func TestUnknownKeysAreErrorsThatNameThem(t *testing.T) {
 		content string
 		wantKey string
 	}{
-		{"misspelled key", `{"alert": {"colour": "#ffffff"}}`, "alert.colour"},
-		{"unknown section", `{"alrt": {"color": "#ffffff"}}`, "alrt"},
+		{"misspelled key", `{"alert": {"colour": 15}}`, "alert.colour"},
+		{"unknown section", `{"alrt": {"color": 15}}`, "alrt"},
 		{"unknown key in a per-source override", `{"alert": {"source": {"Slack": {"volume": 3}}}}`, "alert.source.Slack.volume"},
 		{"unknown menubar key", `{"menubar": {"lable": "x"}}`, "menubar.lable"},
 		{"unknown top-level key", `{"theme": "dark"}`, "theme"},
-		{"a key with the wrong capitalisation", `{"alert": {"Color": "#ffffff"}}`, "alert.Color"},
+		{"a key with the wrong capitalisation", `{"alert": {"Color": 15}}`, "alert.Color"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -185,7 +187,7 @@ func TestUnknownKeysAreErrorsThatNameThem(t *testing.T) {
 }
 
 func TestErrorsPointAtTheFileAndLine(t *testing.T) {
-	path := write(t, "{\n  \"alert\": {\n    // the second key is a typo\n    \"color\": \"#ffffff\",\n    \"colour\": \"x\"\n  }\n}\n")
+	path := write(t, "{\n  \"alert\": {\n    // the second key is a typo\n    \"color\": 15,\n    \"colour\": \"x\"\n  }\n}\n")
 	_, err := config.Load(path)
 	if err == nil {
 		t.Fatal("Load succeeded")
@@ -212,7 +214,7 @@ func TestAPathThatIsADirectoryIsAnError(t *testing.T) {
 func TestEffectiveConfigRoundTrips(t *testing.T) {
 	original := load(t, `{
   "alert": {
-    "color": "#112233",
+    "color": 33,
     "size": "large",
     "calendar": {"sound": "Hero"},
     "source": {"Slack": {"sound": "none"}}
@@ -224,7 +226,7 @@ func TestEffectiveConfigRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(shown), "#112233") || !strings.Contains(string(shown), `"menubar"`) {
+	if !strings.Contains(string(shown), `"color": 33`) || !strings.Contains(string(shown), `"menubar"`) {
 		t.Fatalf("effective config looks wrong:\n%s", shown)
 	}
 	reloaded, err := config.Load(write(t, string(shown)))
@@ -262,13 +264,13 @@ func TestCommentsAndTrailingCommasWorkInTheConfigFile(t *testing.T) {
 	cfg := load(t, `// my shh settings
 {
   "alert": {
-    "color": "#30d158", // green
+    "color": 41, // green
     "position": "bottom-left",
   },
 }
 `)
 	got := cfg.Alert.Resolve(config.KindMessage, "")
-	if got.Color != "#30d158" || got.Position != "bottom-left" {
+	if got.Color != 41 || got.Position != "bottom-left" {
 		t.Errorf("style = %+v, want the commented file read as written", got)
 	}
 }

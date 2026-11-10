@@ -587,7 +587,8 @@ func (r *routineRunner) finish(run store.RoutineRun, rt *routine.Routine, reason
 	if rt != nil && reason == "finished" && containsWhere(rt.Summary, routine.WhereBanner) {
 		runs, err := r.w.cfg.Store.RoutineRuns(1)
 		if err == nil && len(runs) == 1 {
-			r.show(alert.Alert{Kind: config.KindMessage, Source: "Routine", Title: rt.Name + " finished", Body: describeSummary(r.summary(runs[0]))})
+			r.show(alert.Alert{Kind: config.KindMessage, Source: "Routine", Title: rt.Name + " finished", Body: describeSummary(r.summary(runs[0])),
+				Overrides: []config.StyleOverride{rt.Style}})
 		}
 	}
 	return nil
@@ -595,9 +596,13 @@ func (r *routineRunner) finish(run store.RoutineRun, rt *routine.Routine, reason
 
 // announceCutoff says that the run was stopped at its until time, if the trigger asked for that.
 func (r *routineRunner) announceCutoff(run store.RoutineRun, rt *routine.Routine) {
+	var look []config.StyleOverride
+	if rt != nil {
+		look = []config.StyleOverride{rt.Style}
+	}
 	switch routine.Alert(run.EndsAlert) {
 	case routine.AlertSound:
-		r.w.playSound()
+		r.w.playSound(look...)
 	case routine.AlertBanner:
 		name := run.Routine
 		if rt != nil {
@@ -611,15 +616,16 @@ func (r *routineRunner) announceCutoff(run store.RoutineRun, rt *routine.Routine
 		if runs, err := r.w.cfg.Store.RoutineRuns(1); err == nil && len(runs) == 1 {
 			body = describeSummary(r.summary(runs[0]))
 		}
-		r.show(alert.Alert{Kind: config.KindMessage, Source: "Routine", Title: name + " stopped" + at, Body: body})
+		r.show(alert.Alert{Kind: config.KindMessage, Source: "Routine", Title: name + " stopped" + at, Body: body, Overrides: look})
 	}
 }
 
 // announce says that the step at pos is over, if its alert asks for that. A banner says what comes next and how to carry on.
 func (r *routineRunner) announce(run store.RoutineRun, rt routine.Routine, plan []routine.Planned, pos, nextPos int, last bool) {
 	step := plan[pos]
+	look := []config.StyleOverride{rt.Style, step.Style} // the routine's look, then the step's over it
 	if step.Alert == routine.AlertSound && !last {
-		r.w.playSound()
+		r.w.playSound(look...)
 		return
 	}
 	if step.Alert != routine.AlertBanner || last { // the end of the routine has its summary instead
@@ -637,7 +643,7 @@ func (r *routineRunner) announce(run store.RoutineRun, rt routine.Routine, plan 
 		act = alert.Action{ID: "next", Label: "Start next"}
 	}
 	r.show(alert.Alert{Kind: config.KindMessage, Source: "Routine", Title: step.Name + " is over", Body: body,
-		ActionToken: fmt.Sprintf("%d:%d", run.ID, nextPos), Actions: []alert.Action{act}})
+		ActionToken: fmt.Sprintf("%d:%d", run.ID, nextPos), Actions: []alert.Action{act}, Overrides: look})
 }
 
 func (r *routineRunner) show(a alert.Alert) { r.w.say(a) }

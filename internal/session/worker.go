@@ -45,7 +45,10 @@ type Config struct {
 	// Routines loads the saved routines (routines.json). Nil means there are none.
 	Routines RoutineLoader
 	// PlaySound plays the alert sound, for sessions and routine steps whose alert is "sound". Nil means it is silent.
-	PlaySound func() error
+	// It is given the name of the sound the style says (see AlertConfig), which is "none" for none.
+	PlaySound func(name string) error
+	// AlertConfig is the configured look of alerts, for the sound a "sound" alert plays: the base, then the routine's and the step's own.
+	AlertConfig config.Alert
 }
 
 // Decision is the outcome for one notification.
@@ -484,11 +487,13 @@ func (w *Worker) say(a alert.Alert) {
 	}
 }
 
-func (w *Worker) playSound() {
+// playSound plays the sound the style says: the configured one, then each override laid over it (a routine's, then its step's).
+func (w *Worker) playSound(overrides ...config.StyleOverride) {
 	if w.cfg.PlaySound == nil {
 		return
 	}
-	if err := w.cfg.PlaySound(); err != nil && w.cfg.OnError != nil {
+	name := w.cfg.AlertConfig.ResolveWith(config.KindMessage, "Routine", overrides...).Sound
+	if err := w.cfg.PlaySound(name); err != nil && w.cfg.OnError != nil {
 		w.cfg.OnError(fmt.Errorf("playing the alert sound: %w", err))
 	}
 }

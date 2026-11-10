@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"errors"
+	"github.com/charlesrobsampson/shh/internal/config"
 	"strings"
 	"testing"
 	"time"
@@ -32,7 +33,7 @@ func newRoutineRig(t *testing.T, text string) *routineRig {
 	t.Helper()
 	rr := &routineRig{text: &text}
 	rr.workerRig = newWorkerRig(t, func(c *session.Config) {
-		c.PlaySound = func() error { rr.plays++; return nil }
+		c.PlaySound = func(string) error { rr.plays++; return nil }
 		c.Location = time.UTC
 		c.Routines = func() ([]routine.Routine, error) { return routine.Parse("routines.json", []byte(*rr.text)) }
 	})
@@ -43,7 +44,7 @@ func newRoutineRig(t *testing.T, text string) *routineRig {
 func (r *routineRig) restart() {
 	r.t.Helper()
 	r.worker = r.build(func(c *session.Config) {
-		c.PlaySound = func() error { r.plays++; return nil }
+		c.PlaySound = func(string) error { r.plays++; return nil }
 		c.Location = time.UTC
 		c.Routines = func() ([]routine.Routine, error) { return routine.Parse("routines.json", []byte(*r.text)) }
 	})
@@ -1220,5 +1221,98 @@ func TestACalledRoutineEditedMidRunIsFollowedAsEdited(t *testing.T) {
 	r.pass(10 * time.Minute)
 	if v := r.info().Active; v == nil || v.Step != "inner › extra" {
 		t.Errorf("view = %+v", v)
+	}
+}
+
+// ---- banner styles: the configuration, then the routine, then the step ----
+
+func TestARoutinesStyleReachesItsBannersAndAStepsStyleWinsForItsOwn(t *testing.T) {
+	r := newRoutineRig(t, `{"routines": {"r": {
+	  "style": {"color": 33, "size": "large"},
+	  "steps": ["75% 10m work --alert banner --color 196", "off 5m break --alert banner", "50% 5m last"]}}}`)
+	r.start("r")
+	r.pass(10 * time.Minute) // work ends: its banner
+	r.pass(5 * time.Minute)  // break ends: its banner
+	shown := r.alerter.Shown()
+	if len(shown) != 2 {
+		t.Fatalf("shown = %v", r.shown())
+	}
+	work, brk := shown[0], shown[1]
+	if len(work.Overrides) != 2 || *work.Overrides[0].Color != 33 || *work.Overrides[1].Color != 196 {
+		t.Errorf("work: the routine's look then the step's: %+v", work.Overrides)
+	}
+	if len(brk.Overrides) != 2 || *brk.Overrides[0].Size != "large" || !brk.Overrides[1].IsZero() {
+		t.Errorf("break has only the routine's: %+v", brk.Overrides)
+	}
+}
+
+func TestTheSummaryBannerAndTheCutOffBannerUseTheRoutinesStyle(t *testing.T) {
+	r := newRoutineRig(t, `{"routines": {"r": {"style": {"color": 41}, "steps": ["75% 10m work"]}}}`)
+	r.start("r")
+	r.pass(10 * time.Minute)
+	shown := r.alerter.Shown()
+	if len(shown) != 1 || shown[0].Title != "r finished" || len(shown[0].Overrides) != 1 || *shown[0].Overrides[0].Color != 41 {
+		t.Fatalf("shown = %+v", shown)
+	}
+	c := newRoutineRig(t, `{"routines": {"c": {"style": {"color": 41}, "repeat": "forever", "steps": ["75% 25m work"], "triggers": ["daily at 09:30 until 10:00 --until-alert banner"]}}}`)
+	c.pass(30 * time.Minute)
+	c.pass(30 * time.Minute)
+	var stopped *alertSeen
+	for _, a := range c.alerter.Shown() {
+		if strings.HasPrefix(a.Title, "c stopped at") {
+			stopped = &alertSeen{len(a.Overrides), a.Overrides}
+		}
+	}
+	if stopped == nil || stopped.n != 1 || *stopped.o[0].Color != 41 {
+		t.Errorf("the cut-off banner should carry the routine's style: %+v", stopped)
+	}
+}
+
+type alertSeen struct {
+	n int
+	o []config.StyleOverride
+}
+
+func TestTheScheduledBannersUseTheRoutinesStyle(t *testing.T) {
+	r := newRoutineRig(t, `{"routines": {"m": {"style": {"position": "bottom-left"}, "steps": ["75% 25m work"], "triggers": ["daily at 09:30 --reminder 5m --ask"]}}}`)
+	r.pass(25 * time.Minute)
+	r.pass(5 * time.Minute)
+	shown := r.alerter.Shown()
+	if len(shown) != 2 {
+		t.Fatalf("shown = %v", r.shown())
+	}
+	for _, a := range shown {
+		if len(a.Overrides) != 1 || *a.Overrides[0].Position != "bottom-left" {
+			t.Errorf("%q: overrides = %+v", a.Title, a.Overrides)
+		}
+	}
+}
+
+func TestASoundAlertPlaysTheSoundTheStyleSays(t *testing.T) {
+	var played []string
+	r := &routineRig{text: new(string)}
+	*r.text = `{"routines": {"r": {"style": {"sound": "Hero"}, "steps": ["75% 10m a --alert sound", "off 5m b --alert sound --sound Basso", "50% 5m c"]}}}`
+	base := config.Alert{Base: config.Style{Position: "top-right", Size: "medium", Color: 208, Sound: "Glass"}}
+	build := func(c *session.Config) {
+		c.PlaySound = func(name string) error { played = append(played, name); return nil }
+		c.AlertConfig = base
+		c.Location = time.UTC
+		c.Routines = func() ([]routine.Routine, error) { return routine.Parse("routines.json", []byte(*r.text)) }
+	}
+	r.workerRig = newWorkerRig(t, build)
+	r.start("r")
+	r.pass(10 * time.Minute)
+	r.pass(5 * time.Minute)
+	if strings.Join(played, ",") != "Hero,Basso" {
+		t.Errorf("played = %v: the routine's sound, then the step's over it", played)
+	}
+	// without any style the configured sound plays
+	played = nil
+	*r.text = `{"routines": {"plain": {"steps": ["75% 10m a --alert sound", "off 5m b"]}}}`
+	r.pass(time.Hour) // let the file be read again
+	r.start("plain")
+	r.pass(10 * time.Minute)
+	if strings.Join(played, ",") != "Glass" {
+		t.Errorf("played = %v", played)
 	}
 }

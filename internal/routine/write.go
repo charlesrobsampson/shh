@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/charlesrobsampson/shh/internal/config"
 	"github.com/charlesrobsampson/shh/internal/jsonc"
 )
 
@@ -265,13 +266,14 @@ func btoi(b bool) int {
 // ---- writing a routine as JSON ----
 
 type outRoutine struct {
-	Description string   `json:"description,omitempty"`
-	Repeat      any      `json:"repeat,omitempty"`
-	Steps       []string `json:"steps"`
-	Finish      []string `json:"finish,omitempty"`
-	Waiting     string   `json:"waiting,omitempty"`
-	Summary     []string `json:"summary,omitempty"`
-	Triggers    []string `json:"triggers,omitempty"`
+	Description string                `json:"description,omitempty"`
+	Repeat      any                   `json:"repeat,omitempty"`
+	Steps       []string              `json:"steps"`
+	Finish      []string              `json:"finish,omitempty"`
+	Waiting     string                `json:"waiting,omitempty"`
+	Summary     []string              `json:"summary,omitempty"`
+	Triggers    []string              `json:"triggers,omitempty"`
+	Style       *config.StyleOverride `json:"style,omitempty"`
 }
 
 var defaultSummary = []Where{WhereBanner, WhereUI}
@@ -305,6 +307,10 @@ func marshalRoutine(r Routine, indent string) ([]byte, error) {
 	}
 	for _, t := range r.Triggers {
 		out.Triggers = append(out.Triggers, t.Command())
+	}
+	if !r.Style.IsZero() {
+		style := r.Style
+		out.Style = &style
 	}
 	// An encoder, not json.Marshal: that one writes & < > as \u0026 and the like, which would make a file full of noise.
 	encode := func(v any, prefix string) ([]byte, error) {

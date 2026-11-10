@@ -325,3 +325,56 @@ func TestANewRoutineCanGetATriggerBeforeItIsSaved(t *testing.T) {
 		t.Errorf("late = %+v", late)
 	}
 }
+
+func TestTheEditorSetsTheRoutinesBannerStyleFromFlags(t *testing.T) {
+	r, path, _ := editorRigText(t, withTriggers)
+	r.press("e")
+	for i := 0; i < 5; i++ {
+		r.press("j") // the Banner style row
+	}
+	if row := r.m.editor.current(); row.kind != rowStyle {
+		t.Fatalf("row = %+v", row)
+	}
+	if v := r.view(); !strings.Contains(v, "Banner style") || !strings.Contains(v, "(as configured)") {
+		t.Errorf("view:\n%s", v)
+	}
+	r.press("enter")
+	if h := r.m.prompt.hint(); !strings.Contains(h, "shh alert colors") {
+		t.Errorf("the box should point at the palette: %q", h)
+	}
+	r.typeInto("--color 300")
+	if r.m.prompt == nil || !strings.Contains(r.m.prompt.err, "color") {
+		t.Errorf("a color past 255 stays in the box: %+v", r.m.prompt)
+	}
+	r.press("esc")
+	r.press("enter")
+	r.typeInto("--color 33 --size large --sound Hero")
+	if r.m.prompt != nil || *r.m.editor.draft.Style.Color != 33 || *r.m.editor.draft.Style.Size != "large" {
+		t.Fatalf("style = %+v", r.m.editor.draft.Style)
+	}
+	if v := r.view(); !strings.Contains(v, "--color 33 --size large --sound Hero") {
+		t.Errorf("view:\n%s", v)
+	}
+	if got := addCommand(r.m.editor.draft, true); !strings.Contains(got, `--style '--color 33 --size large --sound Hero'`) {
+		t.Errorf("command = %s", got)
+	}
+	r.press("s")
+	rs, err := routine.Load(*path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	morning, _ := routine.Find(rs, "morning")
+	if morning.Style.Color == nil || *morning.Style.Color != 33 {
+		t.Errorf("style = %+v", morning.Style)
+	}
+	// clearing it
+	r.press("e")
+	for i := 0; i < 5; i++ {
+		r.press("j")
+	}
+	r.press("enter")
+	r.typeInto("")
+	if !r.m.editor.draft.Style.IsZero() {
+		t.Errorf("an empty box clears the style: %+v", r.m.editor.draft.Style)
+	}
+}

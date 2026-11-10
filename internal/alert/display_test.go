@@ -35,10 +35,10 @@ func loadConfig(t *testing.T, text string) config.Config {
 func TestStyleIsResolvedBeforeItReachesTheBackend(t *testing.T) {
 	cfg := loadConfig(t, `{
   "alert": {
-    "color": "#111111",
+    "color": 233,
     "size": "small",
     "duration_secs": 8,
-    "calendar": {"color": "#0a84ff", "sound": "Hero"},
+    "calendar": {"color": 39, "sound": "Hero"},
     "source": {"Slack": {"sound": "none", "position": "bottom-left", "size": "large"}}
   }
 }`)
@@ -50,13 +50,13 @@ func TestStyleIsResolvedBeforeItReachesTheBackend(t *testing.T) {
 		wantH     int
 	}{
 		{"a plain message uses the base style", alert.Alert{Kind: config.KindMessage, Source: "Teams", Title: "Ana", Body: "hi"},
-			config.Style{Position: "top-right", Size: "small", Color: "#111111", DurationSecs: 8, Sound: "Glass"}, 280, 110},
+			config.Style{Position: "top-right", Size: "small", Color: 233, DurationSecs: 8, Sound: "Glass"}, 280, 110},
 		{"a calendar alert uses the kind override", alert.Alert{Kind: config.KindCalendar, Source: "Calendar", Title: "Sync"},
-			config.Style{Position: "top-right", Size: "small", Color: "#0a84ff", DurationSecs: 8, Sound: "Hero"}, 280, 110},
+			config.Style{Position: "top-right", Size: "small", Color: 39, DurationSecs: 8, Sound: "Hero"}, 280, 110},
 		{"a source override applies to its messages", alert.Alert{Kind: config.KindMessage, Source: "Slack", Title: "ops"},
-			config.Style{Position: "bottom-left", Size: "large", Color: "#111111", DurationSecs: 8, Sound: "none"}, 460, 110},
+			config.Style{Position: "bottom-left", Size: "large", Color: 233, DurationSecs: 8, Sound: "none"}, 460, 110},
 		{"a longer body makes the banner taller", alert.Alert{Kind: config.KindMessage, Source: "Teams", Title: "Ana", Body: strings.Repeat("word ", 20)},
-			config.Style{Position: "top-right", Size: "small", Color: "#111111", DurationSecs: 8, Sound: "Glass"}, 280, 142},
+			config.Style{Position: "top-right", Size: "small", Color: 233, DurationSecs: 8, Sound: "Glass"}, 280, 142},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -335,5 +335,20 @@ func TestAnAlertsOwnActionsBecomeButtonsAfterTheConfiguredOnes(t *testing.T) {
 	_ = bare.Show(alert.Alert{Title: "t", Body: "b", Actions: []alert.Action{{ID: "x", Label: "X"}}})
 	if len(plain.requests) == 1 && plain.requests[0].Height < alert.ButtonRowHeight {
 		t.Errorf("height = %d", plain.requests[0].Height)
+	}
+}
+
+func TestOverridesChangeTheResolvedStyleInOrder(t *testing.T) {
+	primary := &recordingBackend{}
+	d := alert.NewDisplay(loadConfig(t, `{"alert": {"color": 208, "size": "medium", "source": {"Routine": {"sound": "Hero"}}}}`).Alert, primary, nil, nil)
+	one, two := 33, 196
+	size, pos := "large", "bottom-left"
+	if err := d.Show(alert.Alert{Kind: config.KindMessage, Source: "Routine", Title: "t", Body: "b",
+		Overrides: []config.StyleOverride{{Color: &one, Size: &size}, {Color: &two, Position: &pos}}}); err != nil {
+		t.Fatal(err)
+	}
+	got := primary.requests[0]
+	if got.Style.Color != 196 || got.Style.Size != "large" || got.Style.Position != "bottom-left" || got.Style.Sound != "Hero" || got.Width != 460 {
+		t.Errorf("style = %+v width %d: the later override wins, the source's sound stays, a larger size widens the banner", got.Style, got.Width)
 	}
 }

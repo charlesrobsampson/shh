@@ -155,7 +155,8 @@ func (s *scheduler) remind(rt routine.Routine, trigger int, t routine.Trigger, s
 		return
 	}
 	s.w.say(alert.Alert{Kind: config.KindMessage, Source: "Routine", Title: fmt.Sprintf("%s starts in %s", rt.Name, formatLength(start.Sub(now).Round(time.Minute))),
-		Body: t.Command(), ActionToken: token(rt, trigger, start), Actions: []alert.Action{{ID: "skip", Label: "Skip this one"}}})
+		Body: t.Command(), ActionToken: token(rt, trigger, start), Actions: []alert.Action{{ID: "skip", Label: "Skip this one"}},
+		Overrides: []config.StyleOverride{rt.Style}})
 }
 
 func (s *scheduler) reportIf(err error) {
@@ -246,7 +247,8 @@ func (s *scheduler) ask(rt routine.Routine, trigger int, t routine.Trigger, star
 		body = fmt.Sprintf("%s is running: starting now ends it (a focus session of yours stays underneath). %s", busyWith, t.Command())
 	}
 	s.w.say(alert.Alert{Kind: config.KindMessage, Source: "Routine", Title: fmt.Sprintf("Start %s?", rt.Name), Body: body,
-		ActionToken: token(rt, trigger, start), Actions: []alert.Action{{ID: "start", Label: "Start now"}, {ID: "skip", Label: "Skip"}}})
+		ActionToken: token(rt, trigger, start), Actions: []alert.Action{{ID: "start", Label: "Start now"}, {ID: "skip", Label: "Skip"}},
+		Overrides: []config.StyleOverride{rt.Style}})
 }
 
 // Action is a button of a scheduled routine's banner being pressed.

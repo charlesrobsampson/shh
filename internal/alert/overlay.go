@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"github.com/charlesrobsampson/shh/internal/config"
 	"io"
 	"os"
 	"os/exec"
@@ -130,7 +131,7 @@ func bannerEnv(r Request, at layoutMessage) []string {
 		buttons = append(buttons, bannerButton{Type: b.Type, Label: b.Label, CollapseLabel: b.CollapseLabel, FlaggedLabel: b.FlaggedLabel, ID: b.ID})
 	}
 	spec, _ := json.Marshal(bannerSpec{
-		Header: strings.TrimSpace(r.Source), Title: r.Title, Body: r.Body, Bundle: r.BundleID, Color: r.Style.Color, Width: r.Width, Height: r.Height,
+		Header: strings.TrimSpace(r.Source), Title: r.Title, Body: r.Body, Bundle: r.BundleID, Color: config.ANSIHex(r.Style.Color), Width: r.Width, Height: r.Height,
 		Position: r.Style.Position, Indent: at.Indent, Offset: at.Offset, Duration: r.Style.DurationSecs, Sound: r.Style.Sound,
 		Buttons: buttons, DismissOnClick: r.DismissOnClick, PreviewHeight: r.PreviewHeight, Managed: true, Parent: os.Getpid(),
 	})

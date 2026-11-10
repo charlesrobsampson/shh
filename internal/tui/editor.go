@@ -21,6 +21,7 @@ const (
 	rowRepeat
 	rowWaiting
 	rowSummary
+	rowStyle     // the routine's banner style
 	rowStep      // a step of the routine; index says which
 	rowAddStep   // "+ add a step"
 	rowFinish    // a step of the finish; index says which
@@ -70,7 +71,7 @@ func summaryText(w []routine.Where) string {
 
 // rows lists what the editor shows, top to bottom.
 func (e *routineEditor) rows() []editorRow {
-	rows := []editorRow{{rowName, 0}, {rowDescription, 0}, {rowRepeat, 0}, {rowWaiting, 0}, {rowSummary, 0}}
+	rows := []editorRow{{rowName, 0}, {rowDescription, 0}, {rowRepeat, 0}, {rowWaiting, 0}, {rowSummary, 0}, {rowStyle, 0}}
 	for i := range e.draft.Steps {
 		rows = append(rows, editorRow{rowStep, i})
 	}
@@ -199,6 +200,8 @@ func (m *Model) editRow(row editorRow, _ bool) {
 		i := slices.IndexFunc(summaryChoices, func(c []routine.Where) bool { return slices.Equal(c, e.draft.Summary) })
 		e.draft.Summary = slices.Clone(summaryChoices[(i+1)%len(summaryChoices)])
 		e.dirty = true
+	case rowStyle:
+		m.openField("banner style", routine.StyleWords(e.draft.Style), "flags: --color 33 (0-255, shh alert colors shows the palette) --position top-left --size large --sound Hero --banner-for 10s · empty uses the config · Enter keeps it · Esc cancels", row)
 	case rowStep:
 		m.openField("step", e.draft.Steps[row.index].Command(), stepHint, row)
 	case rowFinish:
@@ -243,6 +246,13 @@ func (m *Model) submitField(p *prompt) {
 			}
 		}
 		e.draft.Repeat = n
+	case rowStyle:
+		o, err := routine.ParseStyle(text)
+		if err != nil {
+			p.err = oneLine(err.Error())
+			return
+		}
+		e.draft.Style = o
 	case rowTriggerField:
 		m.submitTriggerField(p)
 		return // the form is the one that has changed, not the routine
@@ -431,6 +441,9 @@ func addCommand(r routine.Routine, replace bool) string {
 	if r.Waiting != "" && r.Waiting != routine.WaitStay {
 		parts = append(parts, "-w", string(r.Waiting))
 	}
+	if w := routine.StyleWords(r.Style); w != "" {
+		parts = append(parts, "--style", shellWord(w))
+	}
 	if !slices.Equal(r.Summary, summaryChoices[0]) {
 		var w []string
 		for _, x := range r.Summary {
@@ -515,6 +528,11 @@ func (m *Model) editorRow(e *routineEditor, row editorRow, selected bool) string
 		label, value = "Waiting", string(e.draft.Waiting)+"  (Enter changes it: stay, next, baseline)"
 	case rowSummary:
 		label, value = "Summary", summaryText(e.draft.Summary)+"  (Enter changes it)"
+	case rowStyle:
+		label, value = "Banner style", routine.StyleWords(e.draft.Style)
+		if value == "" {
+			value = "(as configured)  Enter sets this routine's banner color, position, size, sound"
+		}
 	case rowStep:
 		label, value = fmt.Sprintf("%d", row.index+1), e.draft.Steps[row.index].Command()
 	case rowFinish:

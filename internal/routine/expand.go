@@ -82,6 +82,7 @@ func expandSteps(all []Routine, steps []Step, key string, stack []string) ([]Ste
 		var body []Step
 		for round := 1; round <= callee.Repeat; round++ {
 			for _, st := range calleeSteps {
+				st.Style = callee.Style.Merge(st.Style) // the called routine's own look, under the step's
 				st.Name = callee.Name + " › " + st.Name
 				if callee.Repeat > 1 {
 					st.Name += fmt.Sprintf(" (%d/%d)", round, callee.Repeat)
@@ -90,6 +91,7 @@ func expandSteps(all []Routine, steps []Step, key string, stack []string) ([]Ste
 			}
 		}
 		for _, st := range calleeFinish {
+			st.Style = callee.Style.Merge(st.Style)
 			st.Name = callee.Name + " › " + st.Name
 			body = append(body, st)
 		}

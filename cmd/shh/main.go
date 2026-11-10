@@ -205,7 +205,8 @@ func runDaemon(cfg config.Config) error {
 		// Routines are read from routines.json each time one is needed, so edits apply to the next run.
 		Routines: func() ([]routine.Routine, error) { return routine.Load(routine.DefaultPath(cfg.Paths.Dir)) },
 		// The sound for alerts that are only a sound is the one the alert style uses.
-		PlaySound: func() error { return playSystemSound(cfg.Alert.Base.Sound) },
+		PlaySound:   playSystemSound,
+		AlertConfig: cfg.Alert,
 	})
 	if err != nil {
 		return err

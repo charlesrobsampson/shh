@@ -708,3 +708,48 @@ func TestStatusSaysAnUntilCutOffInWords(t *testing.T) {
 		t.Error("the other reasons")
 	}
 }
+
+func TestRoutineAddTakesABannerStyleAndListShowsIt(t *testing.T) {
+	r := newRig(t, false)
+	out := r.mustRun("routine", "add", "styled", "75% 25m work --alert banner --color 196", "--style=--color 33 --size large --sound Hero")
+	if !strings.Contains(out, "banners: --color 33 --size large --sound Hero") || !strings.Contains(out, "--color 196") {
+		t.Errorf("add output:\n%s", out)
+	}
+	rs, err := routine.Load(r.routines)
+	if err != nil || *rs[0].Style.Color != 33 || *rs[0].Style.Size != "large" || *rs[0].Steps[0].Style.Color != 196 {
+		t.Fatalf("%+v %v", rs, err)
+	}
+	if code := r.run("routine", "add", "bad", "75% 25m x", "--style=--color purple"); code == 0 || !strings.Contains(r.err.String(), "--style:") || !strings.Contains(r.err.String(), "0 to 255") {
+		t.Errorf("code %d stderr %q", code, r.err.String())
+	}
+	if code := r.run("routine", "add", "bad", "75% 25m x", "--style=--colour 3"); code == 0 || !strings.Contains(r.err.String(), "not a style flag") {
+		t.Errorf("code %d stderr %q", code, r.err.String())
+	}
+	if code := r.run("routine", "add", "bad", "75% 25m x", "--style=--size huge"); code == 0 || !strings.Contains(r.err.String(), "style.size") {
+		t.Errorf("code %d stderr %q", code, r.err.String())
+	}
+}
+
+func TestAlertColorsShowsThePaletteOrOneColor(t *testing.T) {
+	r := newRig(t, false)
+	out := r.mustRun("alert", "colors")
+	if !strings.Contains(out, "https://en.wikipedia.org/wiki/ANSI_escape_code#8-bit") || !strings.Contains(out, "208  #ff8700") || strings.Count(out, "\n") < 250 {
+		t.Errorf("plain list:\n%s", out[:300])
+	}
+	if strings.Contains(out, "\x1b[") {
+		t.Error("with no terminal there must be no escape sequences")
+	}
+	r.env.IsTerminal = true
+	out = r.mustRun("alert", "colors")
+	for _, want := range []string{"\x1b[48;5;208m", "\x1b[48;5;0m", "\x1b[48;5;255m", "Standard (0-7)", "Colors (16-231)", "Greys (232-255)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the palette is missing %q", strings.ReplaceAll(want, "\x1b", "ESC"))
+		}
+	}
+	if out = r.mustRun("alert", "colors", "208"); !strings.Contains(out, "208 is #ff8700") || !strings.Contains(out, "\x1b[48;5;208m") {
+		t.Errorf("one color:\n%s", out)
+	}
+	if code := r.run("alert", "colors", "300"); code != 2 || !strings.Contains(r.err.String(), "0 to 255") {
+		t.Errorf("code %d stderr %q", code, r.err.String())
+	}
+}

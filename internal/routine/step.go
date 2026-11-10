@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charlesrobsampson/shh/internal/config"
 	"github.com/charlesrobsampson/shh/internal/decide"
 )
 
@@ -101,6 +102,14 @@ func ParseCommand(text string) (Step, error) {
 			s.Alert = Alert(v)
 		case flag == "--ask" && !hasValue:
 			s.Advance = AdvanceAsk
+		case flag == "--color" || flag == "--position" || flag == "--size" || flag == "--sound" || flag == "--banner-for":
+			v, err := take()
+			if err != nil {
+				return Step{}, err
+			}
+			if err := setStyleFlag(&s.Style, flag, v); err != nil {
+				return Step{}, err
+			}
 		case flag == "-m" || flag == "--note":
 			v, err := take()
 			if err != nil {
@@ -110,7 +119,7 @@ func ParseCommand(text string) (Step, error) {
 		case flag == "--then" || flag == "--end-routine" || flag == "--clear":
 			return Step{}, fmt.Errorf("%s does not apply in a routine (the routine decides what comes next)", flag)
 		case strings.HasPrefix(w, "-") && len(w) > 1:
-			return Step{}, fmt.Errorf("%q is not an option a routine step takes (it takes --alert, --ask and -m)", w)
+			return Step{}, fmt.Errorf("%q is not an option a routine step takes (it takes --alert, --ask, -m and the banner style flags --color, --position, --size, --sound and --banner-for)", w)
 		default:
 			positional = append(positional, w)
 		}
@@ -162,7 +171,95 @@ func ParseCommand(text string) (Step, error) {
 	if noteFlag != nil {
 		s.Note = *noteFlag
 	}
+	if err := checkStyle(s.Style, "style"); err != nil {
+		return Step{}, err
+	}
 	return s, nil
+}
+
+// setStyleFlag reads one of the banner style flags of a step into its style: --color 208 (a code from the 8-bit ANSI palette),
+// --position top-left, --size large, --sound Hero, --banner-for 10s (0 for until dismissed).
+func setStyleFlag(o *config.StyleOverride, flag, value string) error {
+	switch flag {
+	case "--color":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("--color %q is not a number from 0 to 255 (the 8-bit ANSI palette: shh alert colors shows it)", value)
+		}
+		o.Color = &n
+	case "--position":
+		o.Position = &value
+	case "--size":
+		o.Size = &value
+	case "--sound":
+		o.Sound = &value
+	case "--banner-for":
+		d, err := decide.ParseDuration(value)
+		if err != nil {
+			return fmt.Errorf("--banner-for: %w", err)
+		}
+		secs := int(d / time.Second)
+		o.DurationSecs = &secs
+	}
+	return nil
+}
+
+// ParseStyle reads a banner style written as the flags a step takes: "--color 33 --size large --position bottom-left --sound Hero
+// --banner-for 10s". Nothing at all is no change.
+func ParseStyle(text string) (config.StyleOverride, error) {
+	words, err := splitCommand(text)
+	if err != nil {
+		return config.StyleOverride{}, err
+	}
+	var o config.StyleOverride
+	for i := 0; i < len(words); i++ {
+		flag, value, hasValue := strings.Cut(words[i], "=")
+		if !slices.Contains([]string{"--color", "--position", "--size", "--sound", "--banner-for"}, flag) {
+			return o, fmt.Errorf("%q is not a style flag: use --color, --position, --size, --sound and --banner-for", words[i])
+		}
+		if !hasValue {
+			if i+1 >= len(words) {
+				return o, fmt.Errorf("%s needs a value", flag)
+			}
+			i++
+			value = words[i]
+		}
+		if err := setStyleFlag(&o, flag, value); err != nil {
+			return o, err
+		}
+	}
+	if err := checkStyle(o, "style"); err != nil {
+		return o, err
+	}
+	return o, nil
+}
+
+// StyleWords writes a style as the flags ParseStyle reads back ("" for no change).
+func StyleWords(o config.StyleOverride) string { return strings.Join(styleFlags(o), " ") }
+
+// styleFlags writes a step's style as the flags that ParseCommand reads back.
+func styleFlags(o config.StyleOverride) []string {
+	var out []string
+	if o.Color != nil {
+		out = append(out, "--color", strconv.Itoa(*o.Color))
+	}
+	if o.Position != nil {
+		out = append(out, "--position", *o.Position)
+	}
+	if o.Size != nil {
+		out = append(out, "--size", *o.Size)
+	}
+	if o.Sound != nil {
+		out = append(out, "--sound", quoteWord(*o.Sound))
+	}
+	if o.DurationSecs != nil {
+		w := "0"
+		if *o.DurationSecs > 0 {
+			w = DurationWord(time.Duration(*o.DurationSecs) * time.Second)
+		}
+		out = append(out, "--banner-for", w)
+	}
+	return out
 }
 
 // parseCall reads what follows the word run: a routine's name (several words, so a name with spaces needs no quotes) and the flags
@@ -321,6 +418,7 @@ func (s Step) Command() string {
 	if s.Advance == AdvanceAsk {
 		parts = append(parts, "--ask")
 	}
+	parts = append(parts, styleFlags(s.Style)...)
 	return strings.Join(parts, " ")
 }
 

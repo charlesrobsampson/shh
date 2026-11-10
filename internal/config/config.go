@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -24,9 +23,10 @@ const (
 
 // Style is a fully resolved banner style.
 type Style struct {
-	Position     string
-	Size         string
-	Color        string
+	Position string
+	Size     string
+	// Color is a code from the 8-bit ANSI palette, 0 to 255 (see ANSIHex).
+	Color        int
 	DurationSecs int // 0 (the default) means until dismissed: alerts are the important ones, so they stay until acted on
 	Sound        string
 }
@@ -35,7 +35,7 @@ type Style struct {
 type StyleOverride struct {
 	Position     *string `json:"position,omitempty"`
 	Size         *string `json:"size,omitempty"`
-	Color        *string `json:"color,omitempty"`
+	Color        *int    `json:"color,omitempty"`
 	DurationSecs *int    `json:"duration_secs,omitempty"`
 	Sound        *string `json:"sound,omitempty"`
 	// Buttons replaces the whole button list when set; it is not merged with the list above it.
@@ -54,7 +54,11 @@ type Alert struct {
 }
 
 // Resolve layers the base style, then the kind override, then the per-source override.
-func (a Alert) Resolve(kind Kind, source string) Style {
+func (a Alert) Resolve(kind Kind, source string) Style { return a.ResolveWith(kind, source) }
+
+// ResolveWith is Resolve with more overrides laid over the result, in order: a routine's, then one of its steps', so what is more
+// specific wins.
+func (a Alert) ResolveWith(kind Kind, source string, overrides ...StyleOverride) Style {
 	style := a.Base
 	if kind == KindCalendar {
 		style = style.with(a.Calendar)
@@ -62,8 +66,37 @@ func (a Alert) Resolve(kind Kind, source string) Style {
 	if override, ok := a.Source[source]; ok {
 		style = style.with(override)
 	}
+	for _, o := range overrides {
+		style = style.with(o)
+	}
 	return style
 }
+
+// Merge returns the override with another laid over it: what b sets wins, and the rest is a's.
+func (a StyleOverride) Merge(b StyleOverride) StyleOverride {
+	if b.Position != nil {
+		a.Position = b.Position
+	}
+	if b.Size != nil {
+		a.Size = b.Size
+	}
+	if b.Color != nil {
+		a.Color = b.Color
+	}
+	if b.DurationSecs != nil {
+		a.DurationSecs = b.DurationSecs
+	}
+	if b.Sound != nil {
+		a.Sound = b.Sound
+	}
+	if b.Buttons != nil {
+		a.Buttons = b.Buttons
+	}
+	return a
+}
+
+// IsZero says whether the override changes nothing.
+func (a StyleOverride) IsZero() bool { return a.isZero() }
 
 func (s Style) with(o StyleOverride) Style {
 	if o.Position != nil {
@@ -134,7 +167,6 @@ var (
 	positions = []string{"top-left", "top-center", "top-right", "bottom-left", "bottom-center", "bottom-right"}
 	sizes     = []string{"small", "medium", "large"}
 	backends  = []string{"none", "ollama", "claude"}
-	hexColor  = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 )
 
 // DefaultPath is ~/.config/shh/config.json.
@@ -157,7 +189,7 @@ func Load(path string) (Config, error) {
 	}
 	var f file
 	if err := jsonc.Decode(path, raw, &f); err != nil {
-		return Config{}, err
+		return Config{}, ExplainColorError(err)
 	}
 	cfg, err := build(f, filepath.Dir(path))
 	if err != nil {
@@ -168,7 +200,7 @@ func Load(path string) (Config, error) {
 
 func build(f file, configDir string) (Config, error) {
 	cfg := Config{
-		Alert:      Alert{Base: Style{Position: "top-right", Size: "medium", Color: "#ff9f0a", DurationSecs: 0, Sound: "Glass"}},
+		Alert:      Alert{Base: Style{Position: "top-right", Size: "medium", Color: DefaultColor, DurationSecs: 0, Sound: "Glass"}},
 		Menubar:    Menubar{Enabled: true, Label: "shh"},
 		Summarizer: Summarizer{Backend: "none"},
 	}
@@ -238,14 +270,17 @@ func buildPaths(f file, configDir string) (Paths, error) {
 	}, nil
 }
 
+// ValidateOverride checks the settings of a style override, naming prefix in a problem. Routines and their steps use it for theirs.
+func ValidateOverride(prefix string, o StyleOverride) error { return validateOverride(prefix, o) }
+
 func validateOverride(prefix string, o StyleOverride) error {
 	switch {
 	case o.Position != nil && !slices.Contains(positions, *o.Position):
 		return notOneOf(prefix+".position", *o.Position, positions)
 	case o.Size != nil && !slices.Contains(sizes, *o.Size):
 		return notOneOf(prefix+".size", *o.Size, sizes)
-	case o.Color != nil && !hexColor.MatchString(*o.Color):
-		return fmt.Errorf("%q: %q is not a #rrggbb color", prefix+".color", *o.Color)
+	case o.Color != nil && (*o.Color < 0 || *o.Color > 255):
+		return fmt.Errorf("%q: %d is not a color code from 0 to 255 (the 8-bit ANSI palette: %s; shh alert colors shows them)", prefix+".color", *o.Color, ColorChartURL)
 	case o.DurationSecs != nil && *o.DurationSecs < 0:
 		return fmt.Errorf("%q: %d is negative (use 0 for until dismissed)", prefix+".duration_secs", *o.DurationSecs)
 	case o.Sound != nil && *o.Sound == "":

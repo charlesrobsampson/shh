@@ -23,7 +23,7 @@ func NewDisplay(cfg config.Alert, primary, fallback Backend, onError func(error)
 }
 
 func (d *Display) Show(a Alert) error {
-	style := d.cfg.Resolve(a.Kind, a.Source)
+	style := d.cfg.ResolveWith(a.Kind, a.Source, a.Overrides...)
 	width := SizeWidth(style.Size)
 	req := Request{
 		Kind: a.Kind, Source: a.Source, BundleID: a.BundleID, NotificationID: a.NotificationID, ActionToken: a.ActionToken, Title: a.Title, Body: a.Body,

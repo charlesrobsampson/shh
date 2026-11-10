@@ -76,6 +76,9 @@ func describeRoutine(r routine.Routine, all []routine.Routine, now time.Time) st
 		fmt.Fprintf(&b, "  %s", r.Description)
 	}
 	fmt.Fprintf(&b, "\n  %s  (%s)\n", stepsLine(r), r.Length(all))
+	if words := routine.StyleWords(r.Style); words != "" {
+		fmt.Fprintf(&b, "  banners: %s\n", words)
+	}
 	if len(r.Triggers) > 0 {
 		fmt.Fprintln(&b, "  starts by itself:")
 		for _, t := range r.Triggers {
@@ -123,6 +126,7 @@ type routineAddCmd struct {
 	Steps       []string `arg:"" optional:"" help:"Each step as a shh command in quotes: \"75% 25m work --alert banner\", \"off 5m break\", \"baseline 30%\". Add --ask to a step to wait for approval before the next."`
 	Description string   `short:"d" help:"A line saying what the routine is for."`
 	Repeat      string   `short:"r" default:"1" help:"How many times the steps run: a number, or forever to go round until stopped."`
+	Style       string   `help:"How this routine's banners look, over the configuration's: \"--color 33 --size large --position bottom-left --sound Hero --banner-for 10s\" (shh alert colors shows the colors). Give it with an equals sign: --style=\"--color 33\"."`
 	Trigger     []string `short:"t" sep:"none" help:"A way to start it by itself, in words: \"weekdays except fri at 09:00 until 12:00 --reminder 5m\" (repeat the flag for more than one)."`
 	Finish      []string `short:"f" sep:"none" help:"A step to run once after the last round (repeat the flag for more than one)."`
 	Waiting     string   `short:"w" default:"stay" enum:"stay,next,baseline" help:"What focus does while the routine waits for you: stay (keep the level), next (the next step's level, timer held) or baseline."`
@@ -149,6 +153,13 @@ func (c *routineAddCmd) Run(env *Env) error {
 			return fmt.Errorf("step %d (%q): %w", i+1, text, err)
 		}
 		r.Steps = append(r.Steps, step)
+	}
+	if c.Style != "" {
+		style, err := routine.ParseStyle(c.Style)
+		if err != nil {
+			return fmt.Errorf("--style: %w", err)
+		}
+		r.Style = style
 	}
 	for i, text := range c.Trigger {
 		trigger, err := routine.ParseTrigger(text)

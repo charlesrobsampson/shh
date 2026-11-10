@@ -147,7 +147,7 @@ func decode(t *testing.T, p *fakeProcess) banner {
 func request(title, position string) alert.Request {
 	return alert.Request{
 		Title: title, Body: "body of " + title, BundleID: "com.microsoft.teams2", Kind: config.KindMessage,
-		Style: config.Style{Position: position, Size: "medium", Color: "#ff9f0a", DurationSecs: 8, Sound: "Glass"}, Width: 360, Height: 64,
+		Style: config.Style{Position: position, Size: "medium", Color: 208, DurationSecs: 8, Sound: "Glass"}, Width: 360, Height: 64,
 	}
 }
 
@@ -155,7 +155,7 @@ func TestTheBannerIsDescribedToTheHelperAsJSON(t *testing.T) {
 	r := newOverlayRig(t)
 	r.show(request("Ana", "top-right"))
 	got := decode(t, r.process(0))
-	want := banner{Title: "Ana", Body: "body of Ana", Bundle: "com.microsoft.teams2", Color: "#ff9f0a", Width: 360, Height: 64, Position: "top-right", Offset: 0, Duration: 8, Sound: "Glass"}
+	want := banner{Title: "Ana", Body: "body of Ana", Bundle: "com.microsoft.teams2", Color: "#ff8700", Width: 360, Height: 64, Position: "top-right", Offset: 0, Duration: 8, Sound: "Glass"}
 	if got != want {
 		t.Errorf("banner = %+v, want %+v", got, want)
 	}

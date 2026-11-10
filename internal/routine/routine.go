@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charlesrobsampson/shh/internal/config"
 	"github.com/charlesrobsampson/shh/internal/decide"
 	"github.com/charlesrobsampson/shh/internal/jsonc"
 )
@@ -74,6 +75,8 @@ type Step struct {
 	Note    string
 	Alert   Alert
 	Advance Advance
+	// Style changes how the banners about this step look: its own settings over its routine's, over the configuration's.
+	Style config.StyleOverride
 	// Call and Times are for a call step: the routine to run and how many times. They are gone once Expand has run.
 	Call  string
 	Times int
@@ -89,6 +92,9 @@ type Routine struct {
 	Finish  []Step
 	Waiting Waiting
 	Summary []Where
+	// Style changes how all the routine's banners look from what the configuration says: position, size, color, duration_secs and sound.
+	// A step's own style is laid over it.
+	Style config.StyleOverride
 	// Triggers are the ways it starts by itself; none for a routine that is only ever started by hand.
 	Triggers []Trigger
 }
@@ -175,14 +181,15 @@ func Find(routines []Routine, name string) (Routine, bool) {
 // fileStep is a step as written: an object with its fields spelled out, or a string, which is the shh command that does it
 // ("75% 25m work --alert banner", "baseline 30%").
 type fileStep struct {
-	Name     *string `json:"name"`
-	Level    *string `json:"level"`
-	Length   *string `json:"length"`
-	Until    *string `json:"until"`
-	Note     *string `json:"note"`
-	Alert    *string `json:"alert"`
-	Advance  *string `json:"advance"`
-	Baseline *string `json:"baseline"`
+	Name     *string               `json:"name"`
+	Level    *string               `json:"level"`
+	Length   *string               `json:"length"`
+	Until    *string               `json:"until"`
+	Style    *config.StyleOverride `json:"style"`
+	Note     *string               `json:"note"`
+	Alert    *string               `json:"alert"`
+	Advance  *string               `json:"advance"`
+	Baseline *string               `json:"baseline"`
 
 	command    string // the string, when the step was written as one
 	fromString bool
@@ -252,13 +259,14 @@ func (f *fileTrigger) UnmarshalJSON(data []byte) error {
 }
 
 type fileRoutine struct {
-	Description *string       `json:"description"`
-	Repeat      *fileRepeat   `json:"repeat"`
-	Steps       []fileStep    `json:"steps"`
-	Finish      []fileStep    `json:"finish"`
-	Waiting     *string       `json:"waiting"`
-	Summary     []string      `json:"summary"`
-	Triggers    []fileTrigger `json:"triggers"`
+	Description *string               `json:"description"`
+	Repeat      *fileRepeat           `json:"repeat"`
+	Steps       []fileStep            `json:"steps"`
+	Finish      []fileStep            `json:"finish"`
+	Waiting     *string               `json:"waiting"`
+	Summary     []string              `json:"summary"`
+	Triggers    []fileTrigger         `json:"triggers"`
+	Style       *config.StyleOverride `json:"style"`
 }
 
 // file is routines.json: an object of routines keyed by name, so a name can only be there once (the decoder rejects a repeated key) and
@@ -290,7 +298,7 @@ func Parse(name string, raw []byte) ([]Routine, error) { return parse(name, raw,
 func parse(name string, raw []byte, resolve bool) ([]Routine, error) {
 	var f file
 	if err := jsonc.Decode(name, raw, &f); err != nil {
-		return nil, err
+		return nil, config.ExplainColorError(err)
 	}
 	order, err := jsonc.Keys(name, raw, "routines")
 	if err != nil {
@@ -370,6 +378,12 @@ func build(fr fileRoutine, name string) (Routine, error) {
 	if r.Repeat == Forever && len(r.Finish) > 0 {
 		return r, bad("finish", "a routine that repeats forever never gets to its finish steps: take them out, or give repeat a number")
 	}
+	if fr.Style != nil {
+		if err := checkStyle(*fr.Style, key+".style"); err != nil {
+			return r, err
+		}
+		r.Style = *fr.Style
+	}
 	for i, ft := range fr.Triggers {
 		t, err := buildTrigger(ft)
 		if err != nil {
@@ -430,6 +444,12 @@ func buildSteps(fs []fileStep, key string) ([]Step, error) {
 			continue
 		}
 		s := Step{Kind: StepSession, Level: 65, Alert: AlertNone, Advance: AdvanceAuto}
+		if f.Style != nil {
+			if err := checkStyle(*f.Style, k+".style"); err != nil {
+				return nil, err
+			}
+			s.Style = *f.Style
+		}
 		if f.Name == nil || strings.TrimSpace(*f.Name) == "" {
 			return nil, bad("name", "a step needs a name")
 		}
@@ -503,6 +523,10 @@ const Example = `// Routines: named sequences of focus sessions, filed under the
       "finish": [
         "off 15m long break"
       ],
+      // how this routine's banners look, over the config's: color is a number 0-255 from the 8-bit ANSI palette
+      // (https://en.wikipedia.org/wiki/ANSI_escape_code#8-bit, or run: shh alert colors); also position, size, sound, duration_secs.
+      // A step can change them for its own banner too: "75% 25m work --alert banner --color 196"
+      "style": {"color": 33},
       // what focus does while a step waits for you: stay (keep the last level), next (the next step's level, timer held), baseline
       "waiting": "stay",
       // where the summary shows when the routine finishes: banner, menu, ui
@@ -559,6 +583,14 @@ func (r Routine) Outline() string {
 		line += " -> " + part(r.Finish)
 	}
 	return line
+}
+
+// checkStyle checks a style override of a routine or a step. Buttons are the configuration's business, not a routine's.
+func checkStyle(o config.StyleOverride, key string) error {
+	if o.Buttons != nil {
+		return fmt.Errorf("%q: buttons are set in config.json, not per routine or step", key+".buttons")
+	}
+	return config.ValidateOverride(key, o)
 }
 
 // ValidName says whether a routine can be called that.

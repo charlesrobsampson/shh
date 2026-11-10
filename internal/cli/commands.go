@@ -239,7 +239,8 @@ func (c *uiCmd) Run(env *Env) error {
 }
 
 type alertCmd struct {
-	Test alertTestCmd `cmd:"" help:"Show a sample alert in each configured style."`
+	Test   alertTestCmd   `cmd:"" help:"Show a sample alert in each configured style."`
+	Colors alertColorsCmd `cmd:"" help:"Show the 8-bit ANSI palette that banner colors are chosen from, with each color's number."`
 }
 
 type alertTestCmd struct{}
