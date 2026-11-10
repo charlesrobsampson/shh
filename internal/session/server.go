@@ -21,6 +21,9 @@ type Server struct {
 	listener *net.UnixListener
 	path     string
 
+	// OnQuit is called after a "worker_quit" request has been answered; the daemon sets it to end itself.
+	OnQuit func()
+
 	mu    sync.Mutex
 	conns map[net.Conn]struct{}
 }
@@ -113,6 +116,9 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) {
 		if encoder.Encode(s.handle(req)) != nil {
 			return
 		}
+		if req.Cmd == "worker_quit" && s.OnQuit != nil {
+			go s.OnQuit() // after the answer has gone, so the client sees that it was heard
+		}
 	}
 }
 
@@ -146,6 +152,11 @@ func (s *Server) handle(req Request) Response {
 		err = w.showAlert(req.Alert)
 	case "train", "undo":
 		return s.handleTraining(req)
+	case "worker_info":
+		info := w.Info()
+		return Response{OK: true, Worker: &info}
+	case "worker_quit":
+		return Response{OK: true}
 	case "routine_run":
 		err = w.RoutineStart(req.Name)
 	case "routine_next":

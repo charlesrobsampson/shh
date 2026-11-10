@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -64,6 +65,7 @@ type Worker struct {
 	parser     *calendar.Parser
 	routines   *routineRunner
 	schedule   *scheduler
+	started    time.Time
 	scheduler  *calendar.Scheduler
 	tailer     *ingest.Tailer
 
@@ -91,6 +93,7 @@ func NewWorker(cfg Config) (*Worker, error) {
 	}
 	w.routines = newRoutineRunner(w)
 	w.schedule = newScheduler(w)
+	w.started = cfg.Clock.Now()
 	w.tailer = ingest.NewTailer(ingest.Config{
 		Source: cfg.Source, Store: cfg.Store, Clock: cfg.Clock, Sources: cfg.Rules.Sources, OwnBundles: cfg.OwnBundles,
 		Interval: cfg.Interval, Handle: w.handle, OnError: cfg.OnError,
@@ -402,6 +405,18 @@ func (w *Worker) RoutineUnskip(name string) error { return w.schedule.Unskip(nam
 
 // Upcoming is the next scheduled start of each routine that has a trigger switched on.
 func (w *Worker) Upcoming() []UpcomingStart { return w.schedule.Upcoming() }
+
+// Info is what the worker says about itself for shh worker status.
+func (w *Worker) Info() WorkerInfo {
+	info := WorkerInfo{PID: os.Getpid(), Started: w.started, Now: w.cfg.Clock.Now(), Build: BuildID, Triggers: w.schedule.TriggerCount()}
+	if st, err := w.stack.Status(); err == nil {
+		info.Level = st.Level
+	}
+	if v := w.routines.View(); v != nil {
+		info.Routine = v.Name
+	}
+	return info
+}
 
 // HasTriggers says whether any routine has a trigger switched on. The worker must stay up while one does, since it starts them.
 func (w *Worker) HasTriggers() bool { return w.schedule.HasTriggers() }

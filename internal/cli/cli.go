@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/alecthomas/kong"
@@ -67,10 +68,11 @@ type cli struct {
 	Pause    pauseCmd    `cmd:"" help:"Pause the countdown of the current timed session."`
 	Resume   resumeCmd   `cmd:"" help:"Resume a paused countdown."`
 	Routine  routineCmd  `cmd:"" help:"Saved sequences of focus sessions, such as a pomodoro (shh guide routine-commands explains them)."`
+	Worker   workerCmd   `cmd:"" help:"Start, stop and check the background worker (shh daemon runs it in the foreground)."`
 	Guide    guideCmd    `cmd:"" help:"The guide to the terminal UI, routines and commands: open it, jump to a section, or search it."`
 	Alert    alertCmd    `cmd:"" help:"Alert tools."`
 	Replay   replayCmd   `cmd:"" help:"Run the classifier over a file of notifications and print each decision."`
-	Daemon   daemonCmd   `cmd:"" help:"Run the worker in the foreground. shh starts it by itself when it is needed; run this at login to keep routines' triggers firing (shh guide triggers)."`
+	Daemon   daemonCmd   `cmd:"" help:"Run the worker in the foreground. shh starts it by itself when it is needed; run this (or shh worker start) at login to keep routines' triggers firing (shh guide triggers)."`
 	Menubar  menubarCmd  `cmd:"" hidden:"" help:"Run the menu bar item (started by the worker)."`
 }
 
@@ -116,7 +118,9 @@ func Run(args []string, env Env) (code int) {
 		fmt.Fprintln(env.Stderr, "shh: error:", err)
 		return 2
 	}
-	if name := ctx.Command(); name != "daemon" && name != "menubar" && name != "replay <file>" && name != "alert test" {
+	// A saved focus session is picked up again by the next command, by starting a worker. Not for the commands that are about the worker
+	// itself: a stop would be undone by the very next one, and start and restart start one anyway.
+	if name := ctx.Command(); name != "daemon" && name != "menubar" && name != "replay <file>" && name != "alert test" && !strings.HasPrefix(name, "worker") {
 		env.rearmPersistedFocus()
 	}
 	if err := ctx.Run(); err != nil {
@@ -176,7 +180,7 @@ func (e *Env) warnIfStale(view session.StatusView) {
 	}
 	e.staleWarned = true
 	fmt.Fprintln(e.Stderr, "shh: note: the running worker is from a different build than this command, so it is still running the old code.\n"+
-		"     Turn focus off (shh stop --all), dismiss any alerts on screen and wait a few seconds for it to exit; the next command starts a fresh one.")
+		"     Pick up the new build with: shh worker restart")
 }
 
 // ensureWorker makes sure a worker is answering, starting one if none is running and a spawner is available.

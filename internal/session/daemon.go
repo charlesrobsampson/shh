@@ -43,6 +43,7 @@ func RunDaemon(ctx context.Context, cfg DaemonConfig) error {
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	server.OnQuit = cancel // shh worker stop
 	var running sync.WaitGroup
 	running.Add(2)
 	go func() {

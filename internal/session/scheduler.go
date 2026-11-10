@@ -72,6 +72,21 @@ func (s *scheduler) current() []routine.Routine {
 	return s.routines
 }
 
+// TriggerCount is how many triggers are switched on.
+func (s *scheduler) TriggerCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, rt := range s.current() {
+		for _, t := range rt.Triggers {
+			if !t.Disabled {
+				n++
+			}
+		}
+	}
+	return n
+}
+
 // HasTriggers says whether any routine has a trigger that is switched on. The worker stays up while one does: it is what starts them.
 func (s *scheduler) HasTriggers() bool {
 	s.mu.Lock()

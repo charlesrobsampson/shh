@@ -64,7 +64,7 @@ func (e *Env) warnIfTriggersCannotFire(routines []routine.Routine) {
 		return
 	}
 	if _, err := e.client().Status(); errors.Is(err, session.ErrNotRunning) {
-		fmt.Fprintln(e.Stdout, "\nNote: the shh worker is not running, so triggers will not start anything yet. Start it with: shh daemon  (see: shh guide triggers)")
+		fmt.Fprintln(e.Stdout, "\nNote: the shh worker is not running, so triggers will not start anything yet. Start it with: shh worker start  (see: shh guide triggers)")
 	}
 }
 
@@ -265,7 +265,7 @@ func unknownRoutine(env *Env, name string, err error) error {
 	}
 	if found, ok := routine.Find(routines, name); ok {
 		return fmt.Errorf("%q is in %s, but the running worker does not know it: it is probably an older build that was started before routines existed. "+
-			"Turn focus off (shh stop --all), dismiss any alerts, wait a few seconds for it to exit, and run this again", found.Name, env.RoutinesPath)
+			"Replace it with: shh worker restart, and run this again", found.Name, env.RoutinesPath)
 	}
 	var names []string
 	for _, r := range routines {

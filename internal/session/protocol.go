@@ -70,6 +70,21 @@ type Response struct {
 	Train *TrainView `json:"train,omitempty"`
 	// Routine answers the routine commands: the run in progress, if any, and the last one that ended.
 	Routine *RoutineInfo `json:"routine,omitempty"`
+	// Worker answers "worker_info".
+	Worker *WorkerInfo `json:"worker,omitempty"`
+}
+
+// WorkerInfo is what the worker says about itself: which process it is, how long it has been up, and what it is keeping going.
+type WorkerInfo struct {
+	PID     int       `json:"pid"`
+	Started time.Time `json:"started"`
+	Now     time.Time `json:"now"`
+	Build   string    `json:"build,omitempty"`
+	// Level is the effective focus level (0 when off), and Routine the name of the routine run in progress ("" for none).
+	Level   int    `json:"level"`
+	Routine string `json:"routine,omitempty"`
+	// Triggers is how many triggers are switched on, which are what keep the worker running with nothing else to do.
+	Triggers int `json:"triggers"`
 }
 
 // RoutineView is the routine run in progress, as clients see it.

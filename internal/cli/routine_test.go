@@ -691,7 +691,7 @@ func TestSkipSaysWhenARoutineHasNoTriggerOrDoesNotExist(t *testing.T) {
 func TestListWarnsThatTriggersNeedAWorkerWhenThereIsNone(t *testing.T) {
 	r := newRig(t, false)
 	r.saveRoutines(`{"routines": {"morning": {"steps": ["75% 25m work"], "triggers": ["daily at 09:30"]}, "off": {"steps": ["75% 25m work"], "triggers": ["daily at 09:30 --disabled"]}}}`)
-	if out := r.mustRun("routine", "list"); !strings.Contains(out, "the shh worker is not running, so triggers will not start anything yet") || !strings.Contains(out, "shh daemon") {
+	if out := r.mustRun("routine", "list"); !strings.Contains(out, "the shh worker is not running, so triggers will not start anything yet") || !strings.Contains(out, "shh worker start") {
 		t.Errorf("list:\n%s", out)
 	}
 	r.saveRoutines(`{"routines": {"off": {"steps": ["75% 25m work"], "triggers": ["daily at 09:30 --disabled"]}, "plain": {"steps": ["75% 25m work"]}}}`)
