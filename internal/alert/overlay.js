@@ -53,6 +53,10 @@ ObjC.registerSubclass({
 const hex = cfg.color.replace('#', '');
 const channel = i => parseInt(hex.slice(i, i + 2), 16) / 255;
 const color = $.NSColor.colorWithSRGBRedGreenBlueAlpha(channel(0), channel(2), channel(4), 1);
+// The text is drawn in its own color (white when none is given).
+const textHex = (cfg.textColor || '#ffffff').replace('#', '');
+const textChannel = i => parseInt(textHex.slice(i, i + 2), 16) / 255;
+const textColor = $.NSColor.colorWithSRGBRedGreenBlueAlpha(textChannel(0), textChannel(2), textChannel(4), 1);
 
 const area = $.NSScreen.mainScreen.visibleFrame;
 const margin = 16;
@@ -95,7 +99,7 @@ function label(text, size, bold, frame, lines) {
   // wrappingLabelWithString wraps long text onto further lines; labelWithString would keep it on one line and clip it.
   const field = $.NSTextField.wrappingLabelWithString($(text));
   field.setFont(bold ? $.NSFont.boldSystemFontOfSize(size) : $.NSFont.systemFontOfSize(size));
-  field.setTextColor($.NSColor.whiteColor);
+  field.setTextColor(textColor);
   // Wrapping labels are selectable by default, and a selectable field keeps the mouse for text selection, so a click on the text
   // would never reach the banner. Static text lets the click through.
   field.setSelectable(false);
@@ -115,7 +119,7 @@ function label(text, size, bold, frame, lines) {
 const headerRow = cfg.header ? 14 : 0;
 const buttonRow = cfg.buttons.length > 0 ? 32 : 0;
 const header = cfg.header ? label(cfg.header, 11, true, $.NSMakeRect(16, height - 12 - headerRow, cfg.width - 32, headerRow), 1) : null;
-if (header) header.setTextColor($.NSColor.colorWithWhiteAlpha(1, 0.75));
+if (header) header.setTextColor(textColor.colorWithAlphaComponent(0.75));
 const title = label(cfg.title, 15, true, $.NSMakeRect(16, height - 12 - headerRow - 20, cfg.width - 32, 20), 1);
 const body = label(cfg.body, 13, false, $.NSMakeRect(16, 12 + buttonRow, cfg.width - 32, height - 12 - headerRow - 20 - 4 - 12 - buttonRow), 1);
 function layoutText() {

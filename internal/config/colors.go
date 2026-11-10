@@ -20,6 +20,9 @@ func ExplainColorError(err error) error {
 // DefaultColor is the banner color when nothing says otherwise: 208, an orange.
 const DefaultColor = 208
 
+// DefaultTextColor is the banner's text color when nothing says otherwise: 15, white.
+const DefaultTextColor = 15
+
 // ansiStandard are the sixteen colors at the start of the palette, as xterm draws them.
 var ansiStandard = [16]string{
 	"#000000", "#800000", "#008000", "#808000", "#000080", "#800080", "#008080", "#c0c0c0",

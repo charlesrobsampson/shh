@@ -201,7 +201,7 @@ func (m *Model) editRow(row editorRow, _ bool) {
 		e.draft.Summary = slices.Clone(summaryChoices[(i+1)%len(summaryChoices)])
 		e.dirty = true
 	case rowStyle:
-		m.openField("banner style", routine.StyleWords(e.draft.Style), "flags: --color 33 (0-255, shh alert colors shows the palette) --position top-left --size large --sound Hero --banner-for 10s · empty uses the config · Enter keeps it · Esc cancels", row)
+		m.openField("banner style", routine.StyleWords(e.draft.Style), "flags: --color 33 (background) --text-color 15 (0-255, shh alert colors shows the palette) --position top-left --size large --sound Hero --banner-for 10s · empty uses the config · Enter keeps it · Esc cancels", row)
 	case rowStep:
 		m.openField("step", e.draft.Steps[row.index].Command(), stepHint, row)
 	case rowFinish:

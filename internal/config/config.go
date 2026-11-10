@@ -25,8 +25,9 @@ const (
 type Style struct {
 	Position string
 	Size     string
-	// Color is a code from the 8-bit ANSI palette, 0 to 255 (see ANSIHex).
+	// Color is the banner's background and TextColor its text, each a code from the 8-bit ANSI palette, 0 to 255 (see ANSIHex).
 	Color        int
+	TextColor    int
 	DurationSecs int // 0 (the default) means until dismissed: alerts are the important ones, so they stay until acted on
 	Sound        string
 }
@@ -36,6 +37,7 @@ type StyleOverride struct {
 	Position     *string `json:"position,omitempty"`
 	Size         *string `json:"size,omitempty"`
 	Color        *int    `json:"color,omitempty"`
+	TextColor    *int    `json:"text_color,omitempty"`
 	DurationSecs *int    `json:"duration_secs,omitempty"`
 	Sound        *string `json:"sound,omitempty"`
 	// Buttons replaces the whole button list when set; it is not merged with the list above it.
@@ -43,7 +45,7 @@ type StyleOverride struct {
 }
 
 func (o StyleOverride) isZero() bool {
-	return o.Position == nil && o.Size == nil && o.Color == nil && o.DurationSecs == nil && o.Sound == nil && o.Buttons == nil
+	return o.Position == nil && o.Size == nil && o.Color == nil && o.TextColor == nil && o.DurationSecs == nil && o.Sound == nil && o.Buttons == nil
 }
 
 type Alert struct {
@@ -83,6 +85,9 @@ func (a StyleOverride) Merge(b StyleOverride) StyleOverride {
 	if b.Color != nil {
 		a.Color = b.Color
 	}
+	if b.TextColor != nil {
+		a.TextColor = b.TextColor
+	}
 	if b.DurationSecs != nil {
 		a.DurationSecs = b.DurationSecs
 	}
@@ -107,6 +112,9 @@ func (s Style) with(o StyleOverride) Style {
 	}
 	if o.Color != nil {
 		s.Color = *o.Color
+	}
+	if o.TextColor != nil {
+		s.TextColor = *o.TextColor
 	}
 	if o.DurationSecs != nil {
 		s.DurationSecs = *o.DurationSecs
@@ -200,7 +208,7 @@ func Load(path string) (Config, error) {
 
 func build(f file, configDir string) (Config, error) {
 	cfg := Config{
-		Alert:      Alert{Base: Style{Position: "top-right", Size: "medium", Color: DefaultColor, DurationSecs: 0, Sound: "Glass"}},
+		Alert:      Alert{Base: Style{Position: "top-right", Size: "medium", Color: DefaultColor, TextColor: DefaultTextColor, DurationSecs: 0, Sound: "Glass"}},
 		Menubar:    Menubar{Enabled: true, Label: "shh"},
 		Summarizer: Summarizer{Backend: "none"},
 	}
@@ -281,6 +289,8 @@ func validateOverride(prefix string, o StyleOverride) error {
 		return notOneOf(prefix+".size", *o.Size, sizes)
 	case o.Color != nil && (*o.Color < 0 || *o.Color > 255):
 		return fmt.Errorf("%q: %d is not a color code from 0 to 255 (the 8-bit ANSI palette: %s; shh alert colors shows them)", prefix+".color", *o.Color, ColorChartURL)
+	case o.TextColor != nil && (*o.TextColor < 0 || *o.TextColor > 255):
+		return fmt.Errorf("%q: %d is not a color code from 0 to 255 (the 8-bit ANSI palette: %s; shh alert colors shows them)", prefix+".text_color", *o.TextColor, ColorChartURL)
 	case o.DurationSecs != nil && *o.DurationSecs < 0:
 		return fmt.Errorf("%q: %d is negative (use 0 for until dismissed)", prefix+".duration_secs", *o.DurationSecs)
 	case o.Sound != nil && *o.Sound == "":
@@ -297,8 +307,8 @@ func notOneOf(key, got string, allowed []string) error {
 func (c Config) Effective() ([]byte, error) {
 	var f file
 	base := c.Alert.Base
-	f.Alert.Position, f.Alert.Size, f.Alert.Color, f.Alert.DurationSecs, f.Alert.Sound =
-		&base.Position, &base.Size, &base.Color, &base.DurationSecs, &base.Sound
+	f.Alert.Position, f.Alert.Size, f.Alert.Color, f.Alert.TextColor, f.Alert.DurationSecs, f.Alert.Sound =
+		&base.Position, &base.Size, &base.Color, &base.TextColor, &base.DurationSecs, &base.Sound
 	f.Alert.Buttons = entries(normalize(c.Alert.Buttons))
 	if !c.Alert.Calendar.isZero() {
 		calendar := c.Alert.Calendar

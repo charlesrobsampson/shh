@@ -524,7 +524,7 @@ const Example = `// Routines: named sequences of focus sessions, filed under the
         "off 15m long break"
       ],
       // how this routine's banners look, over the config's: color is a number 0-255 from the 8-bit ANSI palette
-      // (https://en.wikipedia.org/wiki/ANSI_escape_code#8-bit, or run: shh alert colors); also position, size, sound, duration_secs.
+      // (https://en.wikipedia.org/wiki/ANSI_escape_code#8-bit, or run: shh alert colors); also text_color, position, size, sound, duration_secs.
       // A step can change them for its own banner too: "75% 25m work --alert banner --color 196"
       "style": {"color": 33},
       // what focus does while a step waits for you: stay (keep the last level), next (the next step's level, timer held), baseline

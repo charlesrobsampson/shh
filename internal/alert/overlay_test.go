@@ -820,3 +820,28 @@ func TestAnActionEventWithNoHookIsHarmless(t *testing.T) {
 	r.show(request("a", "top-right"))
 	r.process(0).emit("action next")
 }
+
+func TestTheTextColorTravelsWithTheBannerAndTheScriptDrawsWithIt(t *testing.T) {
+	r := newOverlayRig(t)
+	req := request("Ana", "top-right")
+	req.Style.TextColor = 0
+	r.show(req)
+	var spec struct {
+		Color     string `json:"color"`
+		TextColor string `json:"textColor"`
+	}
+	for _, kv := range r.process(0).env {
+		if v, ok := strings.CutPrefix(kv, "SHH_BANNER="); ok {
+			if err := json.Unmarshal([]byte(v), &spec); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if spec.Color != "#ff8700" || spec.TextColor != "#000000" {
+		t.Errorf("colors = %+v: the background and the text are separate", spec)
+	}
+	script := strings.Join(alert.OverlayCommand(req).Args, " ")
+	if !strings.Contains(script, "cfg.textColor") || strings.Contains(script, "NSColor.whiteColor") || !strings.Contains(script, "colorWithAlphaComponent(0.75)") {
+		t.Error("the text, and the fainter app name above it, must be drawn in the configured text color, not always white")
+	}
+}

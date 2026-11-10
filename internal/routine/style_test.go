@@ -141,3 +141,30 @@ func TestAHexColorInARoutineSaysWhatAColorIsNow(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+func TestTextColorIsAStyleFlagAndAStyleKey(t *testing.T) {
+	s, err := routine.ParseCommand("75% 25m work --color 233 --text-color 214")
+	if err != nil || *s.Style.Color != 233 || *s.Style.TextColor != 214 {
+		t.Fatalf("%+v %v", s.Style, err)
+	}
+	if got := s.Command(); got != "75% 25m work --color 233 --text-color 214" {
+		t.Errorf("command = %q", got)
+	}
+	if again, err := routine.ParseCommand(s.Command()); err != nil || !reflect.DeepEqual(again.Style, s.Style) {
+		t.Errorf("reads back as %+v %v", again.Style, err)
+	}
+	if _, err := routine.ParseCommand("75% 25m work --text-color 300"); err == nil || !strings.Contains(err.Error(), "style.text_color") {
+		t.Errorf("err = %v", err)
+	}
+	if _, err := routine.ParseCommand("75% 25m work --text-color red"); err == nil || !strings.Contains(err.Error(), "--text-color") {
+		t.Errorf("err = %v", err)
+	}
+	o, err := routine.ParseStyle("--color 33 --text-color 15")
+	if err != nil || *o.TextColor != 15 || routine.StyleWords(o) != "--color 33 --text-color 15" {
+		t.Errorf("%+v %v", o, err)
+	}
+	rs := parse(t, `{"routines": {"r": {"style": {"color": 33, "text_color": 0}, "steps": [{"name": "x", "length": "5m", "style": {"text_color": 15}}]}}}`)
+	if *rs[0].Style.TextColor != 0 || *rs[0].Steps[0].Style.TextColor != 15 {
+		t.Errorf("%+v %+v", rs[0].Style, rs[0].Steps[0].Style)
+	}
+}

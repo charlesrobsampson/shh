@@ -91,11 +91,13 @@ type bannerSpec struct {
 	Body   string `json:"body"`
 	// Bundle is the app the banner script opens when the banner is clicked. The script does it itself, because the process that
 	// showed the banner (a short-lived CLI command, say) may be gone by the time of the click.
-	Bundle   string `json:"bundle"`
-	Color    string `json:"color"`
-	Width    int    `json:"width"`
-	Height   int    `json:"height"`
-	Position string `json:"position"`
+	Bundle string `json:"bundle"`
+	Color  string `json:"color"`
+	// TextColor is the color of the text, as #rrggbb.
+	TextColor string `json:"textColor"`
+	Width     int    `json:"width"`
+	Height    int    `json:"height"`
+	Position  string `json:"position"`
 	// Indent and Offset say where the banner sits, so banners shown together do not overlap.
 	Indent   int    `json:"indent"`
 	Offset   int    `json:"offset"`
@@ -131,7 +133,7 @@ func bannerEnv(r Request, at layoutMessage) []string {
 		buttons = append(buttons, bannerButton{Type: b.Type, Label: b.Label, CollapseLabel: b.CollapseLabel, FlaggedLabel: b.FlaggedLabel, ID: b.ID})
 	}
 	spec, _ := json.Marshal(bannerSpec{
-		Header: strings.TrimSpace(r.Source), Title: r.Title, Body: r.Body, Bundle: r.BundleID, Color: config.ANSIHex(r.Style.Color), Width: r.Width, Height: r.Height,
+		Header: strings.TrimSpace(r.Source), Title: r.Title, Body: r.Body, Bundle: r.BundleID, Color: config.ANSIHex(r.Style.Color), TextColor: config.ANSIHex(r.Style.TextColor), Width: r.Width, Height: r.Height,
 		Position: r.Style.Position, Indent: at.Indent, Offset: at.Offset, Duration: r.Style.DurationSecs, Sound: r.Style.Sound,
 		Buttons: buttons, DismissOnClick: r.DismissOnClick, PreviewHeight: r.PreviewHeight, Managed: true, Parent: os.Getpid(),
 	})

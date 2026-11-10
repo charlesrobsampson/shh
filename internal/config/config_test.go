@@ -34,7 +34,7 @@ func TestDefaultsWhenTheFileIsMissing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := config.Style{Position: "top-right", Size: "medium", Color: 208, DurationSecs: 0, Sound: "Glass"}
+	want := config.Style{Position: "top-right", Size: "medium", Color: 208, TextColor: 15, DurationSecs: 0, Sound: "Glass"}
 	if got := cfg.Alert.Resolve(config.KindMessage, ""); got != want {
 		t.Errorf("default alert style = %+v, want %+v", got, want)
 	}
@@ -66,7 +66,7 @@ func TestPartialFileMergesOverDefaults(t *testing.T) {
   "summarizer": {"backend": "ollama"}
 }`)
 	got := cfg.Alert.Resolve(config.KindMessage, "")
-	want := config.Style{Position: "top-right", Size: "medium", Color: 33, DurationSecs: 5, Sound: "Glass"}
+	want := config.Style{Position: "top-right", Size: "medium", Color: 33, TextColor: 15, DurationSecs: 5, Sound: "Glass"}
 	if got != want {
 		t.Errorf("alert style = %+v, want %+v (only color and duration change)", got, want)
 	}
@@ -95,15 +95,15 @@ func TestStyleResolutionLayersKindThenSource(t *testing.T) {
 		want   config.Style
 	}{
 		{"plain message, unknown source", config.KindMessage, "Teams",
-			config.Style{Position: "top-right", Size: "small", Color: 233, DurationSecs: 0, Sound: "Glass"}},
+			config.Style{Position: "top-right", Size: "small", Color: 233, TextColor: 15, DurationSecs: 0, Sound: "Glass"}},
 		{"calendar kind overrides the base", config.KindCalendar, "",
-			config.Style{Position: "top-right", Size: "small", Color: 39, DurationSecs: 0, Sound: "Hero"}},
+			config.Style{Position: "top-right", Size: "small", Color: 39, TextColor: 15, DurationSecs: 0, Sound: "Hero"}},
 		{"source override applies to messages", config.KindMessage, "Slack",
-			config.Style{Position: "bottom-left", Size: "small", Color: 233, DurationSecs: 0, Sound: "none"}},
+			config.Style{Position: "bottom-left", Size: "small", Color: 233, TextColor: 15, DurationSecs: 0, Sound: "none"}},
 		{"source wins over kind, other kind fields still apply", config.KindCalendar, "Slack",
-			config.Style{Position: "bottom-left", Size: "small", Color: 39, DurationSecs: 0, Sound: "none"}},
+			config.Style{Position: "bottom-left", Size: "small", Color: 39, TextColor: 15, DurationSecs: 0, Sound: "none"}},
 		{"source color wins over kind color", config.KindCalendar, "Outlook",
-			config.Style{Position: "top-right", Size: "small", Color: 235, DurationSecs: 0, Sound: "Hero"}},
+			config.Style{Position: "top-right", Size: "small", Color: 235, TextColor: 15, DurationSecs: 0, Sound: "Hero"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

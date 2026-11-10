@@ -95,3 +95,40 @@ func TestAHexColorLeftInAFileSaysWhatAColorIsNow(t *testing.T) {
 		t.Errorf("another error must be left alone: %v", err)
 	}
 }
+
+func TestTextColorIsItsOwnSettingThatCascadesLikeTheRest(t *testing.T) {
+	path := write(t, `{"alert": {"color": 233, "text_color": 214, "calendar": {"text_color": 0}, "source": {"Slack": {"color": 15, "text_color": 16}}}}`)
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Alert.Resolve(config.KindMessage, "Teams"); got.Color != 233 || got.TextColor != 214 {
+		t.Errorf("base: %+v", got)
+	}
+	if got := cfg.Alert.Resolve(config.KindCalendar, ""); got.Color != 233 || got.TextColor != 0 {
+		t.Errorf("a kind can change only the text: %+v", got)
+	}
+	if got := cfg.Alert.Resolve(config.KindMessage, "Slack"); got.Color != 15 || got.TextColor != 16 {
+		t.Errorf("a source: %+v", got)
+	}
+	routine := config.StyleOverride{TextColor: intp(46)}
+	if got := cfg.Alert.ResolveWith(config.KindMessage, "Teams", routine); got.Color != 233 || got.TextColor != 46 {
+		t.Errorf("a routine can change only the text: %+v", got)
+	}
+	if def, _ := config.Load(write(t, `{}`)); def.Alert.Base.TextColor != config.DefaultTextColor || config.DefaultTextColor != 15 {
+		t.Errorf("the text is white unless said otherwise: %+v", def.Alert.Base)
+	}
+	shown, err := cfg.Effective()
+	if err != nil || !contains(string(shown), `"text_color": 214`) {
+		t.Errorf("effective: %v\n%s", err, shown)
+	}
+	for text, key := range map[string]string{`{"alert": {"text_color": 256}}`: "alert.text_color", `{"alert": {"text_color": -1}}`: "alert.text_color", `{"alert": {"source": {"X": {"text_color": 999}}}}`: "alert.source.X.text_color"} {
+		if _, err := config.Load(write(t, text)); err == nil || !contains(err.Error(), key) {
+			t.Errorf("%s: %v", text, err)
+		}
+	}
+	m := (config.StyleOverride{Color: intp(1)}).Merge(config.StyleOverride{TextColor: intp(2)})
+	if *m.Color != 1 || *m.TextColor != 2 {
+		t.Errorf("merge: %+v", m)
+	}
+}
