@@ -28,7 +28,7 @@ func Check(r Routine) (Routine, error) {
 		return Routine{}, err
 	}
 	text := "{\"routines\": {" + string(raw) + "}}"
-	got, err := Parse("the routine", []byte(text))
+	got, err := parse("the routine", []byte(text), false)
 	if err != nil {
 		return Routine{}, err
 	}
@@ -265,18 +265,12 @@ func btoi(b bool) int {
 // ---- writing a routine as JSON ----
 
 type outRoutine struct {
-	Description string        `json:"description,omitempty"`
-	Repeat      int           `json:"repeat,omitempty"`
-	Steps       []string      `json:"steps"`
-	Finish      []string      `json:"finish,omitempty"`
-	Waiting     string        `json:"waiting,omitempty"`
-	Summary     []string      `json:"summary,omitempty"`
-	Schedule    []outSchedule `json:"schedule,omitempty"`
-}
-
-type outSchedule struct {
-	Days []string `json:"days"`
-	At   string   `json:"at"`
+	Description string   `json:"description,omitempty"`
+	Repeat      any      `json:"repeat,omitempty"`
+	Steps       []string `json:"steps"`
+	Finish      []string `json:"finish,omitempty"`
+	Waiting     string   `json:"waiting,omitempty"`
+	Summary     []string `json:"summary,omitempty"`
 }
 
 var defaultSummary = []Where{WhereBanner, WhereUI}
@@ -288,7 +282,10 @@ func marshalRoutine(r Routine, indent string) ([]byte, error) {
 		return nil, errors.New("a routine needs a name")
 	}
 	out := outRoutine{Description: r.Description}
-	if r.Repeat > 1 {
+	switch {
+	case r.Repeat == Forever:
+		out.Repeat = "forever"
+	case r.Repeat > 1:
 		out.Repeat = r.Repeat
 	}
 	for _, s := range r.Steps {
@@ -304,13 +301,6 @@ func marshalRoutine(r Routine, indent string) ([]byte, error) {
 		for _, w := range r.Summary {
 			out.Summary = append(out.Summary, string(w))
 		}
-	}
-	for _, s := range r.Schedule {
-		var days []string
-		for _, d := range s.Days {
-			days = append(days, strings.ToLower(d.String()[:3]))
-		}
-		out.Schedule = append(out.Schedule, outSchedule{Days: days, At: s.At})
 	}
 	// An encoder, not json.Marshal: that one writes & < > as \u0026 and the like, which would make a file full of noise.
 	encode := func(v any, prefix string) ([]byte, error) {

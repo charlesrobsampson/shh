@@ -360,6 +360,9 @@ func (r *routineRunner) View() *RoutineView {
 		Name: rt.Name, Position: run.Position, Total: len(plan), Step: current.Label(), Waiting: run.State == store.RoutineWaiting, Interrupted: run.Interrupted, Queued: describeQueued(run.Queued),
 		Level: current.Level, LengthSecs: int(current.Length / time.Second), Started: run.StartedAt,
 	}
+	if d, ok := r.lengthOf(current); ok {
+		v.LengthSecs = int(d / time.Second) // a step that ends at a time of day: what is left of it if it started now
+	}
 	if v.Waiting && run.Position > 0 {
 		v.Previous = plan[run.Position-1].Label()
 	}
@@ -393,6 +396,9 @@ func (r *routineRunner) Info() (RoutineInfo, error) {
 func (r *routineRunner) advance(run store.RoutineRun, rt routine.Routine, plan []routine.Planned, pos int, natural bool) error {
 	step := plan[pos]
 	next := nextSession(plan, pos+1)
+	if next >= len(plan) && rt.Repeat == routine.Forever { // the end of a round: go round again
+		next = nextSession(plan, 0)
+	}
 	last := next >= len(plan)
 	if natural {
 		r.announce(run, rt, plan, pos, next, last)
@@ -436,12 +442,27 @@ func (r *routineRunner) applyBaselines(plan []routine.Planned, from int) (int, e
 
 // beginStep puts the step at pos in force as a timed session, ending whatever level the run had.
 func (r *routineRunner) beginStep(run store.RoutineRun, rt routine.Routine, plan []routine.Planned, pos int) error {
-	pos, err := r.applyBaselines(plan, pos)
-	if err != nil {
-		return err
-	}
-	if pos >= len(plan) { // nothing but baseline steps were left
-		return r.finish(run, &rt, "finished")
+	var length time.Duration
+	wrapped := false
+	for {
+		var err error
+		if pos, err = r.applyBaselines(plan, pos); err != nil {
+			return err
+		}
+		if pos >= len(plan) {
+			if rt.Repeat == routine.Forever && !wrapped { // the end of a round: go round again, once, so a round with nothing to start ends the run
+				pos, wrapped = 0, true
+				continue
+			}
+			return r.finish(run, &rt, "finished") // nothing but baseline steps, or nothing with time left in it
+		}
+		d, ok := r.lengthOf(plan[pos])
+		if !ok { // its end time has gone by: join in where the clock is
+			pos++
+			continue
+		}
+		length = d
+		break
 	}
 	if run.LevelID != 0 {
 		if err := r.w.stack.CloseLayer(run.LevelID); err != nil {
@@ -449,7 +470,7 @@ func (r *routineRunner) beginStep(run store.RoutineRun, rt routine.Routine, plan
 		}
 	}
 	step := plan[pos]
-	level, err := r.w.stack.Escalate(Escalation{Level: step.Level, Duration: step.Length, Note: stepNote(rt, step)})
+	level, err := r.w.stack.Escalate(Escalation{Level: step.Level, Duration: length, Note: stepNote(rt, step)})
 	if err != nil {
 		return err
 	}
@@ -467,7 +488,11 @@ func (r *routineRunner) beginStep(run store.RoutineRun, rt routine.Routine, plan
 func (r *routineRunner) wait(run store.RoutineRun, rt routine.Routine, plan []routine.Planned, pos, nextPos int) error {
 	finished, next := plan[pos], plan[nextPos]
 	var level int64
-	switch rt.Waiting {
+	mode := rt.Waiting
+	if mode == routine.WaitNext && next.Until != "" {
+		mode = routine.WaitStay // a step that ends at a time of day has no countdown to hold: it is worked out when it starts
+	}
+	switch mode {
 	case routine.WaitStay:
 		// Hold the level of the step that ended, with no timer, so walking away does not let notifications through.
 		id, err := r.w.stack.Escalate(Escalation{Level: finished.Level, Note: fmt.Sprintf("%s · waiting to start %s", rt.Name, next.Label())})
@@ -497,7 +522,7 @@ func (r *routineRunner) wait(run store.RoutineRun, rt routine.Routine, plan []ro
 
 // startWaiting starts the step a run is waiting on.
 func (r *routineRunner) startWaiting(run store.RoutineRun, rt routine.Routine, plan []routine.Planned) error {
-	if rt.Waiting == routine.WaitNext && run.LevelID != 0 {
+	if rt.Waiting == routine.WaitNext && run.LevelID != 0 && plan[run.Position].Until == "" {
 		if err := r.w.stack.ResumeLayer(run.LevelID); err != nil {
 			return err
 		}
@@ -561,7 +586,7 @@ func (r *routineRunner) announce(run store.RoutineRun, rt routine.Routine, plan 
 		return
 	}
 	next := plan[nextPos]
-	body := fmt.Sprintf("Next: %s, %s at %s", next.Label(), formatLength(next.Length), levelText(next.Level))
+	body := fmt.Sprintf("Next: %s, %s at %s", next.Label(), lengthText(next), levelText(next.Level))
 	if step.Advance == routine.AdvanceAsk {
 		body += ". Start it with: shh routine next"
 	}
@@ -591,7 +616,40 @@ func (r *routineRunner) find(name string) (routine.Routine, error) {
 	if !ok {
 		return routine.Routine{}, fmt.Errorf("%w: %q", ErrUnknownRoutine, name)
 	}
-	return rt, nil
+	// The routine as it will run: the routines it calls are replaced by their steps.
+	return routine.Expand(all, rt)
+}
+
+// location is the time zone a step's "until" time of day is read in.
+func (r *routineRunner) location() *time.Location {
+	if r.w.cfg.Location != nil {
+		return r.w.cfg.Location
+	}
+	return time.Local
+}
+
+// lengthOf is how long a step lasts if it starts now: its length, or the time left until its end time today. ok is false for a step
+// whose end time has gone by, which is skipped.
+func (r *routineRunner) lengthOf(p routine.Planned) (d time.Duration, ok bool) {
+	if p.Until == "" {
+		return p.Length, true
+	}
+	now := r.w.cfg.Clock.Now().In(r.location())
+	var hour, minute int
+	fmt.Sscanf(p.Until, "%d:%d", &hour, &minute)
+	end := time.Date(now.Year(), now.Month(), now.Day(), hour, minute, 0, 0, r.location())
+	if d = end.Sub(now); d <= 0 {
+		return 0, false
+	}
+	return d, true
+}
+
+// lengthText says how long a step lasts, for a banner: "25m", or "until 11:00".
+func lengthText(p routine.Planned) string {
+	if p.Until != "" {
+		return "until " + p.Until
+	}
+	return formatLength(p.Length)
 }
 
 // load finds the routine of a run and its current plan. A routine that has been edited since the run started is followed as edited:

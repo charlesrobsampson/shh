@@ -6,11 +6,9 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/charlesrobsampson/shh/internal/decide"
 	"github.com/charlesrobsampson/shh/internal/routine"
 )
 
@@ -175,7 +173,11 @@ func (m *Model) editRow(row editorRow, _ bool) {
 	case rowDescription:
 		m.openField("description", e.draft.Description, "a line saying what it is for (may be empty) · Enter keeps it · Esc cancels", row)
 	case rowRepeat:
-		m.openField("repeat", strconv.Itoa(e.draft.Repeat), "how many times the steps run, 1 to 99; the finish steps run once after the last · Enter keeps it · Esc cancels", row)
+		initial := strconv.Itoa(e.draft.Repeat)
+		if e.draft.Repeat == routine.Forever {
+			initial = "forever"
+		}
+		m.openField("repeat", initial, "how many times the steps run, 1 to 99, or forever (until stopped; no finish steps); the finish steps run once after the last · Enter keeps it · Esc cancels", row)
 	case rowWaiting:
 		order := []routine.Waiting{routine.WaitStay, routine.WaitNext, routine.WaitBaseline}
 		i := slices.Index(order, e.draft.Waiting)
@@ -221,10 +223,13 @@ func (m *Model) submitField(p *prompt) {
 	case rowDescription:
 		e.draft.Description = text
 	case rowRepeat:
-		n, err := strconv.Atoi(text)
-		if err != nil || n < 1 || n > 99 {
-			p.err = "a number from 1 to 99"
-			return
+		n := routine.Forever
+		if !strings.EqualFold(text, "forever") {
+			var err error
+			if n, err = strconv.Atoi(text); err != nil || n < 1 || n > 99 {
+				p.err = "a number from 1 to 99, or forever"
+				return
+			}
 		}
 		e.draft.Repeat = n
 	case rowStep, rowFinish, rowAddStep, rowAddFinish:
@@ -392,7 +397,10 @@ func addCommand(r routine.Routine, replace bool) string {
 	if r.Description != "" {
 		parts = append(parts, "-d", shellWord(r.Description))
 	}
-	if r.Repeat > 1 {
+	switch {
+	case r.Repeat == routine.Forever:
+		parts = append(parts, "-r", "forever")
+	case r.Repeat > 1:
 		parts = append(parts, "-r", strconv.Itoa(r.Repeat))
 	}
 	for _, s := range r.Finish {
@@ -429,7 +437,7 @@ func (m *Model) editorView() string {
 	if e.original != "" {
 		title = "Editing " + e.original
 	}
-	lines := []string{"", "  " + bold.Render(title) + dim.Render(fmt.Sprintf("  ·  %s in all", decide.FormatRemaining(int(e.draft.Total()/time.Second))))}
+	lines := []string{"", "  " + bold.Render(title) + dim.Render("  ·  "+e.draft.Length(m.saved))}
 	if e.dirty {
 		lines[1] += dim.Render("  ·  unsaved")
 	}
@@ -476,6 +484,9 @@ func (m *Model) editorRow(e *routineEditor, row editorRow, selected bool) string
 		}
 	case rowRepeat:
 		label, value = "Repeat", fmt.Sprintf("%d time%s", e.draft.Repeat, map[bool]string{true: "", false: "s"}[e.draft.Repeat == 1])
+		if e.draft.Repeat == routine.Forever {
+			value = "forever (until stopped)"
+		}
 	case rowWaiting:
 		label, value = "Waiting", string(e.draft.Waiting)+"  (Enter changes it: stay, next, baseline)"
 	case rowSummary:

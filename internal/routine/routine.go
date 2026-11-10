@@ -64,33 +64,35 @@ const (
 
 // Step is one step of a routine: a timed focus session, or a change of the baseline.
 type Step struct {
-	Kind    StepKind // StepSession unless it is a baseline step
-	Name    string
-	Level   int           // 0-99, as a session's threshold (or, for a baseline step, the baseline); 0 is a break with nothing held back
-	Length  time.Duration // zero for a baseline step
+	Kind   StepKind // StepSession unless it is a baseline step
+	Name   string
+	Level  int           // 0-99, as a session's threshold (or, for a baseline step, the baseline); 0 is a break with nothing held back
+	Length time.Duration // zero for a baseline step, and for a step that lasts until a time of day
+	// Until is "HH:MM" for a session that lasts until then instead of for a length. The time is worked out when the step starts, so a
+	// step whose time has gone by is skipped.
+	Until   string
 	Note    string
 	Alert   Alert
 	Advance Advance
-}
-
-// Schedule says when a routine starts by itself. Reserved: it is read and checked now so files written today keep working, and the
-// worker will act on it in a later phase.
-type Schedule struct {
-	Days []time.Weekday
-	At   string // "15:04"
+	// Call and Times are for a call step: the routine to run and how many times. They are gone once Expand has run.
+	Call  string
+	Times int
 }
 
 // Routine is a named sequence of steps: Steps run Repeat times, then Finish once.
 type Routine struct {
 	Name        string
 	Description string
-	Repeat      int
-	Steps       []Step
-	Finish      []Step
-	Waiting     Waiting
-	Summary     []Where
-	Schedule    []Schedule
+	// Repeat is how many times Steps run, or Forever to go round until the run is stopped.
+	Repeat  int
+	Steps   []Step
+	Finish  []Step
+	Waiting Waiting
+	Summary []Where
 }
+
+// Forever as a routine's Repeat means going round until stopped.
+const Forever = -1
 
 // Planned is one step in the order a run goes through them.
 type Planned struct {
@@ -101,16 +103,25 @@ type Planned struct {
 	Round, Rounds int
 }
 
-// Plan lays the routine out as a flat list: the steps Repeat times, then the finish steps.
+// Plan lays the routine out as a flat list: the steps Repeat times, then the finish steps. A routine that repeats forever is laid out
+// as one round (Rounds is then 0) which the run goes round again, and has no finish steps.
 func (r Routine) Plan() []Planned {
 	var plan []Planned
-	for round := 1; round <= r.Repeat; round++ {
+	rounds := r.Repeat
+	if rounds == Forever {
+		rounds = 1
+	}
+	shown := r.Repeat
+	if shown == Forever {
+		shown = 0
+	}
+	for round := 1; round <= rounds; round++ {
 		for _, s := range r.Steps {
-			plan = append(plan, Planned{Step: s, Index: len(plan), Round: round, Rounds: r.Repeat})
+			plan = append(plan, Planned{Step: s, Index: len(plan), Round: round, Rounds: shown})
 		}
 	}
 	for _, s := range r.Finish {
-		plan = append(plan, Planned{Step: s, Index: len(plan), Round: 0, Rounds: r.Repeat})
+		plan = append(plan, Planned{Step: s, Index: len(plan), Round: 0, Rounds: shown})
 	}
 	return plan
 }
@@ -124,13 +135,27 @@ func (p Planned) Label() string {
 	return fmt.Sprintf("%s (%d/%d)", p.Name, p.Round, p.Rounds)
 }
 
-// Total is how long the routine takes if nothing is paused or waited for.
+// Total is how long the routine takes if nothing is paused or waited for. Steps that last until a time of day are not counted (see
+// Exact), and a routine that repeats forever counts one round.
 func (r Routine) Total() time.Duration {
 	var total time.Duration
 	for _, p := range r.Plan() {
 		total += p.Length
 	}
 	return total
+}
+
+// Exact says whether Total is the whole story: no step lasts until a time of day, and the routine ends by itself.
+func (r Routine) Exact() bool {
+	if r.Repeat == Forever {
+		return false
+	}
+	for _, s := range slices.Concat(r.Steps, r.Finish) {
+		if s.Until != "" {
+			return false
+		}
+	}
+	return true
 }
 
 // Find returns the routine with that name, ignoring case.
@@ -151,6 +176,7 @@ type fileStep struct {
 	Name     *string `json:"name"`
 	Level    *string `json:"level"`
 	Length   *string `json:"length"`
+	Until    *string `json:"until"`
 	Note     *string `json:"note"`
 	Alert    *string `json:"alert"`
 	Advance  *string `json:"advance"`
@@ -170,19 +196,28 @@ func (f *fileStep) UnmarshalJSON(data []byte) error {
 	return json.Unmarshal(data, (*plain)(f))
 }
 
-type fileSchedule struct {
-	Days []string `json:"days"`
-	At   *string  `json:"at"`
+// fileRepeat is a routine's repeat as written: a number, or the word forever.
+type fileRepeat struct{ n int }
+
+func (f *fileRepeat) UnmarshalJSON(data []byte) error {
+	var word string
+	if json.Unmarshal(data, &word) == nil {
+		if strings.EqualFold(word, "forever") {
+			f.n = Forever
+			return nil
+		}
+		return fmt.Errorf("repeat %q is not a number or forever", word)
+	}
+	return json.Unmarshal(data, &f.n)
 }
 
 type fileRoutine struct {
-	Description *string        `json:"description"`
-	Repeat      *int           `json:"repeat"`
-	Steps       []fileStep     `json:"steps"`
-	Finish      []fileStep     `json:"finish"`
-	Waiting     *string        `json:"waiting"`
-	Summary     []string       `json:"summary"`
-	Schedule    []fileSchedule `json:"schedule"`
+	Description *string     `json:"description"`
+	Repeat      *fileRepeat `json:"repeat"`
+	Steps       []fileStep  `json:"steps"`
+	Finish      []fileStep  `json:"finish"`
+	Waiting     *string     `json:"waiting"`
+	Summary     []string    `json:"summary"`
 }
 
 // file is routines.json: an object of routines keyed by name, so a name can only be there once (the decoder rejects a repeated key) and
@@ -207,7 +242,11 @@ func Load(path string) ([]Routine, error) {
 
 // Parse reads routines from the text of a routines file; name is shown in errors. The routines come back in the order they are in the
 // file.
-func Parse(name string, raw []byte) ([]Routine, error) {
+func Parse(name string, raw []byte) ([]Routine, error) { return parse(name, raw, true) }
+
+// parse reads the file; resolve says whether to check that every call step can be expanded, which needs the other routines to be in
+// the text (Check leaves it out, since it looks at one routine on its own).
+func parse(name string, raw []byte, resolve bool) ([]Routine, error) {
 	var f file
 	if err := jsonc.Decode(name, raw, &f); err != nil {
 		return nil, err
@@ -230,6 +269,13 @@ func Parse(name string, raw []byte) ([]Routine, error) {
 		seen[lower] = key
 		out = append(out, r)
 	}
+	if resolve {
+		for _, r := range out {
+			if _, err := Expand(out, r); err != nil {
+				return nil, fmt.Errorf("%s: %w", name, err)
+			}
+		}
+	}
 	return out, nil
 }
 
@@ -246,10 +292,6 @@ func routineKey(name string) string {
 
 var (
 	validName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 _.-]*$`)
-	clock     = regexp.MustCompile(`^([01][0-9]|2[0-3]):[0-5][0-9]$`)
-	weekdays  = map[string]time.Weekday{
-		"sun": time.Sunday, "mon": time.Monday, "tue": time.Tuesday, "wed": time.Wednesday, "thu": time.Thursday, "fri": time.Friday, "sat": time.Saturday,
-	}
 )
 
 const maxRepeat = 99
@@ -269,10 +311,10 @@ func build(fr fileRoutine, name string) (Routine, error) {
 		r.Description = *fr.Description
 	}
 	if fr.Repeat != nil {
-		if *fr.Repeat < 1 || *fr.Repeat > maxRepeat {
-			return r, bad("repeat", "%d is not between 1 and %d", *fr.Repeat, maxRepeat)
+		if n := fr.Repeat.n; n != Forever && (n < 1 || n > maxRepeat) {
+			return r, bad("repeat", "%d is not between 1 and %d (or forever)", n, maxRepeat)
 		}
-		r.Repeat = *fr.Repeat
+		r.Repeat = fr.Repeat.n
 	}
 	if len(fr.Steps) == 0 {
 		return r, bad("steps", "a routine needs at least one step")
@@ -283,6 +325,9 @@ func build(fr fileRoutine, name string) (Routine, error) {
 	}
 	if r.Finish, err = buildSteps(fr.Finish, key+".finish"); err != nil {
 		return r, err
+	}
+	if r.Repeat == Forever && len(r.Finish) > 0 {
+		return r, bad("finish", "a routine that repeats forever never gets to its finish steps: take them out, or give repeat a number")
 	}
 	if fr.Waiting != nil {
 		w := Waiting(*fr.Waiting)
@@ -302,13 +347,6 @@ func build(fr fileRoutine, name string) (Routine, error) {
 				r.Summary = append(r.Summary, w)
 			}
 		}
-	}
-	for i, fs := range fr.Schedule {
-		sch, err := buildSchedule(fs)
-		if err != nil {
-			return r, bad(fmt.Sprintf("schedule[%d]", i), "%v", err)
-		}
-		r.Schedule = append(r.Schedule, sch)
 	}
 	return r, nil
 }
@@ -333,7 +371,7 @@ func buildSteps(fs []fileStep, key string) ([]Step, error) {
 			continue
 		}
 		if f.Baseline != nil {
-			if f.Name != nil || f.Level != nil || f.Length != nil || f.Note != nil || f.Alert != nil || f.Advance != nil {
+			if f.Name != nil || f.Level != nil || f.Length != nil || f.Until != nil || f.Note != nil || f.Alert != nil || f.Advance != nil {
 				return nil, bad("baseline", "a baseline step sets the standing level and nothing else: it takes no other fields")
 			}
 			level, err := decide.ParseThreshold(*f.Baseline)
@@ -355,17 +393,27 @@ func buildSteps(fs []fileStep, key string) ([]Step, error) {
 			}
 			s.Level = level
 		}
-		if f.Length == nil {
-			return nil, bad("length", "a step needs a length such as 25m")
+		switch {
+		case f.Length != nil && f.Until != nil:
+			return nil, bad("until", "a step has a length or an end time, not both")
+		case f.Until != nil:
+			at, ok := NormalClock(*f.Until)
+			if !ok {
+				return nil, bad("until", "%q is not a time of day such as 11:00", *f.Until)
+			}
+			s.Until = at
+		case f.Length == nil:
+			return nil, bad("length", "a step needs a length such as 25m, or until a time such as 11:00")
+		default:
+			length, err := decide.ParseDuration(*f.Length)
+			if err != nil {
+				return nil, bad("length", "%v", err)
+			}
+			if length <= 0 {
+				return nil, bad("length", "%q is not above zero: a step that never ends would never hand over", *f.Length)
+			}
+			s.Length = length
 		}
-		length, err := decide.ParseDuration(*f.Length)
-		if err != nil {
-			return nil, bad("length", "%v", err)
-		}
-		if length <= 0 {
-			return nil, bad("length", "%q is not above zero: a step that never ends would never hand over", *f.Length)
-		}
-		s.Length = length
 		if f.Note != nil {
 			s.Note = *f.Note
 		}
@@ -386,27 +434,6 @@ func buildSteps(fs []fileStep, key string) ([]Step, error) {
 		out = append(out, s)
 	}
 	return out, nil
-}
-
-func buildSchedule(f fileSchedule) (Schedule, error) {
-	var s Schedule
-	if f.At == nil || !clock.MatchString(*f.At) {
-		return s, errors.New(`"at" must be a time of day such as "09:00"`)
-	}
-	s.At = *f.At
-	if len(f.Days) == 0 {
-		return s, errors.New(`"days" must list at least one day, such as ["mon", "tue"]`)
-	}
-	for _, d := range f.Days {
-		day, ok := weekdays[strings.ToLower(d)]
-		if !ok {
-			return s, fmt.Errorf("%q is not a day: use mon, tue, wed, thu, fri, sat or sun", d)
-		}
-		if !slices.Contains(s.Days, day) {
-			s.Days = append(s.Days, day)
-		}
-	}
-	return s, nil
 }
 
 // DefaultPath is routines.json in the given configuration directory.
@@ -432,15 +459,24 @@ const Example = `// Routines: named sequences of focus sessions, filed under the
       "waiting": "stay",
       // where the summary shows when the routine finishes: banner, menu, ui
       "summary": ["banner", "ui"]
-      // "schedule": [{"days": ["mon", "tue", "wed", "thu", "fri"], "at": "09:00"}] // reserved: not acted on yet
     },
     "deep work": {
       "steps": [
         "baseline 30%",                         // set the standing level; it takes no time, and the routine goes straight on
         "deep 90m deep work --alert banner --ask", // --ask waits for you ("shh routine next") before the next step
-        {"name": "rest", "level": "off", "length": "20m"}, // or spell a step out as an object: name, level, length, note, alert, advance
+        {"name": "rest", "level": "off", "length": "20m"}, // or spell a step out as an object: name, level, length (or until), note, alert, advance
         "baseline off"
       ]
+    },
+    "afternoon": {
+      "steps": [
+        "run pomodoro --times 2",            // another routine's steps, twice (a routine cannot call itself, directly or through others)
+        "50% until 17:00 email and wrap up"  // lasts until a time of day instead of for a length; skipped if that time has already passed
+      ]
+    },
+    "all day": {
+      "repeat": "forever",                    // go round and round until stopped (so no finish steps)
+      "steps": ["75% 25m work", "off 5m break"]
     }
   }
 }
@@ -457,7 +493,10 @@ func (r Routine) Outline() string {
 		return strings.Join(out, " -> ")
 	}
 	line := part(r.Steps)
-	if r.Repeat > 1 {
+	switch {
+	case r.Repeat == Forever:
+		line += ", forever"
+	case r.Repeat > 1:
 		line += fmt.Sprintf(", %d times", r.Repeat)
 	}
 	if len(r.Finish) > 0 {

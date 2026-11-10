@@ -24,11 +24,14 @@ func one(body string) string { return `{"routines": {"r": ` + body + `}}` }
 
 func TestTheExampleFileParsesAndHasWhatItClaims(t *testing.T) {
 	rs := parse(t, routine.Example)
-	if len(rs) != 2 {
-		t.Fatalf("%d routines, want the pomodoro and the deep work block", len(rs))
+	if len(rs) != 4 {
+		t.Fatalf("%d routines, want the pomodoro, deep work, afternoon and all day", len(rs))
 	}
-	if rs[0].Name != "pomodoro" || rs[1].Name != "deep work" {
-		t.Errorf("names = %q, %q, want them in the order they are in the file", rs[0].Name, rs[1].Name)
+	if rs[0].Name != "pomodoro" || rs[1].Name != "deep work" || rs[2].Name != "afternoon" || rs[3].Name != "all day" {
+		t.Errorf("names = %q, %q, %q, %q, want them in the order they are in the file", rs[0].Name, rs[1].Name, rs[2].Name, rs[3].Name)
+	}
+	if rs[3].Repeat != routine.Forever || rs[2].Steps[0].Kind != routine.StepCall || rs[2].Steps[1].Until != "17:00" {
+		t.Errorf("the example should show forever, a call and an until step: %+v %+v", rs[3], rs[2])
 	}
 	p, ok := routine.Find(rs, "POMODORO")
 	if !ok {
@@ -152,7 +155,7 @@ func TestLoadReadsTheFileAndNamesItInErrors(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routines.json")
 	must(t, os.WriteFile(path, []byte(routine.Example), 0o600))
 	rs, err := routine.Load(path)
-	if err != nil || len(rs) != 2 {
+	if err != nil || len(rs) != 4 {
 		t.Fatalf("Load = %d routines, %v", len(rs), err)
 	}
 	must(t, os.WriteFile(path, []byte(one(`{"steps": []}`)), 0o600))
@@ -194,10 +197,6 @@ func TestProblemsNameTheKeyThatIsWrong(t *testing.T) {
 		{"a bad finish step", `{"routines": {"a": {"steps": [` + step + `], "finish": [{"name": "f"}]}}}`, "routines.a.finish[0].length"},
 		{"a bad waiting", `{"routines": {"a": {"waiting": "sleep", "steps": [` + step + `]}}}`, "routines.a.waiting"},
 		{"a bad summary place", `{"routines": {"a": {"summary": ["ui", "email"], "steps": [` + step + `]}}}`, "routines.a.summary[1]"},
-		{"a schedule with no time", `{"routines": {"a": {"steps": [` + step + `], "schedule": [{"days": ["mon"]}]}}}`, "routines.a.schedule[0]"},
-		{"a schedule with a bad time", `{"routines": {"a": {"steps": [` + step + `], "schedule": [{"days": ["mon"], "at": "9am"}]}}}`, "routines.a.schedule[0]"},
-		{"a schedule with a bad day", `{"routines": {"a": {"steps": [` + step + `], "schedule": [{"days": ["funday"], "at": "09:00"}]}}}`, "routines.a.schedule[0]"},
-		{"a schedule with no days", `{"routines": {"a": {"steps": [` + step + `], "schedule": [{"at": "09:00"}]}}}`, "routines.a.schedule[0]"},
 		{"a problem in a routine with a spaced name", `{"routines": {"deep work": {"steps": [{"name": "s"}]}}}`, `routines['deep work'].steps[0].length`},
 		{"a second routine's problem", `{"routines": {"ok": {"steps": [` + step + `]}, "bad": {"repeat": 0, "steps": [` + step + `]}}}`, "routines.bad.repeat"},
 	}
@@ -238,15 +237,6 @@ func TestUnknownKeysAndBrokenJSONAreErrorsWithTheirLine(t *testing.T) {
 	}
 	if _, err := routine.Parse("routines.json", []byte(`{"routines": [{"name": "a"}]}`)); err == nil {
 		t.Error("the old list form should be refused, not half understood")
-	}
-}
-
-func TestAScheduleIsReadAndKept(t *testing.T) {
-	rs := parse(t, one(`{"steps": [{"name": "s", "length": "5m"}],
-		"schedule": [{"days": ["Mon", "wed", "mon"], "at": "09:30"}, {"days": ["sat"], "at": "20:00"}]}`))
-	s := rs[0].Schedule
-	if len(s) != 2 || s[0].At != "09:30" || len(s[0].Days) != 2 || s[0].Days[0] != time.Monday || s[0].Days[1] != time.Wednesday || s[1].Days[0] != time.Saturday {
-		t.Errorf("schedule = %+v, want mon and wed (once each) at 09:30 and saturday at 20:00", s)
 	}
 }
 

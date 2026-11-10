@@ -205,7 +205,6 @@ func TestEveryFieldOfARoutineSurvivesTheRoundTrip(t *testing.T) {
 	r.Finish = mustSteps(t, "off 15m long rest", "baseline off")
 	r.Waiting = routine.WaitNext
 	r.Summary = []routine.Where{routine.WhereMenu}
-	r.Schedule = []routine.Schedule{{Days: []time.Weekday{time.Monday, time.Friday}, At: "09:30"}}
 	if err := routine.Save(p, r, false); err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +214,7 @@ func TestEveryFieldOfARoutineSurvivesTheRoundTrip(t *testing.T) {
 	}
 	got := rs[0]
 	if got.Outline() != r.Outline() || got.Description != r.Description || got.Repeat != 3 || got.Waiting != routine.WaitNext ||
-		len(got.Summary) != 1 || got.Summary[0] != routine.WhereMenu || len(got.Schedule) != 1 || got.Schedule[0].At != "09:30" || len(got.Schedule[0].Days) != 2 {
+		len(got.Summary) != 1 || got.Summary[0] != routine.WhereMenu {
 		t.Errorf("got  %+v\nwant %+v", got, r)
 	}
 	if text := read(t, p); strings.Contains(text, `\u003c`) || strings.Contains(text, `\u0026`) {
@@ -229,7 +228,7 @@ func TestDefaultsAreLeftOutOfTheFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := read(t, p)
-	for _, absent := range []string{"repeat", "waiting", "summary", "finish", "schedule", "description"} {
+	for _, absent := range []string{"repeat", "waiting", "summary", "finish", "description"} {
 		if strings.Contains(text, absent) {
 			t.Errorf("%q is the default and should not be written:\n%s", absent, text)
 		}

@@ -779,3 +779,26 @@ func TestQDoesNothingWhenStoppingAndUDropsTheQueuedSession(t *testing.T) {
 		t.Errorf("calls %s message %q", got, r.m.messageLine())
 	}
 }
+
+func TestTheEditorTakesForeverForRepeat(t *testing.T) {
+	r, _, _ := editorRig(t)
+	r.press("e", "j", "j", "enter")
+	r.typeInto("forever")
+	if r.m.editor.draft.Repeat != routine.Forever || !strings.Contains(r.view(), "forever (until stopped)") {
+		t.Errorf("draft = %+v\\n%s", r.m.editor.draft, r.view())
+	}
+	if got := addCommand(r.m.editor.draft, true); !strings.Contains(got, "-r forever") {
+		t.Errorf("command = %s", got)
+	}
+	r.press("s")
+	if r.m.editor == nil || !strings.Contains(r.m.notice, "finish steps") {
+		t.Errorf("pomo has finish steps, which a routine that repeats forever cannot have: %q", r.m.notice)
+	}
+}
+
+func TestTheListSaysHowLongEachRoutineTakes(t *testing.T) {
+	r, _ := routinesRig(t)
+	if v := r.view(); !strings.Contains(v, "(1h15m in all)") || !strings.Contains(v, "(1h30m in all)") {
+		t.Errorf("view:\\n%s", v)
+	}
+}

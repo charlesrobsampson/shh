@@ -511,3 +511,41 @@ func TestNonTerminalRefusalNamesAllThreeFlags(t *testing.T) {
 		t.Errorf("code %d stderr %q", code, r.err.String())
 	}
 }
+
+func TestRoutineAddTakesForeverAndCallsAndUntilSteps(t *testing.T) {
+	r := newRig(t, false)
+	r.mustRun("routine", "add", "base", "75% 25m work", "off 5m break")
+	out := r.mustRun("routine", "add", "day", "run base --times 2", "50% until 17:00 email", "-r", "forever")
+	if !strings.Contains(out, "run base --times 2 -> 50% until 17:00 email, forever") || !strings.Contains(out, "(until stopped)") {
+		t.Errorf("out:\n%s", out)
+	}
+	rs, err := routine.Load(r.routines)
+	if err != nil || len(rs) != 2 || rs[1].Repeat != routine.Forever {
+		t.Fatalf("%v %v", rs, err)
+	}
+	if code := r.run("routine", "add", "x", "75% 25m a", "-r", "often"); code == 0 || !strings.Contains(r.err.String(), "not a number or forever") {
+		t.Errorf("code %d stderr %q", code, r.err.String())
+	}
+	if code := r.run("routine", "add", "y", "run nothing"); code == 0 || !strings.Contains(r.err.String(), "no routine is called that") {
+		t.Errorf("code %d stderr %q", code, r.err.String())
+	}
+	if code := r.run("routine", "add", "z", "75% 25m a", "--finish", "off 5m b", "-r", "forever"); code == 0 || !strings.Contains(r.err.String(), "finish steps") {
+		t.Errorf("code %d stderr %q", code, r.err.String())
+	}
+}
+
+func TestListSaysHowLongARoutineTakesIncludingCallsAndSetTimes(t *testing.T) {
+	r := newRig(t, false)
+	r.saveRoutines(`{"routines": {
+	  "base": {"repeat": 2, "steps": ["75% 25m work", "off 5m break"]},
+	  "twice": {"steps": ["run base --times 2"]},
+	  "timed": {"steps": ["75% 25m work", "50% until 17:00 email"]},
+	  "onlytimed": {"steps": ["50% until 17:00 email"]},
+	  "loop": {"repeat": "forever", "steps": ["75% 25m work"]}}}`)
+	out := r.mustRun("routine", "list")
+	for _, want := range []string{"(1h in all)", "(2h in all)", "(at least 25m in all)", "(ends at set times)", "(until stopped)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("list is missing %q:\n%s", want, out)
+		}
+	}
+}

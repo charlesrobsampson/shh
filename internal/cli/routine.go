@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 	"strings"
-	"time"
 
 	"github.com/charlesrobsampson/shh/internal/decide"
 	"github.com/charlesrobsampson/shh/internal/routine"
@@ -44,19 +44,19 @@ func (c *routineListCmd) Run(env *Env) error {
 		if i > 0 {
 			fmt.Fprintln(env.Stdout)
 		}
-		fmt.Fprint(env.Stdout, describeRoutine(r))
+		fmt.Fprint(env.Stdout, describeRoutine(r, routines))
 	}
 	return nil
 }
 
 // describeRoutine writes a routine for people: its name and description, then its plan on one line.
-func describeRoutine(r routine.Routine) string {
+func describeRoutine(r routine.Routine, all []routine.Routine) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s", r.Name)
 	if r.Description != "" {
 		fmt.Fprintf(&b, "  %s", r.Description)
 	}
-	fmt.Fprintf(&b, "\n  %s  (%s in all)\n", stepsLine(r), decide.FormatRemaining(int(r.Total()/time.Second)))
+	fmt.Fprintf(&b, "\n  %s  (%s)\n", stepsLine(r), r.Length(all))
 	return b.String()
 }
 
@@ -82,7 +82,7 @@ type routineAddCmd struct {
 	Name        string   `arg:"" help:"The routine's name (quote it if it has spaces)."`
 	Steps       []string `arg:"" optional:"" help:"Each step as a shh command in quotes: \"75% 25m work --alert banner\", \"off 5m break\", \"baseline 30%\". Add --ask to a step to wait for approval before the next."`
 	Description string   `short:"d" help:"A line saying what the routine is for."`
-	Repeat      int      `short:"r" default:"1" help:"How many times the steps run."`
+	Repeat      string   `short:"r" default:"1" help:"How many times the steps run: a number, or forever to go round until stopped."`
 	Finish      []string `short:"f" sep:"none" help:"A step to run once after the last round (repeat the flag for more than one)."`
 	Waiting     string   `short:"w" default:"stay" enum:"stay,next,baseline" help:"What focus does while the routine waits for you: stay (keep the level), next (the next step's level, timer held) or baseline."`
 	Summary     []string `default:"banner,ui" enum:"banner,menu,ui" help:"Where to show the summary of a finished run."`
@@ -90,7 +90,15 @@ type routineAddCmd struct {
 }
 
 func (c *routineAddCmd) Run(env *Env) error {
-	r := routine.Routine{Name: c.Name, Description: c.Description, Repeat: c.Repeat, Waiting: routine.Waiting(c.Waiting)}
+	repeat := routine.Forever
+	if !strings.EqualFold(c.Repeat, "forever") {
+		n, err := strconv.Atoi(c.Repeat)
+		if err != nil {
+			return usagef("--repeat %q is not a number or forever", c.Repeat)
+		}
+		repeat = n
+	}
+	r := routine.Routine{Name: c.Name, Description: c.Description, Repeat: repeat, Waiting: routine.Waiting(c.Waiting)}
 	for _, w := range c.Summary {
 		r.Summary = append(r.Summary, routine.Where(w))
 	}
@@ -122,7 +130,8 @@ func (c *routineAddCmd) Run(env *Env) error {
 	}
 	saved, _ := routine.Check(r)
 	fmt.Fprintf(env.Stdout, "Saved %s in %s\n", saved.Name, env.RoutinesPath)
-	fmt.Fprint(env.Stdout, describeRoutine(saved))
+	all, _ := routine.Load(env.RoutinesPath)
+	fmt.Fprint(env.Stdout, describeRoutine(saved, all))
 	fmt.Fprintf(env.Stdout, "Start it with: shh routine run %s\n", saved.Name)
 	return nil
 }

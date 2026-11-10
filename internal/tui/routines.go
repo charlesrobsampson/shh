@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/lipgloss"
 
@@ -232,7 +231,7 @@ func (m *Model) routinesView() string {
 			cursor = "> "
 		}
 		title := fmt.Sprintf("%-14s %s", r.Name, r.Description)
-		total := dim.Render(fmt.Sprintf("  (%s in all)", decide.FormatRemaining(int(r.Total()/time.Second))))
+		total := dim.Render("  (" + r.Length(m.saved) + ")")
 		rowStyle := func(s lipgloss.Style, text string) string { return s.Reverse(selected).Render(text) }
 		row := rowStyle(bold, " "+cursor+title)
 		if gap := m.width - lipgloss.Width(row); selected && gap > 0 {

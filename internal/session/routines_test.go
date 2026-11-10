@@ -31,6 +31,7 @@ func newRoutineRig(t *testing.T, text string) *routineRig {
 	t.Helper()
 	rr := &routineRig{text: &text}
 	rr.workerRig = newWorkerRig(t, func(c *session.Config) {
+		c.Location = time.UTC
 		c.Routines = func() ([]routine.Routine, error) { return routine.Parse("routines.json", []byte(*rr.text)) }
 	})
 	return rr
@@ -40,6 +41,7 @@ func newRoutineRig(t *testing.T, text string) *routineRig {
 func (r *routineRig) restart() {
 	r.t.Helper()
 	r.worker = r.build(func(c *session.Config) {
+		c.Location = time.UTC
 		c.Routines = func() ([]routine.Routine, error) { return routine.Parse("routines.json", []byte(*r.text)) }
 	})
 }
@@ -1068,5 +1070,152 @@ func TestQueueingWithNoRoutineRunningStartsTheSessionAsUsual(t *testing.T) {
 	}
 	if r.top().Percent != 90 {
 		t.Error("with no routine there is nothing to wait for")
+	}
+}
+
+// ---- steps that end at a time of day, calls, and going round forever (the rig's clock starts at 09:00 UTC) ----
+
+func TestAnUntilStepLastsUntilThatTimeAndTheNextStepFollowsOnTime(t *testing.T) {
+	r := newRoutineRig(t, `{"routines": {"day": {"steps": ["90% until 10:30 deep", "off until 10:45 break", "50% until 12:00 email"]}}}`)
+	r.start("day")
+	if top := r.top(); top.Percent != 90 || top.Remaining != 90*time.Minute {
+		t.Fatalf("top = %+v, want 90 minutes (09:00 to 10:30)", top)
+	}
+	if v := r.info().Active; v.LengthSecs != 90*60 {
+		t.Errorf("view length = %d", v.LengthSecs)
+	}
+	r.pass(90 * time.Minute)
+	if top := r.top(); top.Percent != 0 || top.Remaining != 15*time.Minute {
+		t.Errorf("top = %+v, want the 15 minute break", top)
+	}
+	r.pass(15 * time.Minute)
+	if top := r.top(); top.Percent != 50 || top.Remaining != 75*time.Minute {
+		t.Errorf("top = %+v", top)
+	}
+}
+
+func TestAStepWhoseTimeHasGoneByIsSkippedSoARunStartedLateJoinsInProgress(t *testing.T) {
+	r := newRoutineRig(t, `{"routines": {"day": {"steps": ["90% until 09:30 deep", "off until 09:45 break", "50% until 12:00 email"]}}}`)
+	r.clock.Advance(40 * time.Minute) // 09:40
+	r.start("day")
+	if v := r.info().Active; v == nil || v.Step != "break" || r.top().Remaining != 5*time.Minute {
+		t.Errorf("view %+v, top %+v: it should join in the break", v, r.top())
+	}
+}
+
+func TestARoutineWhoseStepsHaveAllGoneByEndsAtOnce(t *testing.T) {
+	r := newRoutineRig(t, `{"routines": {"early": {"steps": ["90% until 08:00 deep", "baseline 30%"]}}}`)
+	r.start("early")
+	if r.info().Active != nil {
+		t.Error("nothing is left to do: the run is over")
+	}
+	if got := r.baseline(); got != 30 {
+		t.Errorf("baseline = %d: the baseline step after the skipped one still applies", got)
+	}
+}
+
+func TestAnUntilStepReadsTheClockInTheWorkersTimeZone(t *testing.T) {
+	r := newRoutineRig(t, `{"routines": {"x": {"steps": ["75% until 09:30 a"]}}}`)
+	r.start("x")
+	if r.top().Remaining != 30*time.Minute {
+		t.Errorf("remaining = %v", r.top().Remaining)
+	}
+}
+
+func TestWaitingNextHoldsNothingForAnUntilStepAndWorksItOutWhenItStarts(t *testing.T) {
+	r := newRoutineRig(t, `{"routines": {"w": {"waiting": "next", "steps": ["75% 10m a --ask", "50% until 12:00 b"]}}}`)
+	r.start("w")
+	r.pass(10 * time.Minute) // 09:10, waiting
+	v := r.info().Active
+	if v == nil || !v.Waiting || r.top().Percent != 75 || r.top().Timed {
+		t.Fatalf("view %+v top %+v: an until step cannot hold a countdown, so the hold stays at the level that ended", v, r.top())
+	}
+	r.pass(20 * time.Minute) // 09:30
+	if err := r.worker.RoutineNext(); err != nil {
+		t.Fatal(err)
+	}
+	if top := r.top(); top.Percent != 50 || top.Remaining != 150*time.Minute {
+		t.Errorf("top = %+v, want 09:30 to 12:00", top)
+	}
+}
+
+func TestACallRunsTheCalledRoutinesStepsInPlace(t *testing.T) {
+	r := newRoutineRig(t, `{"routines": {
+	  "inner": {"repeat": 2, "steps": ["75% 10m a", "off 5m b"]},
+	  "outer": {"steps": ["run inner", "50% 20m c"]}}}`)
+	r.start("outer")
+	var steps []string
+	for i := 0; i < 5; i++ {
+		v := r.info().Active
+		if v == nil {
+			t.Fatalf("the run ended early after %v", steps)
+		}
+		steps = append(steps, v.Step)
+		r.pass(time.Duration(r.top().Remaining))
+	}
+	want := "inner › a (1/2),inner › b (1/2),inner › a (2/2),inner › b (2/2),c"
+	if got := strings.Join(steps, ","); got != want {
+		t.Errorf("steps = %s\nwant    %s", got, want)
+	}
+	if r.info().Active != nil {
+		t.Error("the run should be over")
+	}
+}
+
+func TestARoutineThatRepeatsForeverGoesRoundAgainUntilStopped(t *testing.T) {
+	r := newRoutineRig(t, `{"routines": {"loop": {"repeat": "forever", "steps": ["75% 10m work", "off 5m break"]}}}`)
+	r.start("loop")
+	var seen []string
+	for i := 0; i < 7; i++ {
+		v := r.info().Active
+		if v == nil {
+			t.Fatalf("a routine that repeats forever ended after %v", seen)
+		}
+		seen = append(seen, v.Step)
+		r.pass(r.top().Remaining)
+	}
+	if got := strings.Join(seen, ","); got != "work,break,work,break,work,break,work" {
+		t.Errorf("seen = %s", got)
+	}
+	if v := r.info().Active; v == nil || v.Position != 1 || v.Total != 2 {
+		t.Errorf("view = %+v: the position stays inside one round", v)
+	}
+	if err := r.worker.RoutineStop(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestForeverWithAskWaitsAtTheEndOfEachRound(t *testing.T) {
+	r := newRoutineRig(t, `{"routines": {"loop": {"repeat": "forever", "steps": ["75% 10m work", "off 5m break --ask"]}}}`)
+	r.start("loop")
+	r.pass(10 * time.Minute)
+	r.pass(5 * time.Minute) // the break ends and asks
+	v := r.info().Active
+	if v == nil || !v.Waiting || v.Step != "work" || v.Position != 0 {
+		t.Fatalf("view = %+v: it should wait to start the next round", v)
+	}
+	if err := r.worker.RoutineNext(); err != nil {
+		t.Fatal(err)
+	}
+	if v := r.info().Active; v.Waiting || v.Step != "work" {
+		t.Errorf("view = %+v", v)
+	}
+}
+
+func TestForeverWithEveryStepGoneByEndsInsteadOfSpinning(t *testing.T) {
+	r := newRoutineRig(t, `{"routines": {"loop": {"repeat": "forever", "steps": ["75% until 08:00 work"]}}}`)
+	r.start("loop")
+	if r.info().Active != nil {
+		t.Error("a round with nothing that can start ends the run")
+	}
+}
+
+func TestACalledRoutineEditedMidRunIsFollowedAsEdited(t *testing.T) {
+	r := newRoutineRig(t, `{"routines": {"inner": {"steps": ["75% 10m a"]}, "outer": {"steps": ["run inner", "50% 20m c"]}}}`)
+	r.start("outer")
+	*r.text = `{"routines": {"inner": {"steps": ["75% 10m a", "off 5m extra"]}, "outer": {"steps": ["run inner", "50% 20m c"]}}}`
+	r.pass(10 * time.Minute)
+	if v := r.info().Active; v == nil || v.Step != "inner › extra" {
+		t.Errorf("view = %+v", v)
 	}
 }
