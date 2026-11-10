@@ -784,3 +784,159 @@ func TestNoRunHasEndedMeansNoLastSummary(t *testing.T) {
 		t.Error("a run that has not ended has no summary")
 	}
 }
+
+// ---- a session of the user's own on top of a routine ("continue after") ----
+
+func (r *routineRig) interrupt(d time.Duration) {
+	r.t.Helper()
+	if _, err := r.worker.Escalate(session.Escalation{Level: 90, Duration: d, Note: "a call", ContinueRoutine: true}); err != nil {
+		r.t.Fatal(err)
+	}
+}
+
+func TestAUserSessionOnTopHoldsTheStepAndItCarriesOnAfterwards(t *testing.T) {
+	r := newRoutineRig(t, pomodoroLite)
+	r.start("pomo")
+	r.pass(10 * time.Minute) // 15 minutes of work left
+	r.interrupt(20 * time.Minute)
+	if v := r.info().Active; v == nil || !v.Interrupted || v.Step != "work (1/2)" {
+		t.Fatalf("view = %+v", v)
+	}
+	if top := r.top(); top.Percent != 90 || top.Remaining != 20*time.Minute {
+		t.Errorf("top = %+v", top)
+	}
+	r.pass(20 * time.Minute) // the user's session runs out; the step must not have used any of its time
+	v := r.info().Active
+	if v == nil || v.Interrupted || v.Step != "work (1/2)" {
+		t.Fatalf("after the session the routine should carry on in the same step: %+v", v)
+	}
+	if top := r.top(); top.Percent != 75 || top.Paused || top.Remaining != 15*time.Minute {
+		t.Errorf("top = %+v, want the work step resumed with its 15 minutes", top)
+	}
+	r.pass(15 * time.Minute)
+	if v := r.info().Active; v == nil || v.Step != "break (1/2)" {
+		t.Errorf("then the routine goes on as usual: %+v", v)
+	}
+}
+
+func TestStopEndsTheUsersSessionAndTheRoutineResumes(t *testing.T) {
+	r := newRoutineRig(t, pomodoroLite)
+	r.start("pomo")
+	r.pass(5 * time.Minute)
+	r.interrupt(0) // until stopped
+	if top := r.top(); top.Percent != 90 || top.Timed {
+		t.Fatalf("top = %+v", top)
+	}
+	if err := r.worker.Stop(); err != nil {
+		t.Fatalf("stop should end the user's own session: %v", err)
+	}
+	r.pass(time.Second)
+	if v := r.info().Active; v == nil || v.Interrupted || r.top().Percent != 75 || r.top().Remaining != 20*time.Minute {
+		t.Errorf("view %+v, top %+v: the routine should carry on with its 20 minutes", v, r.top())
+	}
+	if err := r.worker.Stop(); !errors.Is(err, session.ErrRoutineRunning) {
+		t.Errorf("with nothing of the user's on top, stop is refused again: %v", err)
+	}
+}
+
+func TestSeveralUserSessionsOnTopAreAllWaitedFor(t *testing.T) {
+	r := newRoutineRig(t, pomodoroLite)
+	r.start("pomo")
+	r.interrupt(10 * time.Minute)
+	r.interrupt(30 * time.Minute)
+	r.pass(10 * time.Minute) // the first one has run out, but the second is still on top
+	if v := r.info().Active; v == nil || !v.Interrupted {
+		t.Fatalf("a session is still on top: %+v", v)
+	}
+	r.pass(20 * time.Minute)
+	if v := r.info().Active; v == nil || v.Interrupted || r.top().Percent != 75 {
+		t.Errorf("view %+v, top %+v", v, r.top())
+	}
+}
+
+func TestNextWhileInterruptedEndsTheUsersSessionAndMovesOn(t *testing.T) {
+	r := newRoutineRig(t, pomodoroLite)
+	r.start("pomo")
+	r.interrupt(30 * time.Minute)
+	if err := r.worker.RoutineNext(); err != nil {
+		t.Fatal(err)
+	}
+	v := r.info().Active
+	if v == nil || v.Interrupted || v.Step != "break (1/2)" || len(r.status().Layers) != 1 {
+		t.Errorf("view %+v, layers %d: the user's session should be gone and the break begun", v, len(r.status().Layers))
+	}
+}
+
+func TestBackWhileInterruptedRestartsTheStepWithoutTheUsersSession(t *testing.T) {
+	r := newRoutineRig(t, pomodoroLite)
+	r.start("pomo")
+	r.pass(25 * time.Minute) // on the break
+	r.interrupt(30 * time.Minute)
+	if err := r.worker.RoutineBack(); err != nil {
+		t.Fatal(err)
+	}
+	if v := r.info().Active; v == nil || v.Interrupted || v.Step != "work (1/2)" || len(r.status().Layers) != 1 {
+		t.Errorf("view %+v layers %d", v, len(r.status().Layers))
+	}
+}
+
+func TestStoppingTheRoutineWhileInterruptedLeavesTheUsersSession(t *testing.T) {
+	r := newRoutineRig(t, pomodoroLite)
+	r.start("pomo")
+	r.interrupt(30 * time.Minute)
+	if err := r.worker.RoutineStop(); err != nil {
+		t.Fatal(err)
+	}
+	if r.info().Active != nil {
+		t.Error("the run should have ended")
+	}
+	if st := r.status(); len(st.Layers) != 1 || st.Layers[0].Percent != 90 {
+		t.Errorf("layers = %+v, want the user's session to carry on alone", st.Layers)
+	}
+}
+
+func TestAUserSessionOnAWaitingRoutineDoesNotReplaceItsHold(t *testing.T) {
+	r := newRoutineRig(t, askRoutine("stay"))
+	r.start("ask")
+	r.pass(25 * time.Minute) // waiting, with the untimed hold in force
+	r.interrupt(0)           // untimed too: it must not replace the hold
+	if st := r.status(); len(st.Layers) != 2 {
+		t.Fatalf("layers = %d, want the hold and the user's session", len(st.Layers))
+	}
+	if v := r.info().Active; v == nil || !v.Waiting {
+		t.Fatalf("view = %+v", v)
+	}
+	if err := r.worker.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	r.pass(time.Second)
+	if v := r.info().Active; v == nil || !v.Waiting || v.Interrupted || r.top().Percent != 75 {
+		t.Errorf("the routine should still be waiting on its hold: %+v, top %+v", v, r.top())
+	}
+}
+
+func TestAnInterruptionSurvivesAWorkerRestart(t *testing.T) {
+	r := newRoutineRig(t, pomodoroLite)
+	r.start("pomo")
+	r.pass(5 * time.Minute)
+	r.interrupt(10 * time.Minute)
+	r.restart()
+	if v := r.info().Active; v == nil || !v.Interrupted {
+		t.Fatalf("view = %+v", v)
+	}
+	r.pass(10 * time.Minute)
+	if v := r.info().Active; v == nil || v.Interrupted || r.top().Remaining != 20*time.Minute {
+		t.Errorf("view %+v, top %+v", v, r.top())
+	}
+}
+
+func TestWithoutContinueRoutineASessionIsStillRefused(t *testing.T) {
+	r := newRoutineRig(t, pomodoroLite)
+	r.start("pomo")
+	if _, err := r.worker.Escalate(session.Escalation{Level: 90, Duration: time.Minute}); !errors.Is(err, session.ErrRoutineRunning) {
+		t.Errorf("err = %v", err)
+	}
+	if v := r.info().Active; v.Interrupted {
+		t.Error("a refused session must not leave the routine marked as interrupted")
+	}
+}

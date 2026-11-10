@@ -685,3 +685,50 @@ func TestTheRoutinesTabShowsTheLastRunWhenTheRoutineAsksForTheUI(t *testing.T) {
 		t.Errorf("a routine that did not ask for the UI is not shown there:\n%s", v)
 	}
 }
+
+func TestCHoldsTheRoutineAndStartsTheSessionOnTopOfIt(t *testing.T) {
+	r, fr := routinesRig(t)
+	r.press("f1")
+	r.control.err = session.ErrRoutineRunning
+	r.press("s")
+	r.typeText("90% 20m a call")
+	r.press("enter")
+	if r.m.prompt == nil || !r.m.prompt.canContinue || !strings.Contains(r.m.prompt.hint(), "c holds the routine") {
+		t.Fatalf("the question should offer to continue the routine after: %+v", r.m.prompt)
+	}
+	r.control.err = nil
+	r.control.calls = nil
+	r.press("c")
+	if len(fr.calls) != 0 {
+		t.Errorf("continuing must not end the routine: %v", fr.calls)
+	}
+	if len(r.control.calls) != 1 || !strings.HasPrefix(r.control.calls[0], "focus-after-routine 90 20m0s") {
+		t.Errorf("calls = %v", r.control.calls)
+	}
+	if !strings.Contains(r.m.messageLine(), "--continue-routine") {
+		t.Errorf("the command shown should be the one that does it: %q", r.m.messageLine())
+	}
+}
+
+func TestOnlyANewSessionCanContinueTheRoutine(t *testing.T) {
+	r, fr := routinesRig(t)
+	r.press("f1")
+	r.control.err = session.ErrRoutineRunning
+	r.press("x")
+	if r.m.prompt == nil || r.m.prompt.canContinue {
+		t.Fatalf("stopping cannot continue a routine: %+v", r.m.prompt)
+	}
+	r.press("c")
+	if r.m.prompt == nil || len(fr.calls) != 0 {
+		t.Error("c should do nothing when stopping")
+	}
+}
+
+func TestTheTabsShowARoutineHeldWhileTheUsersSessionRuns(t *testing.T) {
+	r, _ := routinesRig(t)
+	r.worker.view = session.StatusView{Routine: &session.RoutineView{Name: "pomo", Step: "work (1/2)", Interrupted: true, Total: 5}}
+	r.refresh()
+	if v := r.view(); !strings.Contains(v, "held while your own session runs") {
+		t.Errorf("view:\n%s", v)
+	}
+}

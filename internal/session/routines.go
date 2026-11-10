@@ -104,6 +104,9 @@ func (r *routineRunner) next() error {
 	if err != nil {
 		return err
 	}
+	if err := r.endInterruption(run); err != nil { // moving on ends the user's own session too: it was in the step's way
+		return err
+	}
 	if run.State == store.RoutineWaiting {
 		return r.startWaiting(run, rt, plan)
 	}
@@ -120,6 +123,9 @@ func (r *routineRunner) Back() error {
 	defer r.mu.Unlock()
 	run, rt, plan, err := r.active()
 	if err != nil {
+		return err
+	}
+	if err := r.endInterruption(run); err != nil {
 		return err
 	}
 	target := run.Position // a baseline step is not one to go back to: back to the session before it
@@ -165,6 +171,14 @@ func (r *routineRunner) Tick() error {
 		}
 		return r.finish(run, nil, "missing")
 	}
+	if run.Interrupted {
+		if still, err := r.resumeAfterInterruption(run); err != nil || still {
+			return err
+		}
+		if run, _, err = r.w.cfg.Store.ActiveRoutineRun(); err != nil {
+			return err
+		}
+	}
 	if run.LevelID == 0 {
 		return nil // waiting with nothing in force (waiting: baseline); nothing can end by itself
 	}
@@ -179,6 +193,73 @@ func (r *routineRunner) Tick() error {
 		return r.finish(run, &rt, "stopped") // ended by hand, not by running out
 	}
 	return r.advance(run, rt, plan, run.Position, true)
+}
+
+// Interrupt holds the step in force while the user's own session runs on top of it: its countdown stops, and Tick starts it again when
+// that session, and any others above it, have ended. A run that is waiting has nothing counting down, so only the note is made.
+func (r *routineRunner) Interrupt() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	run, ok, err := r.w.cfg.Store.ActiveRoutineRun()
+	if err != nil || !ok || run.Interrupted {
+		return err
+	}
+	if run.State == store.RoutineRunning && run.LevelID != 0 {
+		if err := r.w.stack.PauseLayer(run.LevelID); err != nil && !errors.Is(err, store.ErrNotFound) {
+			return err
+		}
+	}
+	return r.w.cfg.Store.SetRoutineRunInterrupted(run.ID, true)
+}
+
+// Interrupted says whether the user's own session is running over the routine.
+func (r *routineRunner) Interrupted() bool {
+	run, ok, err := r.w.cfg.Store.ActiveRoutineRun()
+	return err == nil && ok && run.Interrupted
+}
+
+// resumeAfterInterruption starts the step's countdown again once nothing is above it. It reports whether the run is still
+// interrupted.
+func (r *routineRunner) resumeAfterInterruption(run store.RoutineRun) (bool, error) {
+	st, err := r.w.stack.Status()
+	if err != nil {
+		return true, err
+	}
+	for i, l := range st.Layers {
+		if l.ID == run.LevelID && i < len(st.Layers)-1 {
+			return true, nil // something is still on top of the step
+		}
+	}
+	if run.State == store.RoutineRunning && run.LevelID != 0 {
+		if err := r.w.stack.ResumeLayer(run.LevelID); err != nil && !errors.Is(err, store.ErrNotFound) {
+			return true, err
+		}
+	}
+	if err := r.w.cfg.Store.SetRoutineRunInterrupted(run.ID, false); err != nil {
+		return true, err
+	}
+	return false, r.w.syncSuppressor()
+}
+
+// endInterruption closes whatever the user's session left above the step, for a run that is about to leave that step.
+func (r *routineRunner) endInterruption(run store.RoutineRun) error {
+	if !run.Interrupted {
+		return nil
+	}
+	st, err := r.w.stack.Status()
+	if err != nil {
+		return err
+	}
+	above := false
+	for _, l := range st.Layers {
+		if above {
+			if err := r.w.stack.CloseLayer(l.ID); err != nil {
+				return err
+			}
+		}
+		above = above || l.ID == run.LevelID
+	}
+	return r.w.cfg.Store.SetRoutineRunInterrupted(run.ID, false)
 }
 
 // Active says whether a run is in progress.
@@ -199,7 +280,7 @@ func (r *routineRunner) View() *RoutineView {
 	}
 	current := plan[run.Position]
 	v := &RoutineView{
-		Name: rt.Name, Position: run.Position, Total: len(plan), Step: current.Label(), Waiting: run.State == store.RoutineWaiting,
+		Name: rt.Name, Position: run.Position, Total: len(plan), Step: current.Label(), Waiting: run.State == store.RoutineWaiting, Interrupted: run.Interrupted,
 		Level: current.Level, LengthSecs: int(current.Length / time.Second), Started: run.StartedAt,
 	}
 	if v.Waiting && run.Position > 0 {

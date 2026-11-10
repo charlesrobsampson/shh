@@ -220,7 +220,7 @@ func TestOnATerminalTheUserIsAskedBeforeARoutineIsEnded(t *testing.T) {
 	for _, tt := range []struct {
 		answer    string
 		wantEnded bool
-	}{{"y\n", true}, {"yes\n", true}, {"Y\n", true}, {"n\n", false}, {"\n", false}, {"", false}, {"maybe\n", false}} {
+	}{{"y\n", true}, {"yes\n", true}, {"Y\n", true}, {"e\n", true}, {"n\n", false}, {"\n", false}, {"", false}, {"maybe\n", false}} {
 		r := newRig(t, true)
 		r.saveRoutines(lite)
 		r.mustRun("routine", "run", "pomo")
@@ -229,7 +229,7 @@ func TestOnATerminalTheUserIsAskedBeforeARoutineIsEnded(t *testing.T) {
 		r.out.Reset()
 		r.mustRun("focus", "90%")
 		out := r.out.String()
-		if !strings.Contains(out, "A routine is running. End it and start this session? [y/N]") {
+		if !strings.Contains(out, "A routine is running. [e]nd it and start this session, [c]ontinue it after this session, or leave it? [e/c/N]") {
 			t.Errorf("%q: the question was not asked: %q", tt.answer, out)
 		}
 		st := r.view()
@@ -404,5 +404,41 @@ func TestRoutineRemoveNeedsYesWhenItCannotAsk(t *testing.T) {
 	}
 	if code := r.run("routine", "remove", "nope", "-y"); code == 0 || !strings.Contains(r.err.String(), "no saved routine") {
 		t.Errorf("code %d stderr %q", code, r.err.String())
+	}
+}
+
+func TestAnswerCContinuesTheRoutineAfterTheNewSession(t *testing.T) {
+	r := newRig(t, true)
+	r.saveRoutines(lite)
+	r.mustRun("routine", "run", "pomo")
+	r.env.IsTerminal = true
+	r.env.Stdin = strings.NewReader("c\n")
+	r.mustRun("focus", "90%", "20m", "a call")
+	st := r.view()
+	if st.Routine == nil || !st.Routine.Interrupted || st.Level != 90 || len(st.Layers) != 2 {
+		t.Fatalf("status = %+v, want the routine held with the session on top", st)
+	}
+	if out := r.mustRun("routine", "status"); !strings.Contains(out, "held while your own session runs") {
+		t.Errorf("status:\n%s", out)
+	}
+}
+
+func TestContinueRoutineFlagNeedsNoQuestionAndConflictsWithEndRoutine(t *testing.T) {
+	r := newRig(t, true)
+	r.saveRoutines(lite)
+	r.mustRun("routine", "run", "pomo")
+	r.mustRun("focus", "90%", "--continue-routine")
+	if st := r.view(); st.Routine == nil || !st.Routine.Interrupted {
+		t.Errorf("status = %+v", st)
+	}
+	if code := r.run("focus", "90%", "--end-routine", "--continue-routine"); code == 0 || !strings.Contains(r.err.String(), "opposite") {
+		t.Errorf("code %d stderr %q", code, r.err.String())
+	}
+	// not a terminal and no flag: the refusal names both ways out
+	r2 := newRig(t, true)
+	r2.saveRoutines(lite)
+	r2.mustRun("routine", "run", "pomo")
+	if code := r2.run("focus", "90%"); code == 0 || !strings.Contains(r2.err.String(), "--continue-routine") || !strings.Contains(r2.err.String(), "--end-routine") {
+		t.Errorf("code %d stderr %q", code, r2.err.String())
 	}
 }

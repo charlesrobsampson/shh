@@ -16,6 +16,7 @@ import (
 type Control interface {
 	Baseline(level int) (session.StatusView, error)
 	Focus(level int, duration time.Duration, then *int, note string) (session.StatusView, error)
+	FocusAfterRoutine(level int, duration time.Duration, then *int, note, alert string) (session.StatusView, error)
 	SetLevel(level int) (session.StatusView, error)
 	Stop(all bool) (session.StatusView, error)
 	Pause() (session.StatusView, error)
@@ -157,10 +158,17 @@ func (m *Model) run(needsWorker bool, cmd string, do func(Control) (session.Stat
 		m.notice = "shh is not running, so there is no focus session to change"
 		return false
 	}
+	cont := m.continueWith
+	m.continueWith = nil
 	view, err := do(m.cfg.Control)
 	if errors.Is(err, session.ErrRoutineRunning) && m.cfg.Routines != nil {
-		// A routine is in charge of focus: ask before ending it, and do what was asked if the answer is yes.
-		m.askToEndRoutine(func() { m.run(needsWorker, cmd, do, done) })
+		// A routine is in charge of focus: ask before ending it, and do what was asked if the answer is yes. A new session may also go
+		// on top of it, and the routine carries on afterwards.
+		var continuing func()
+		if cont != nil {
+			continuing = func() { m.run(needsWorker, cmd+" --continue-routine", cont, done) }
+		}
+		m.askToEndRoutine(func() { m.run(needsWorker, cmd, do, done) }, continuing)
 		return false
 	}
 	if err != nil {
@@ -199,6 +207,7 @@ func (m *Model) startFocus(p *prompt) {
 		return
 	}
 	m.prompt = nil
+	m.continueWith = func(c Control) (session.StatusView, error) { return c.FocusAfterRoutine(level, length, then, note, "") }
 	m.run(true, startCommand(level, length, then, note), func(c Control) (session.StatusView, error) { return c.Focus(level, length, then, note) },
 		func(session.StatusView) string {
 			text := "focus started at " + decide.FormatLevel(level)

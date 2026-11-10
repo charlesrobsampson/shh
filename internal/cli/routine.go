@@ -274,6 +274,9 @@ func (c *routineStatusCmd) Run(env *Env) error {
 
 // describeStep says where a run is: "work (2/4), step 3 of 9: 25m at 75%", or that it is waiting for the next step to be started.
 func describeStep(v session.RoutineView) string {
+	if v.Interrupted {
+		return fmt.Sprintf("%s: %s, step %d of %d, held while your own session runs; it carries on when that ends.", v.Name, v.Step, v.Position+1, v.Total)
+	}
 	if v.Waiting {
 		text := fmt.Sprintf("%s: waiting to start %s (%s at %s), step %d of %d.", v.Name, v.Step, decide.FormatRemaining(v.LengthSecs), levelWord(v.Level), v.Position+1, v.Total)
 		return text + " Start it with: shh routine next"
@@ -291,26 +294,57 @@ func summaryText(s session.RoutineSummary) string {
 
 // ---- manual changes during a routine ----
 
-// endRoutineFirst is what `shh focus` and `shh stop` do when the worker refuses because a routine is running: on a terminal they ask
-// whether to end the routine, and with --end-routine they just do, so scripts can say so. Declining (or not being able to ask) leaves
-// everything as it was and says how to carry on.
-func (e *Env) endRoutineFirst(refused error, endRoutine bool, what string) (bool, error) {
+// routineChoice is what to do about a routine that is in the way of a session started or stopped by hand.
+type routineChoice int
+
+const (
+	choiceNone     routineChoice = iota // leave everything as it was
+	choiceEnd                           // end the routine, then do what was asked
+	choiceContinue                      // do what was asked on top of the routine, which carries on afterwards
+)
+
+// routineInTheWay is what `shh focus` and `shh stop` do when the worker refuses because a routine is running: on a terminal they ask
+// whether to end the routine (and, for a new session, whether to hold it and carry on after), and with --end-routine or
+// --continue-routine they just do, so scripts can say so. Declining (or not being able to ask) leaves everything as it was and says how
+// to carry on.
+func (e *Env) routineInTheWay(refused error, end, cont bool, what string, canContinue bool) (routineChoice, error) {
 	if !errors.Is(refused, session.ErrRoutineRunning) {
-		return false, refused
+		return choiceNone, refused
 	}
-	if !endRoutine {
+	choice := choiceNone
+	switch {
+	case cont:
+		choice = choiceContinue
+	case end:
+		choice = choiceEnd
+	default:
+		flags := "--end-routine to end it and " + what
+		if canContinue {
+			flags += ", or --continue-routine to hold it meanwhile"
+		}
 		if !e.IsTerminal || e.Stdin == nil {
-			return false, fmt.Errorf("%w; add --end-routine to end it and %s", refused, what)
+			return choiceNone, fmt.Errorf("%w; add %s", refused, flags)
 		}
-		fmt.Fprintf(e.Stdout, "A routine is running. End it and %s? [y/N] ", what)
+		if canContinue {
+			fmt.Fprintf(e.Stdout, "A routine is running. [e]nd it and %s, [c]ontinue it after this session, or leave it? [e/c/N] ", what)
+		} else {
+			fmt.Fprintf(e.Stdout, "A routine is running. End it and %s? [y/N] ", what)
+		}
 		answer, _ := bufio.NewReader(e.Stdin).ReadString('\n')
-		if a := strings.ToLower(strings.TrimSpace(answer)); a != "y" && a != "yes" {
+		switch a := strings.ToLower(strings.TrimSpace(answer)); {
+		case a == "y" || a == "yes" || a == "e" || a == "end":
+			choice = choiceEnd
+		case canContinue && (a == "c" || a == "continue"):
+			choice = choiceContinue
+		default:
 			fmt.Fprintln(e.Stdout, "Left the routine running.")
-			return false, nil
+			return choiceNone, nil
 		}
 	}
-	if _, err := e.client().RoutineStop(); err != nil && !errors.Is(err, session.ErrNoRoutine) {
-		return false, err
+	if choice == choiceEnd {
+		if _, err := e.client().RoutineStop(); err != nil && !errors.Is(err, session.ErrNoRoutine) {
+			return choiceNone, err
+		}
 	}
-	return true, nil
+	return choice, nil
 }

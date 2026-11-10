@@ -24,6 +24,7 @@ type focusCmd struct {
 	Note       string   `short:"m" help:"A note about what you are doing."`
 	Then       string   `aliases:"clear" help:"What to fall back to when the timer ends: a percentage or a tier (see -f). Default: the layer beneath."`
 	EndRoutine bool     `name:"end-routine" help:"If a routine is running, end it and start this session (without it you are asked)."`
+	Continue   bool     `name:"continue-routine" help:"If a routine is running, hold it while this session runs and carry on with it when this ends (without it you are asked)."`
 	Alert      string   `help:"Announce when the timer ends: none (the default), sound or banner. Needs a length."`
 	Words      []string `arg:"" optional:"" name:"note" help:"The note, as plain words (same as -m). A leading level or length is read as one, so \"shh focus deep 25m writing\" works; tiers: off (0), light (35%), medium (65%), deep (90%), lockdown (99%)."`
 }
@@ -73,11 +74,21 @@ func (c *focusCmd) Run(env *Env) error {
 	}
 	view, err := env.client().FocusAlert(level, duration, then, note, c.Alert)
 	if errors.Is(err, session.ErrRoutineRunning) {
-		ended, askErr := env.endRoutineFirst(err, c.EndRoutine, "start this session")
-		if askErr != nil || !ended {
+		if c.EndRoutine && c.Continue {
+			return usagef("--end-routine and --continue-routine say opposite things: use one")
+		}
+		choice, askErr := env.routineInTheWay(err, c.EndRoutine, c.Continue, "start this session", true)
+		if askErr != nil {
 			return askErr
 		}
-		view, err = env.client().FocusAlert(level, duration, then, note, c.Alert)
+		switch choice {
+		case choiceEnd:
+			view, err = env.client().FocusAlert(level, duration, then, note, c.Alert)
+		case choiceContinue:
+			view, err = env.client().FocusAfterRoutine(level, duration, then, note, c.Alert)
+		default:
+			return nil
+		}
 	}
 	if err != nil {
 		return err
@@ -98,8 +109,8 @@ func (c *stopCmd) Run(env *Env) error {
 		return nil
 	}
 	if errors.Is(err, session.ErrRoutineRunning) {
-		ended, askErr := env.endRoutineFirst(err, c.EndRoutine, "stop")
-		if askErr != nil || !ended {
+		choice, askErr := env.routineInTheWay(err, c.EndRoutine, false, "stop", false)
+		if askErr != nil || choice != choiceEnd {
 			return askErr
 		}
 		// Ending the routine closed the session it was running, which is what stop asked for; only --all has more (the baseline) to do.

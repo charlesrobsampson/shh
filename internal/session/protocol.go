@@ -38,6 +38,8 @@ type Request struct {
 	Feedback       string `json:"feedback,omitempty"`
 	// SessionAlert is how "focus" announces the end of the session: none, sound or banner.
 	SessionAlert string `json:"session_alert,omitempty"`
+	// ContinueRoutine says "focus" may go on top of a running routine, which carries on when it ends.
+	ContinueRoutine bool `json:"continue_routine,omitempty"`
 	// Name is the routine that "routine_run" starts.
 	Name string `json:"name,omitempty"`
 	// Alert is what the "alert" command shows, through the same alerter the worker uses, so that every banner on screen is
@@ -80,6 +82,8 @@ type RoutineView struct {
 	Previous string `json:"previous,omitempty"`
 	Next     string `json:"next,omitempty"`
 	Waiting  bool   `json:"waiting"`
+	// Interrupted says the user's own session is running on top of the step, whose countdown is held until it ends.
+	Interrupted bool `json:"interrupted,omitempty"`
 	// Level and LengthSecs are those of Step, so a client can say "break: 5m at off" for a step that has not started.
 	Level      int       `json:"level"`
 	LengthSecs int       `json:"length_secs"`

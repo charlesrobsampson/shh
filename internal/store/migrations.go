@@ -166,4 +166,7 @@ CREATE INDEX routine_run_steps_run ON routine_run_steps (run_id);
 ALTER TABLE focus_sessions ADD COLUMN alert TEXT;
 ALTER TABLE focus_sessions ADD COLUMN alert_done BOOLEAN NOT NULL DEFAULT 0;
 `,
+
+	// A routine paused while the user's own session runs on top of it (task 52, "continue after").
+	`ALTER TABLE routine_runs ADD COLUMN interrupted BOOLEAN NOT NULL DEFAULT 0;`,
 }

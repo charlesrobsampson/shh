@@ -123,7 +123,9 @@ type Model struct {
 	// editor is the routine being made or changed on the Routines tab; nil when none is.
 	editor *routineEditor
 	// afterRoutine is what to do once the user agrees to end the running routine, which was in the way of what they asked for.
-	afterRoutine func()
+	afterRoutine, afterContinue func()
+	// continueWith, set just before run, is how to start the same session on top of a running routine, if that makes sense for it.
+	continueWith func(Control) (session.StatusView, error)
 	// count is the number typed before a motion (3 in 3k), vim style; 0 when none is pending.
 	count int
 	// prompt is the label being typed after t; nil when there is none.
@@ -482,6 +484,8 @@ type prompt struct {
 	// For an editor field: what is being asked, how to answer, and which row it is for.
 	label, help string
 	row         editorRow
+	// canContinue is set on the question about a routine in the way when the session can also go on top of it.
+	canContinue bool
 	// back is how many characters the cursor is from the end of the text: 0 types at the end, as a text set by the program does.
 	back int
 }
@@ -663,9 +667,14 @@ func (m *Model) promptKey(msg tea.KeyMsg) {
 			default:
 				m.stop(true)
 			}
+		case "c", "C":
+			if p.kind == promptConfirmEndRoutine && m.afterContinue != nil {
+				m.prompt = nil
+				m.continueRoutineThen()
+			}
 		case "n", "N", "esc", "ctrl+c":
 			m.prompt = nil
-			m.afterRoutine = nil
+			m.afterRoutine, m.afterContinue = nil, nil
 		}
 		return
 	}
@@ -1377,6 +1386,9 @@ func (p *prompt) hint() string {
 	case promptConfirmStopAll:
 		return "y turns it all off · n or Esc keeps it"
 	case promptConfirmEndRoutine:
+		if p.canContinue {
+			return "y ends the routine and starts it · c holds the routine and carries on with it after · n or Esc leaves it"
+		}
 		return "y ends the routine and goes on · n or Esc leaves it running"
 	case promptConfirmDelete:
 		return "y deletes it from the routines file · n or Esc keeps it"
@@ -1490,7 +1502,7 @@ var helpSections = []struct {
 		{"x", "End the routine now. Whatever it had in force is stopped."},
 		{"a, e, c, d", "a makes a new routine, e edits the selected one, c edits a copy of it under a new name, d deletes it (asking first). The same things from a terminal: shh routine add and shh routine remove; the line under the page shows the command that would save what you are editing."},
 		{"the editor", "j and k move over the rows, Enter changes one: Name, Description and Repeat take typing; Waiting and Summary go to their next choice. Each step is one shh command, such as 75% 25m work --alert banner or baseline 30% (--ask makes it wait for you before the next). Enter on a step edits it, a adds one, d deletes one (a routine keeps at least one), J and K move it down or up. s saves; only that routine's text in routines.json changes, so your comments and the rest of the file stay as they were. Esc cancels; with unsaved changes it asks for a second Esc."},
-		{"on the Focus tab", "While a routine runs, starting or stopping a session by hand asks first: y ends the routine and does what you asked, n leaves everything as it was. The Focus tab also shows the routine's step under the level in force."},
+		{"on the Focus tab", "While a routine runs, starting or stopping a session by hand asks first: y ends the routine and does what you asked, n leaves everything as it was. For a new session, c holds the routine instead: its step stops counting down while your session runs, and the routine carries on from there when your session ends (Stop on your session ends it early, and the routine resumes at once). The Focus tab also shows the routine's step under the level in force."},
 	}},
 	{"Reading", []helpTopic{
 		{"e", "Read the whole message across the screen, with the list out of the way. j and k scroll it (numbers work here too), e or Esc puts it back. Reading this way does not mark the notification as read."},

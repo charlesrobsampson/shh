@@ -104,14 +104,19 @@ func (w *Worker) SetBaseline(level int) error {
 
 func (w *Worker) Escalate(e Escalation) (int64, error) {
 	if w.routines.Active() {
-		return 0, ErrRoutineRunning
+		if !e.ContinueRoutine {
+			return 0, ErrRoutineRunning
+		}
+		if err := w.routines.Interrupt(); err != nil {
+			return 0, err
+		}
 	}
 	id, err := w.stack.Escalate(e)
 	return id, w.then(err)
 }
 
 func (w *Worker) Stop() error {
-	if w.routines.Active() {
+	if w.routines.Active() && !w.routines.Interrupted() { // ending the user's own session over a routine is what Stop is then for
 		return ErrRoutineRunning
 	}
 	return w.then(w.stack.Stop())

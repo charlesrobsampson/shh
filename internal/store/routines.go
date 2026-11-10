@@ -31,6 +31,8 @@ type RoutineRun struct {
 	State      RoutineState
 	// LevelID is the focus level of the current step, or of the hold while waiting; 0 when there is none.
 	LevelID int64
+	// Interrupted says the user started a session of their own on top of the step, whose countdown is held until that ends.
+	Interrupted bool
 	// Blocked, Allowed and ActiveSecs total what the run did, filled in when it ends.
 	Blocked, Allowed, ActiveSecs int
 }
@@ -44,7 +46,7 @@ type RoutineRunStep struct {
 	StartedAt time.Time
 }
 
-const runColumns = `id, routine, CAST(started_at AS TEXT), CAST(ended_at AS TEXT), end_reason, position, steps_total, state, level_id, blocked, allowed, active_secs`
+const runColumns = `id, routine, CAST(started_at AS TEXT), CAST(ended_at AS TEXT), end_reason, position, steps_total, state, level_id, blocked, allowed, active_secs, interrupted`
 
 // StartRoutineRun records a new run at its first step. It returns ErrRoutineActive if one is running already.
 func (s *Store) StartRoutineRun(routine string, now time.Time, stepsTotal int) (int64, error) {
@@ -71,6 +73,11 @@ func (s *Store) ActiveRoutineRun() (RoutineRun, bool, error) {
 // SetRoutineRunProgress moves an active run to a step and a state, and says which focus level now belongs to it (0 for none).
 func (s *Store) SetRoutineRunProgress(id int64, position int, state RoutineState, levelID int64) error {
 	return s.update(id, `UPDATE routine_runs SET position = ?, state = ?, level_id = ? WHERE id = ? AND ended_at IS NULL`, position, string(state), nullID(levelID), id)
+}
+
+// SetRoutineRunInterrupted notes that the user's own session is running on top of the run's step (or that it is not any more).
+func (s *Store) SetRoutineRunInterrupted(id int64, interrupted bool) error {
+	return s.update(id, `UPDATE routine_runs SET interrupted = ? WHERE id = ? AND ended_at IS NULL`, interrupted, id)
 }
 
 // AddRoutineRunStep notes that a run started a step on a focus level.
@@ -165,7 +172,7 @@ func scanRun(row scanner) (RoutineRun, error) {
 		level   sql.NullInt64
 	)
 	if err := row.Scan(&run.ID, &run.Routine, &started, &ended, &reason, &run.Position, &run.StepsTotal, &state, &level,
-		&run.Blocked, &run.Allowed, &run.ActiveSecs); err != nil {
+		&run.Blocked, &run.Allowed, &run.ActiveSecs, &run.Interrupted); err != nil {
 		return RoutineRun{}, err
 	}
 	var err error

@@ -111,16 +111,27 @@ func (m *Model) routineDo(cmd string, do func(RoutineControl) (session.RoutineIn
 	m.notice, m.noticeCmd, m.noticeHasCmd = done(info), cmd, true
 }
 
-// askToEndRoutine is what a manual focus change does when a routine is in the way: ask, and carry on with it if the answer is yes.
-func (m *Model) askToEndRoutine(retry func()) {
-	m.afterRoutine = retry
+// askToEndRoutine is what a manual focus change does when a routine is in the way: ask, and carry on with it if the answer is yes. A
+// new session (continuing is not nil) may also go on top of the routine, which carries on when it ends.
+func (m *Model) askToEndRoutine(retry, continuing func()) {
+	m.afterRoutine, m.afterContinue = retry, continuing
 	m.openAsk(promptConfirmEndRoutine, "")
+	m.prompt.canContinue = continuing != nil
+}
+
+// continueRoutineThen does what was asked on top of the routine, which waits for it.
+func (m *Model) continueRoutineThen() {
+	do := m.afterContinue
+	m.afterRoutine, m.afterContinue = nil, nil
+	if do != nil {
+		do()
+	}
 }
 
 // endRoutineThen ends the running routine and then does what was asked, which the routine had refused.
 func (m *Model) endRoutineThen() {
 	retry := m.afterRoutine
-	m.afterRoutine = nil
+	m.afterRoutine, m.afterContinue = nil, nil
 	if m.cfg.Routines == nil {
 		m.notice = "routines are not available here"
 		return
@@ -136,6 +147,9 @@ func (m *Model) endRoutineThen() {
 
 // routineLine is a running routine in one line, for the Focus tab and the top of the Routines tab.
 func routineLine(r session.RoutineView) string {
+	if r.Interrupted {
+		return fmt.Sprintf("%s: %s (step %d of %d), held while your own session runs", r.Name, r.Step, r.Position+1, r.Total)
+	}
 	if r.Waiting {
 		line := fmt.Sprintf("%s: waiting for you to start %s (step %d of %d)", r.Name, r.Step, r.Position+1, r.Total)
 		if r.Previous != "" {

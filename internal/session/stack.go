@@ -29,6 +29,9 @@ type Escalation struct {
 	Note string
 	// Alert says how the end of a timed session is announced: "" or "none" (the default), "sound" or "banner".
 	Alert string
+	// ContinueRoutine asks for the session to go on top of a running routine, which waits for it to end and then carries on. Without
+	// it, the worker refuses a session while a routine runs.
+	ContinueRoutine bool
 }
 
 // Alert values.
@@ -115,7 +118,7 @@ func (s *Stack) Escalate(e Escalation) (id int64, err error) {
 		return 0, fmt.Errorf("%w: a session with no length never ends, so it has nothing to alert about", ErrInvalid)
 	}
 	err = s.act(func(now time.Time, layers []store.Level) error {
-		if n := len(layers); e.Duration == 0 && n > 0 {
+		if n := len(layers); e.Duration == 0 && n > 0 && !e.ContinueRoutine { // a routine's own hold must not be replaced by it
 			if top := layers[n-1]; top.Kind == store.LevelEscalation && top.TargetMinutes == 0 {
 				if err := s.store.CloseLevel(top.ID, now); err != nil {
 					return err

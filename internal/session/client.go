@@ -41,6 +41,11 @@ func (c *Client) FocusAlert(level int, duration time.Duration, then *int, note, 
 	return c.do(Request{Cmd: "focus", Level: &level, DurationSecs: int(duration / time.Second), Then: then, Note: note, SessionAlert: alert})
 }
 
+// FocusAfterRoutine starts a session on top of a running routine, which waits for it to end and then carries on.
+func (c *Client) FocusAfterRoutine(level int, duration time.Duration, then *int, note, alert string) (StatusView, error) {
+	return c.do(Request{Cmd: "focus", Level: &level, DurationSecs: int(duration / time.Second), Then: then, Note: note, SessionAlert: alert, ContinueRoutine: true})
+}
+
 func (c *Client) SetLevel(level int) (StatusView, error) {
 	return c.do(Request{Cmd: "level", Level: &level})
 }
