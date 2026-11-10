@@ -18,6 +18,7 @@ type RoutineControl interface {
 	RoutineNext() (session.RoutineInfo, error)
 	RoutineBack() (session.RoutineInfo, error)
 	RoutineStop() (session.RoutineInfo, error)
+	RoutineUnqueue() (session.RoutineInfo, error)
 }
 
 // listless says whether the tab shows no list of notifications, so the notification keys have nothing to act on.
@@ -62,6 +63,13 @@ func (m *Model) routineKey(key string) bool {
 		m.copyRoutine()
 	case "d":
 		m.confirmDelete()
+	case "u":
+		if m.status.Routine == nil || m.status.Routine.Queued == "" {
+			m.notice = "nothing is queued for when the routine ends"
+			return true
+		}
+		m.routineDo("shh routine unqueue", func(c RoutineControl) (session.RoutineInfo, error) { return c.RoutineUnqueue() },
+			func(session.RoutineInfo) string { return "dropped the queued session" }, false)
 	case "n":
 		m.routineDo("shh routine next", func(c RoutineControl) (session.RoutineInfo, error) { return c.RoutineNext() },
 			func(session.RoutineInfo) string { return "on to the next step" }, false)
@@ -113,16 +121,25 @@ func (m *Model) routineDo(cmd string, do func(RoutineControl) (session.RoutineIn
 
 // askToEndRoutine is what a manual focus change does when a routine is in the way: ask, and carry on with it if the answer is yes. A
 // new session (continuing is not nil) may also go on top of the routine, which carries on when it ends.
-func (m *Model) askToEndRoutine(retry, continuing func()) {
-	m.afterRoutine, m.afterContinue = retry, continuing
+func (m *Model) askToEndRoutine(retry, continuing, queueing func()) {
+	m.afterRoutine, m.afterContinue, m.afterQueue = retry, continuing, queueing
 	m.openAsk(promptConfirmEndRoutine, "")
 	m.prompt.canContinue = continuing != nil
+}
+
+// queueRoutineThen keeps what was asked for when the routine ends.
+func (m *Model) queueRoutineThen() {
+	do := m.afterQueue
+	m.afterRoutine, m.afterContinue, m.afterQueue = nil, nil, nil
+	if do != nil {
+		do()
+	}
 }
 
 // continueRoutineThen does what was asked on top of the routine, which waits for it.
 func (m *Model) continueRoutineThen() {
 	do := m.afterContinue
-	m.afterRoutine, m.afterContinue = nil, nil
+	m.afterRoutine, m.afterContinue, m.afterQueue = nil, nil, nil
 	if do != nil {
 		do()
 	}
@@ -131,7 +148,7 @@ func (m *Model) continueRoutineThen() {
 // endRoutineThen ends the running routine and then does what was asked, which the routine had refused.
 func (m *Model) endRoutineThen() {
 	retry := m.afterRoutine
-	m.afterRoutine, m.afterContinue = nil, nil
+	m.afterRoutine, m.afterContinue, m.afterQueue = nil, nil, nil
 	if m.cfg.Routines == nil {
 		m.notice = "routines are not available here"
 		return
@@ -147,6 +164,14 @@ func (m *Model) endRoutineThen() {
 
 // routineLine is a running routine in one line, for the Focus tab and the top of the Routines tab.
 func routineLine(r session.RoutineView) string {
+	line := routineLineOnly(r)
+	if r.Queued != "" {
+		line += " · queued after it: " + r.Queued
+	}
+	return line
+}
+
+func routineLineOnly(r session.RoutineView) string {
 	if r.Interrupted {
 		return fmt.Sprintf("%s: %s (step %d of %d), held while your own session runs", r.Name, r.Step, r.Position+1, r.Total)
 	}

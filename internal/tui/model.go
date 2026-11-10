@@ -123,9 +123,9 @@ type Model struct {
 	// editor is the routine being made or changed on the Routines tab; nil when none is.
 	editor *routineEditor
 	// afterRoutine is what to do once the user agrees to end the running routine, which was in the way of what they asked for.
-	afterRoutine, afterContinue func()
+	afterRoutine, afterContinue, afterQueue func()
 	// continueWith, set just before run, is how to start the same session on top of a running routine, if that makes sense for it.
-	continueWith func(Control) (session.StatusView, error)
+	continueWith, queueWith func(Control) (session.StatusView, error)
 	// count is the number typed before a motion (3 in 3k), vim style; 0 when none is pending.
 	count int
 	// prompt is the label being typed after t; nil when there is none.
@@ -672,9 +672,14 @@ func (m *Model) promptKey(msg tea.KeyMsg) {
 				m.prompt = nil
 				m.continueRoutineThen()
 			}
+		case "q", "Q":
+			if p.kind == promptConfirmEndRoutine && m.afterQueue != nil {
+				m.prompt = nil
+				m.queueRoutineThen()
+			}
 		case "n", "N", "esc", "ctrl+c":
 			m.prompt = nil
-			m.afterRoutine, m.afterContinue = nil, nil
+			m.afterRoutine, m.afterContinue, m.afterQueue = nil, nil, nil
 		}
 		return
 	}
@@ -1363,6 +1368,9 @@ func (p *prompt) question() string {
 	case promptConfirmStopAll:
 		return " turn focus off completely, baseline included? "
 	case promptConfirmEndRoutine:
+		if p.canContinue {
+			return " a routine is running: "
+		}
 		return " a routine is running. End it and do this? "
 	case promptConfirmDelete:
 		return " delete this routine? "
@@ -1387,7 +1395,7 @@ func (p *prompt) hint() string {
 		return "y turns it all off · n or Esc keeps it"
 	case promptConfirmEndRoutine:
 		if p.canContinue {
-			return "y ends the routine and starts it · c holds the routine and carries on with it after · n or Esc leaves it"
+			return "y: end the routine and start this · c: interrupt it, it continues after this ends · q: start this after the routine ends · n: leave it"
 		}
 		return "y ends the routine and goes on · n or Esc leaves it running"
 	case promptConfirmDelete:
@@ -1502,7 +1510,7 @@ var helpSections = []struct {
 		{"x", "End the routine now. Whatever it had in force is stopped."},
 		{"a, e, c, d", "a makes a new routine, e edits the selected one, c edits a copy of it under a new name, d deletes it (asking first). The same things from a terminal: shh routine add and shh routine remove; the line under the page shows the command that would save what you are editing."},
 		{"the editor", "j and k move over the rows, Enter changes one: Name, Description and Repeat take typing; Waiting and Summary go to their next choice. Each step is one shh command, such as 75% 25m work --alert banner or baseline 30% (--ask makes it wait for you before the next). Enter on a step edits it, a adds one, d deletes one (a routine keeps at least one), J and K move it down or up. s saves; only that routine's text in routines.json changes, so your comments and the rest of the file stay as they were. Esc cancels; with unsaved changes it asks for a second Esc."},
-		{"on the Focus tab", "While a routine runs, starting or stopping a session by hand asks first: y ends the routine and does what you asked, n leaves everything as it was. For a new session, c holds the routine instead: its step stops counting down while your session runs, and the routine carries on from there when your session ends (Stop on your session ends it early, and the routine resumes at once). The Focus tab also shows the routine's step under the level in force."},
+		{"on the Focus tab", "While a routine runs, starting or stopping a session by hand asks first: y ends the routine and does what you asked, n leaves everything as it was. For a new session there are two more answers. c interrupts the routine: your session starts now, the routine's step stops counting down, and the routine continues from there when your session ends (Stop on your session ends it early, and the routine resumes at once). q queues your session: nothing changes now, and it starts when the routine ends, however it ends. u on the Routines tab drops a queued session. The Focus tab also shows the routine's step under the level in force."},
 	}},
 	{"Reading", []helpTopic{
 		{"e", "Read the whole message across the screen, with the list out of the way. j and k scroll it (numbers work here too), e or Esc puts it back. Reading this way does not mark the notification as read."},

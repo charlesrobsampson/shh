@@ -96,6 +96,9 @@ func (f *fakeControl) Focus(level int, d time.Duration, then *int, note string) 
 func (f *fakeControl) FocusAfterRoutine(level int, d time.Duration, then *int, note, _ string) (session.StatusView, error) {
 	return f.answer(fmt.Sprintf("focus-after-routine %d %v note=%q", level, d, note))
 }
+func (f *fakeControl) FocusQueued(level int, d time.Duration, then *int, note, _ string) (session.StatusView, error) {
+	return f.answer(fmt.Sprintf("focus-queued %d %v note=%q", level, d, note))
+}
 func (f *fakeControl) SetLevel(level int) (session.StatusView, error) {
 	return f.answer(fmt.Sprintf("level %d", level))
 }

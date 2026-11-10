@@ -33,6 +33,8 @@ type RoutineRun struct {
 	LevelID int64
 	// Interrupted says the user started a session of their own on top of the step, whose countdown is held until that ends.
 	Interrupted bool
+	// Queued is a session to start when the run ends, as the worker wrote it ("" for none).
+	Queued string
 	// Blocked, Allowed and ActiveSecs total what the run did, filled in when it ends.
 	Blocked, Allowed, ActiveSecs int
 }
@@ -46,7 +48,7 @@ type RoutineRunStep struct {
 	StartedAt time.Time
 }
 
-const runColumns = `id, routine, CAST(started_at AS TEXT), CAST(ended_at AS TEXT), end_reason, position, steps_total, state, level_id, blocked, allowed, active_secs, interrupted`
+const runColumns = `id, routine, CAST(started_at AS TEXT), CAST(ended_at AS TEXT), end_reason, position, steps_total, state, level_id, blocked, allowed, active_secs, interrupted, queued`
 
 // StartRoutineRun records a new run at its first step. It returns ErrRoutineActive if one is running already.
 func (s *Store) StartRoutineRun(routine string, now time.Time, stepsTotal int) (int64, error) {
@@ -78,6 +80,15 @@ func (s *Store) SetRoutineRunProgress(id int64, position int, state RoutineState
 // SetRoutineRunInterrupted notes that the user's own session is running on top of the run's step (or that it is not any more).
 func (s *Store) SetRoutineRunInterrupted(id int64, interrupted bool) error {
 	return s.update(id, `UPDATE routine_runs SET interrupted = ? WHERE id = ? AND ended_at IS NULL`, interrupted, id)
+}
+
+// SetRoutineRunQueued keeps a session to start when the active run ends, or drops it when text is empty.
+func (s *Store) SetRoutineRunQueued(id int64, text string) error {
+	var v any
+	if text != "" {
+		v = text
+	}
+	return s.update(id, `UPDATE routine_runs SET queued = ? WHERE id = ? AND ended_at IS NULL`, v, id)
 }
 
 // AddRoutineRunStep notes that a run started a step on a focus level.
@@ -170,9 +181,10 @@ func scanRun(row scanner) (RoutineRun, error) {
 		reason  sql.NullString
 		state   string
 		level   sql.NullInt64
+		queued  sql.NullString
 	)
 	if err := row.Scan(&run.ID, &run.Routine, &started, &ended, &reason, &run.Position, &run.StepsTotal, &state, &level,
-		&run.Blocked, &run.Allowed, &run.ActiveSecs, &run.Interrupted); err != nil {
+		&run.Blocked, &run.Allowed, &run.ActiveSecs, &run.Interrupted, &queued); err != nil {
 		return RoutineRun{}, err
 	}
 	var err error
@@ -182,6 +194,6 @@ func scanRun(row scanner) (RoutineRun, error) {
 	if run.EndedAt, err = parseOptionalTime(ended); err != nil {
 		return RoutineRun{}, fmt.Errorf("routine run %d: %w", run.ID, err)
 	}
-	run.EndReason, run.State, run.LevelID = reason.String, RoutineState(state), level.Int64
+	run.EndReason, run.State, run.LevelID, run.Queued = reason.String, RoutineState(state), level.Int64, queued.String
 	return run, nil
 }

@@ -188,3 +188,11 @@ func TestTheLastRoutineIsInTheMenuOnlyWhenItAsksForItAndOnlyForAWhile(t *testing
 		t.Error("while a routine runs the old summary is not shown")
 	}
 }
+
+func TestAQueuedSessionIsListedUnderTheRoutine(t *testing.T) {
+	run := &session.RoutineView{Name: "pomo", Step: "work (1/2)", Total: 5, Queued: `90% (deep) for 30m, "deep block"`}
+	v := menubar.Build(session.StatusView{Level: 75, Layers: []session.LayerView{timed}, Routine: run}, "shh")
+	if !strings.Contains(ids(v), `(Queued for when it ends: 90% (deep) for 30m, "deep block")`) {
+		t.Errorf("menu = %s", ids(v))
+	}
+}

@@ -125,7 +125,7 @@ func (s *Server) handle(req Request) Response {
 		err = withLevel(req, func(level int) error { return w.SetBaseline(level) })
 	case "focus":
 		err = withLevel(req, func(level int) error {
-			_, err := w.Escalate(Escalation{Level: level, Duration: time.Duration(req.DurationSecs) * time.Second, Then: req.Then, Note: req.Note, Alert: req.SessionAlert, ContinueRoutine: req.ContinueRoutine})
+			_, err := w.Escalate(Escalation{Level: level, Duration: time.Duration(req.DurationSecs) * time.Second, Then: req.Then, Note: req.Note, Alert: req.SessionAlert, ContinueRoutine: req.ContinueRoutine, QueueAfterRoutine: req.QueueAfterRoutine})
 			return err
 		})
 	case "level":
@@ -154,6 +154,8 @@ func (s *Server) handle(req Request) Response {
 		err = w.RoutineBack()
 	case "routine_stop":
 		err = w.RoutineStop()
+	case "routine_unqueue":
+		err = w.RoutineUnqueue()
 	case "routine_status":
 	default:
 		return Response{Code: "bad_request", Error: fmt.Sprintf("unknown command %q", req.Cmd)}

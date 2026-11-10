@@ -24,7 +24,8 @@ type focusCmd struct {
 	Note       string   `short:"m" help:"A note about what you are doing."`
 	Then       string   `aliases:"clear" help:"What to fall back to when the timer ends: a percentage or a tier (see -f). Default: the layer beneath."`
 	EndRoutine bool     `name:"end-routine" help:"If a routine is running, end it and start this session (without it you are asked)."`
-	Continue   bool     `name:"continue-routine" help:"If a routine is running, hold it while this session runs and carry on with it when this ends (without it you are asked)."`
+	Continue   bool     `name:"continue-routine" help:"If a routine is running, interrupt it: this session starts now, the routine waits, and it carries on when this session ends."`
+	After      bool     `name:"after-routine" help:"If a routine is running, queue this session to start when the routine ends (nothing changes now)."`
 	Alert      string   `help:"Announce when the timer ends: none (the default), sound or banner. Needs a length."`
 	Words      []string `arg:"" optional:"" name:"note" help:"The note, as plain words (same as -m). A leading level or length is read as one, so \"shh focus deep 25m writing\" works; tiers: off (0), light (35%), medium (65%), deep (90%), lockdown (99%)."`
 }
@@ -74,10 +75,10 @@ func (c *focusCmd) Run(env *Env) error {
 	}
 	view, err := env.client().FocusAlert(level, duration, then, note, c.Alert)
 	if errors.Is(err, session.ErrRoutineRunning) {
-		if c.EndRoutine && c.Continue {
-			return usagef("--end-routine and --continue-routine say opposite things: use one")
+		if n := b2i(c.EndRoutine) + b2i(c.Continue) + b2i(c.After); n > 1 {
+			return usagef("--end-routine, --continue-routine and --after-routine are three different answers: use one")
 		}
-		choice, askErr := env.routineInTheWay(err, c.EndRoutine, c.Continue, "start this session", true)
+		choice, askErr := env.routineInTheWay(err, c.EndRoutine, c.Continue, c.After, "start this session", true)
 		if askErr != nil {
 			return askErr
 		}
@@ -86,6 +87,11 @@ func (c *focusCmd) Run(env *Env) error {
 			view, err = env.client().FocusAlert(level, duration, then, note, c.Alert)
 		case choiceContinue:
 			view, err = env.client().FocusAfterRoutine(level, duration, then, note, c.Alert)
+		case choiceQueue:
+			view, err = env.client().FocusQueued(level, duration, then, note, c.Alert)
+			if err == nil {
+				fmt.Fprintf(env.Stdout, "Queued: this session starts when the routine ends. Drop it with: shh routine unqueue\n")
+			}
 		default:
 			return nil
 		}
@@ -95,6 +101,13 @@ func (c *focusCmd) Run(env *Env) error {
 	}
 	renderStatus(env.Stdout, view, true)
 	return nil
+}
+
+func b2i(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 type stopCmd struct {
@@ -109,7 +122,7 @@ func (c *stopCmd) Run(env *Env) error {
 		return nil
 	}
 	if errors.Is(err, session.ErrRoutineRunning) {
-		choice, askErr := env.routineInTheWay(err, c.EndRoutine, false, "stop", false)
+		choice, askErr := env.routineInTheWay(err, c.EndRoutine, false, false, "stop", false)
 		if askErr != nil || choice != choiceEnd {
 			return askErr
 		}

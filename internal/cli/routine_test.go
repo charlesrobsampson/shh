@@ -229,7 +229,7 @@ func TestOnATerminalTheUserIsAskedBeforeARoutineIsEnded(t *testing.T) {
 		r.out.Reset()
 		r.mustRun("focus", "90%")
 		out := r.out.String()
-		if !strings.Contains(out, "A routine is running. [e]nd it and start this session, [c]ontinue it after this session, or leave it? [e/c/N]") {
+		if !strings.Contains(out, "Choose [e/c/q/N]:") {
 			t.Errorf("%q: the question was not asked: %q", tt.answer, out)
 		}
 		st := r.view()
@@ -431,7 +431,7 @@ func TestContinueRoutineFlagNeedsNoQuestionAndConflictsWithEndRoutine(t *testing
 	if st := r.view(); st.Routine == nil || !st.Routine.Interrupted {
 		t.Errorf("status = %+v", st)
 	}
-	if code := r.run("focus", "90%", "--end-routine", "--continue-routine"); code == 0 || !strings.Contains(r.err.String(), "opposite") {
+	if code := r.run("focus", "90%", "--end-routine", "--continue-routine"); code == 0 || !strings.Contains(r.err.String(), "three different answers") {
 		t.Errorf("code %d stderr %q", code, r.err.String())
 	}
 	// not a terminal and no flag: the refusal names both ways out
@@ -440,5 +440,74 @@ func TestContinueRoutineFlagNeedsNoQuestionAndConflictsWithEndRoutine(t *testing
 	r2.mustRun("routine", "run", "pomo")
 	if code := r2.run("focus", "90%"); code == 0 || !strings.Contains(r2.err.String(), "--continue-routine") || !strings.Contains(r2.err.String(), "--end-routine") {
 		t.Errorf("code %d stderr %q", code, r2.err.String())
+	}
+}
+
+func TestTheQuestionSaysThatContinuingInterruptsTheRoutine(t *testing.T) {
+	r := newRig(t, true)
+	r.saveRoutines(lite)
+	r.mustRun("routine", "run", "pomo")
+	r.env.IsTerminal = true
+	r.env.Stdin = strings.NewReader("\n")
+	r.mustRun("focus", "90%")
+	for _, want := range []string{"[e] end it, and start this session", "[c] interrupt it: start this session now; the routine waits and carries on when this session ends",
+		"[q] queue this session: it starts when the routine ends", "[N] leave it as it is"} {
+		if !strings.Contains(r.out.String(), want) {
+			t.Errorf("the question should say %q:\n%s", want, r.out.String())
+		}
+	}
+}
+
+func TestAnswerQQueuesTheSessionForWhenTheRoutineEnds(t *testing.T) {
+	r := newRig(t, true)
+	r.saveRoutines(lite)
+	r.mustRun("routine", "run", "pomo")
+	r.env.IsTerminal = true
+	r.env.Stdin = strings.NewReader("q\n")
+	r.mustRun("focus", "90%", "30m", "deep block")
+	if !strings.Contains(r.out.String(), "Queued: this session starts when the routine ends") {
+		t.Errorf("out = %q", r.out.String())
+	}
+	st := r.view()
+	if st.Routine == nil || st.Routine.Queued != "90% (deep) for 30m, \"deep block\"" || st.Level != 75 || len(st.Layers) != 1 {
+		t.Fatalf("status = %+v: nothing should start now", st)
+	}
+	if out := r.mustRun("routine", "status"); !strings.Contains(out, "Queued for when it ends: 90% (deep) for 30m") {
+		t.Errorf("status:\n%s", out)
+	}
+	r.mustRun("routine", "stop")
+	st = r.view()
+	if st.Routine != nil || len(st.Layers) != 1 || st.Level != 90 || st.Layers[0].Note != "deep block" {
+		t.Errorf("status = %+v: the queued session should start when the routine ends", st)
+	}
+}
+
+func TestAfterRoutineFlagQueuesAndUnqueueDropsIt(t *testing.T) {
+	r := newRig(t, true)
+	r.saveRoutines(lite)
+	r.mustRun("routine", "run", "pomo")
+	r.mustRun("focus", "90%", "30m", "--after-routine")
+	r.mustRun("focus", "50%", "10m", "--after-routine") // replaces it
+	if st := r.view(); st.Routine == nil || !strings.HasPrefix(st.Routine.Queued, "50% for 10m") {
+		t.Errorf("status = %+v: a second queue replaces the first", st.Routine)
+	}
+	if out := r.mustRun("routine", "unqueue"); !strings.Contains(out, "Dropped the session that was queued") {
+		t.Errorf("out = %q", out)
+	}
+	r.mustRun("routine", "stop")
+	if st := r.view(); st.Level != 0 || len(st.Layers) != 0 {
+		t.Errorf("status = %+v: nothing should start after an unqueue", st)
+	}
+	if out := r.mustRun("routine", "unqueue"); !strings.Contains(out, "No routine is running") {
+		t.Errorf("out = %q", out)
+	}
+}
+
+func TestNonTerminalRefusalNamesAllThreeFlags(t *testing.T) {
+	r := newRig(t, true)
+	r.saveRoutines(lite)
+	r.mustRun("routine", "run", "pomo")
+	if code := r.run("focus", "90%"); code == 0 || !strings.Contains(r.err.String(), "--after-routine") || !strings.Contains(r.err.String(), "carries on when this session ends") {
+		t.Errorf("code %d stderr %q", code, r.err.String())
 	}
 }

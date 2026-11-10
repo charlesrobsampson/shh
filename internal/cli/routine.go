@@ -23,6 +23,7 @@ type routineCmd struct {
 	Next    routineNextCmd    `cmd:"" help:"Start the step a routine is waiting on, or skip to the next step."`
 	Back    routineBackCmd    `cmd:"" help:"Restart the step before the one in focus."`
 	Stop    routineStopCmd    `cmd:"" help:"End the routine that is running."`
+	Unqueue routineUnqueueCmd `cmd:"" help:"Drop the session that was queued to start when the routine ends."`
 	Status  routineStatusCmd  `cmd:"" help:"Show the routine that is running, or the last one that ran."`
 }
 
@@ -221,6 +222,18 @@ func (c *routineStopCmd) Run(env *Env) error {
 	return env.routineAction(func(cl *session.Client) (session.RoutineInfo, error) { return cl.RoutineStop() }, "stopped")
 }
 
+type routineUnqueueCmd struct{}
+
+func (c *routineUnqueueCmd) Run(env *Env) error {
+	return env.routineAction(func(cl *session.Client) (session.RoutineInfo, error) {
+		info, err := cl.RoutineUnqueue()
+		if err == nil {
+			fmt.Fprintln(env.Stdout, "Dropped the session that was queued for when the routine ends.")
+		}
+		return info, err
+	}, "")
+}
+
 // routineAction runs a command on the routine that is running and says what it is doing now. A worker that is not running has no
 // routine, and is not started just to say so.
 func (e *Env) routineAction(do func(*session.Client) (session.RoutineInfo, error), ended string) error {
@@ -274,6 +287,14 @@ func (c *routineStatusCmd) Run(env *Env) error {
 
 // describeStep says where a run is: "work (2/4), step 3 of 9: 25m at 75%", or that it is waiting for the next step to be started.
 func describeStep(v session.RoutineView) string {
+	text := describeStepOnly(v)
+	if v.Queued != "" {
+		text += "\n  Queued for when it ends: " + v.Queued + " (shh routine unqueue drops it)"
+	}
+	return text
+}
+
+func describeStepOnly(v session.RoutineView) string {
 	if v.Interrupted {
 		return fmt.Sprintf("%s: %s, step %d of %d, held while your own session runs; it carries on when that ends.", v.Name, v.Step, v.Position+1, v.Total)
 	}
@@ -300,33 +321,40 @@ type routineChoice int
 const (
 	choiceNone     routineChoice = iota // leave everything as it was
 	choiceEnd                           // end the routine, then do what was asked
-	choiceContinue                      // do what was asked on top of the routine, which carries on afterwards
+	choiceContinue                      // interrupt the routine: do it now, and the routine carries on when it ends
+	choiceQueue                         // keep it for when the routine ends
 )
 
-// routineInTheWay is what `shh focus` and `shh stop` do when the worker refuses because a routine is running: on a terminal they ask
-// whether to end the routine (and, for a new session, whether to hold it and carry on after), and with --end-routine or
-// --continue-routine they just do, so scripts can say so. Declining (or not being able to ask) leaves everything as it was and says how
-// to carry on.
-func (e *Env) routineInTheWay(refused error, end, cont bool, what string, canContinue bool) (routineChoice, error) {
+// routineInTheWay is what `shh focus` and `shh stop` do when the worker refuses because a routine is running. On a terminal they ask
+// what to do (for a new session: end the routine, interrupt it, queue the session for after it, or leave it), and with --end-routine,
+// --continue-routine or --after-routine they just do, so scripts can say so. Declining (or not being able to ask) leaves everything as
+// it was and says how to carry on.
+func (e *Env) routineInTheWay(refused error, end, interrupt, queue bool, what string, canContinue bool) (routineChoice, error) {
 	if !errors.Is(refused, session.ErrRoutineRunning) {
 		return choiceNone, refused
 	}
 	choice := choiceNone
 	switch {
-	case cont:
+	case interrupt:
 		choice = choiceContinue
+	case queue:
+		choice = choiceQueue
 	case end:
 		choice = choiceEnd
 	default:
-		flags := "--end-routine to end it and " + what
-		if canContinue {
-			flags += ", or --continue-routine to hold it meanwhile"
-		}
 		if !e.IsTerminal || e.Stdin == nil {
+			flags := "--end-routine to end it and " + what
+			if canContinue {
+				flags = "--end-routine to end it and start this session, --continue-routine to interrupt it (it carries on when this session ends) or --after-routine to start this session when it ends"
+			}
 			return choiceNone, fmt.Errorf("%w; add %s", refused, flags)
 		}
 		if canContinue {
-			fmt.Fprintf(e.Stdout, "A routine is running. [e]nd it and %s, [c]ontinue it after this session, or leave it? [e/c/N] ", what)
+			fmt.Fprintln(e.Stdout, "A routine is running. What should happen to it?")
+			fmt.Fprintln(e.Stdout, "  [e] end it, and start this session")
+			fmt.Fprintln(e.Stdout, "  [c] interrupt it: start this session now; the routine waits and carries on when this session ends")
+			fmt.Fprintln(e.Stdout, "  [q] queue this session: it starts when the routine ends")
+			fmt.Fprint(e.Stdout, "  [N] leave it as it is\nChoose [e/c/q/N]: ")
 		} else {
 			fmt.Fprintf(e.Stdout, "A routine is running. End it and %s? [y/N] ", what)
 		}
@@ -334,8 +362,10 @@ func (e *Env) routineInTheWay(refused error, end, cont bool, what string, canCon
 		switch a := strings.ToLower(strings.TrimSpace(answer)); {
 		case a == "y" || a == "yes" || a == "e" || a == "end":
 			choice = choiceEnd
-		case canContinue && (a == "c" || a == "continue"):
+		case canContinue && (a == "c" || a == "continue" || a == "interrupt"):
 			choice = choiceContinue
+		case canContinue && (a == "q" || a == "queue"):
+			choice = choiceQueue
 		default:
 			fmt.Fprintln(e.Stdout, "Left the routine running.")
 			return choiceNone, nil

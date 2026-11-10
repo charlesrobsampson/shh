@@ -32,9 +32,10 @@ func (f *fakeRoutines) RoutineRun(name string) (session.RoutineInfo, error) {
 	}
 	return f.answer("run " + name)
 }
-func (f *fakeRoutines) RoutineNext() (session.RoutineInfo, error) { return f.answer("next") }
-func (f *fakeRoutines) RoutineBack() (session.RoutineInfo, error) { return f.answer("back") }
-func (f *fakeRoutines) RoutineStop() (session.RoutineInfo, error) { return f.answer("stop") }
+func (f *fakeRoutines) RoutineNext() (session.RoutineInfo, error)    { return f.answer("next") }
+func (f *fakeRoutines) RoutineBack() (session.RoutineInfo, error)    { return f.answer("back") }
+func (f *fakeRoutines) RoutineStop() (session.RoutineInfo, error)    { return f.answer("stop") }
+func (f *fakeRoutines) RoutineUnqueue() (session.RoutineInfo, error) { return f.answer("unqueue") }
 
 const tuiRoutines = `{"routines": {
   "pomo": {"description": "short and sweet", "repeat": 2, "steps": ["75% 25m work --alert banner", "off 5m break"], "finish": ["off 15m long break"]},
@@ -194,7 +195,7 @@ func TestAManualSessionAsksBeforeEndingARunningRoutine(t *testing.T) {
 	if r.m.prompt == nil || r.m.prompt.kind != promptConfirmEndRoutine {
 		t.Fatalf("a refused session should ask whether to end the routine: prompt %+v, notice %q", r.m.prompt, r.m.notice)
 	}
-	if !strings.Contains(r.view(), "a routine is running. End it and do this?") {
+	if !strings.Contains(r.view(), "a routine is running:") {
 		t.Errorf("the question should be on screen:\n%s", r.view())
 	}
 	r.control.err = nil
@@ -693,7 +694,7 @@ func TestCHoldsTheRoutineAndStartsTheSessionOnTopOfIt(t *testing.T) {
 	r.press("s")
 	r.typeText("90% 20m a call")
 	r.press("enter")
-	if r.m.prompt == nil || !r.m.prompt.canContinue || !strings.Contains(r.m.prompt.hint(), "c holds the routine") {
+	if r.m.prompt == nil || !r.m.prompt.canContinue || !strings.Contains(r.m.prompt.hint(), "c: interrupt it, it continues after this ends") || !strings.Contains(r.m.prompt.hint(), "q: start this after the routine ends") {
 		t.Fatalf("the question should offer to continue the routine after: %+v", r.m.prompt)
 	}
 	r.control.err = nil
@@ -730,5 +731,51 @@ func TestTheTabsShowARoutineHeldWhileTheUsersSessionRuns(t *testing.T) {
 	r.refresh()
 	if v := r.view(); !strings.Contains(v, "held while your own session runs") {
 		t.Errorf("view:\n%s", v)
+	}
+}
+
+func TestQQueuesTheSessionForAfterTheRoutine(t *testing.T) {
+	r, fr := routinesRig(t)
+	r.press("f1")
+	r.control.err = session.ErrRoutineRunning
+	r.press("s")
+	r.typeText("90% 30m deep block")
+	r.press("enter")
+	r.control.err = nil
+	r.control.calls = nil
+	r.press("q")
+	if len(fr.calls) != 0 {
+		t.Errorf("queueing must not end the routine: %v", fr.calls)
+	}
+	if len(r.control.calls) != 1 || !strings.HasPrefix(r.control.calls[0], "focus-queued 90 30m0s") {
+		t.Errorf("calls = %v", r.control.calls)
+	}
+	if !strings.Contains(r.m.messageLine(), "--after-routine") {
+		t.Errorf("message = %q", r.m.messageLine())
+	}
+}
+
+func TestQDoesNothingWhenStoppingAndUDropsTheQueuedSession(t *testing.T) {
+	r, fr := routinesRig(t)
+	r.press("f1")
+	r.control.err = session.ErrRoutineRunning
+	r.press("x", "q")
+	if r.m.prompt == nil {
+		t.Error("q should do nothing on the question about stopping")
+	}
+	r.press("n")
+	r.press("f4")
+	r.press("u")
+	if !strings.Contains(r.m.notice, "nothing is queued") || len(fr.calls) != 0 {
+		t.Errorf("notice %q calls %v", r.m.notice, fr.calls)
+	}
+	r.worker.view = session.StatusView{Routine: &session.RoutineView{Name: "pomo", Step: "work (1/2)", Total: 5, Queued: `90% (deep) for 30m, "deep block"`}}
+	r.refresh()
+	if v := r.view(); !strings.Contains(v, `queued after it: 90% (deep) for 30m`) {
+		t.Errorf("the queued session should be shown:\n%s", v)
+	}
+	r.press("u")
+	if got := strings.Join(fr.calls, ","); got != "unqueue" || !strings.Contains(r.m.messageLine(), "$ shh routine unqueue") {
+		t.Errorf("calls %s message %q", got, r.m.messageLine())
 	}
 }

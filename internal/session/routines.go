@@ -1,6 +1,7 @@
 package session
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -212,6 +213,82 @@ func (r *routineRunner) Interrupt() error {
 	return r.w.cfg.Store.SetRoutineRunInterrupted(run.ID, true)
 }
 
+// queuedSession is a session kept to start when a run ends.
+type queuedSession struct {
+	Level        int    `json:"level"`
+	DurationSecs int    `json:"duration_secs"`
+	Then         *int   `json:"then,omitempty"`
+	Note         string `json:"note,omitempty"`
+	Alert        string `json:"alert,omitempty"`
+}
+
+func (q queuedSession) escalation() Escalation {
+	return Escalation{Level: q.Level, Duration: time.Duration(q.DurationSecs) * time.Second, Then: q.Then, Note: q.Note, Alert: q.Alert}
+}
+
+// describeQueued is a queued session in words: "90% for 20m, "a call"".
+func describeQueued(text string) string {
+	var q queuedSession
+	if text == "" || json.Unmarshal([]byte(text), &q) != nil {
+		return ""
+	}
+	out := levelText(q.Level)
+	if q.DurationSecs > 0 {
+		out += " for " + formatLength(time.Duration(q.DurationSecs)*time.Second)
+	}
+	if q.Note != "" {
+		out += fmt.Sprintf(", %q", q.Note)
+	}
+	return out
+}
+
+// Queue keeps a session to start when the run ends, replacing one that was already waiting. The session is checked now, so it cannot
+// fail when its time comes.
+func (r *routineRunner) Queue(e Escalation) error {
+	if err := checkLevel(e.Level); err != nil {
+		return err
+	}
+	if e.Then != nil {
+		if err := checkLevel(*e.Then); err != nil {
+			return err
+		}
+	}
+	if err := CheckAlert(e.Alert); err != nil {
+		return err
+	}
+	if e.Duration < 0 || (e.Alert != "" && e.Alert != AlertNone && e.Duration == 0) {
+		return fmt.Errorf("%w: that session cannot be queued", ErrInvalid)
+	}
+	text, err := json.Marshal(queuedSession{Level: e.Level, DurationSecs: int(e.Duration / time.Second), Then: e.Then, Note: e.Note, Alert: e.Alert})
+	if err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	run, ok, err := r.w.cfg.Store.ActiveRoutineRun()
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrNoRoutine
+	}
+	return r.w.cfg.Store.SetRoutineRunQueued(run.ID, string(text))
+}
+
+// Unqueue drops the session waiting for the run to end.
+func (r *routineRunner) Unqueue() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	run, ok, err := r.w.cfg.Store.ActiveRoutineRun()
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrNoRoutine
+	}
+	return r.w.cfg.Store.SetRoutineRunQueued(run.ID, "")
+}
+
 // Interrupted says whether the user's own session is running over the routine.
 func (r *routineRunner) Interrupted() bool {
 	run, ok, err := r.w.cfg.Store.ActiveRoutineRun()
@@ -280,7 +357,7 @@ func (r *routineRunner) View() *RoutineView {
 	}
 	current := plan[run.Position]
 	v := &RoutineView{
-		Name: rt.Name, Position: run.Position, Total: len(plan), Step: current.Label(), Waiting: run.State == store.RoutineWaiting, Interrupted: run.Interrupted,
+		Name: rt.Name, Position: run.Position, Total: len(plan), Step: current.Label(), Waiting: run.State == store.RoutineWaiting, Interrupted: run.Interrupted, Queued: describeQueued(run.Queued),
 		Level: current.Level, LengthSecs: int(current.Length / time.Second), Started: run.StartedAt,
 	}
 	if v.Waiting && run.Position > 0 {
@@ -452,6 +529,14 @@ func (r *routineRunner) finish(run store.RoutineRun, rt *routine.Routine, reason
 	elapsed := int(now.Sub(run.StartedAt) / time.Second)
 	if err := r.w.cfg.Store.EndRoutineRun(run.ID, now, reason, held, let, elapsed); err != nil {
 		return err
+	}
+	if run.Queued != "" { // the session the user queued for when this ends, whichever way it ended
+		var q queuedSession
+		if err := json.Unmarshal([]byte(run.Queued), &q); err == nil {
+			if _, err := r.w.stack.Escalate(q.escalation()); err != nil && r.w.cfg.OnError != nil {
+				r.w.cfg.OnError(fmt.Errorf("starting the session queued after routine %q: %w", run.Routine, err))
+			}
+		}
 	}
 	if err := r.w.syncSuppressor(); err != nil {
 		return err

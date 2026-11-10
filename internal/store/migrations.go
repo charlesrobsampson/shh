@@ -169,4 +169,7 @@ ALTER TABLE focus_sessions ADD COLUMN alert_done BOOLEAN NOT NULL DEFAULT 0;
 
 	// A routine paused while the user's own session runs on top of it (task 52, "continue after").
 	`ALTER TABLE routine_runs ADD COLUMN interrupted BOOLEAN NOT NULL DEFAULT 0;`,
+
+	// A session of the user's that is to start when the routine ends (task 52), kept as JSON: the worker knows its shape.
+	`ALTER TABLE routine_runs ADD COLUMN queued TEXT;`,
 }

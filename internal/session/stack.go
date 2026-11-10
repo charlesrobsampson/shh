@@ -32,6 +32,8 @@ type Escalation struct {
 	// ContinueRoutine asks for the session to go on top of a running routine, which waits for it to end and then carries on. Without
 	// it, the worker refuses a session while a routine runs.
 	ContinueRoutine bool
+	// QueueAfterRoutine asks for the session to wait and start when a running routine ends. Nothing starts now.
+	QueueAfterRoutine bool
 }
 
 // Alert values.

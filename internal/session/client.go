@@ -41,6 +41,11 @@ func (c *Client) FocusAlert(level int, duration time.Duration, then *int, note, 
 	return c.do(Request{Cmd: "focus", Level: &level, DurationSecs: int(duration / time.Second), Then: then, Note: note, SessionAlert: alert})
 }
 
+// FocusQueued keeps a session to start when the running routine ends.
+func (c *Client) FocusQueued(level int, duration time.Duration, then *int, note, alert string) (StatusView, error) {
+	return c.do(Request{Cmd: "focus", Level: &level, DurationSecs: int(duration / time.Second), Then: then, Note: note, SessionAlert: alert, QueueAfterRoutine: true})
+}
+
 // FocusAfterRoutine starts a session on top of a running routine, which waits for it to end and then carries on.
 func (c *Client) FocusAfterRoutine(level int, duration time.Duration, then *int, note, alert string) (StatusView, error) {
 	return c.do(Request{Cmd: "focus", Level: &level, DurationSecs: int(duration / time.Second), Then: then, Note: note, SessionAlert: alert, ContinueRoutine: true})
@@ -141,6 +146,11 @@ func (c *Client) RoutineNext() (RoutineInfo, error) { return c.routine(Request{C
 
 // RoutineBack restarts the step before the one in focus.
 func (c *Client) RoutineBack() (RoutineInfo, error) { return c.routine(Request{Cmd: "routine_back"}) }
+
+// RoutineUnqueue drops the session that was to start when the routine ends.
+func (c *Client) RoutineUnqueue() (RoutineInfo, error) {
+	return c.routine(Request{Cmd: "routine_unqueue"})
+}
 
 // RoutineStop ends the routine run.
 func (c *Client) RoutineStop() (RoutineInfo, error) { return c.routine(Request{Cmd: "routine_stop"}) }

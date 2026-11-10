@@ -104,6 +104,9 @@ func (w *Worker) SetBaseline(level int) error {
 
 func (w *Worker) Escalate(e Escalation) (int64, error) {
 	if w.routines.Active() {
+		if e.QueueAfterRoutine {
+			return 0, w.routines.Queue(e)
+		}
 		if !e.ContinueRoutine {
 			return 0, ErrRoutineRunning
 		}
@@ -378,6 +381,9 @@ func (w *Worker) RoutineStart(name string) error { return w.routines.Start(name)
 
 // RoutineNext starts the step a waiting routine is waiting on, or skips to the next step of a running one.
 func (w *Worker) RoutineNext() error { return w.routines.Next() }
+
+// RoutineUnqueue drops the session that was to start when the routine ends.
+func (w *Worker) RoutineUnqueue() error { return w.routines.Unqueue() }
 
 // RoutineAction is a button on a routine's banner being pressed (see alert.Action).
 func (w *Worker) RoutineAction(token, id string) error { return w.routines.Action(token, id) }

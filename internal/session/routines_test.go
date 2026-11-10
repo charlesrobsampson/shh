@@ -940,3 +940,133 @@ func TestWithoutContinueRoutineASessionIsStillRefused(t *testing.T) {
 		t.Error("a refused session must not leave the routine marked as interrupted")
 	}
 }
+
+// ---- a session queued for when the routine ends ----
+
+func (r *routineRig) queue(level int, d time.Duration, note string) {
+	r.t.Helper()
+	if _, err := r.worker.Escalate(session.Escalation{Level: level, Duration: d, Note: note, QueueAfterRoutine: true}); err != nil {
+		r.t.Fatal(err)
+	}
+}
+
+func TestAQueuedSessionStartsWhenTheRoutineFinishes(t *testing.T) {
+	r := newRoutineRig(t, `{"routines": {"two": {"steps": ["75% 10m a", "off 5m b"]}}}`)
+	r.start("two")
+	r.queue(90, 30*time.Minute, "deep block")
+	if st := r.status(); len(st.Layers) != 1 || st.Layers[0].Percent != 75 {
+		t.Fatalf("queueing must not start anything now: %+v", st.Layers)
+	}
+	if v := r.info().Active; v == nil || v.Queued != `90% (deep) for 30m, "deep block"` {
+		t.Fatalf("view = %+v", v)
+	}
+	r.pass(10 * time.Minute)
+	r.pass(5 * time.Minute) // the routine is over
+	if r.info().Active != nil {
+		t.Fatal("the routine should have finished")
+	}
+	top := r.top()
+	if top.Percent != 90 || top.Remaining != 30*time.Minute || top.Note != "deep block" {
+		t.Errorf("top = %+v, want the queued session", top)
+	}
+	if !r.suppressor.Running() {
+		t.Error("the queued session holds notifications back")
+	}
+	r.pass(30 * time.Minute)
+	if len(r.status().Layers) != 0 {
+		t.Error("and it ends as any session does")
+	}
+}
+
+func TestAQueuedSessionStartsWhenTheRoutineIsStoppedToo(t *testing.T) {
+	r := newRoutineRig(t, pomodoroLite)
+	r.start("pomo")
+	r.queue(90, 0, "until I stop")
+	if err := r.worker.RoutineStop(); err != nil {
+		t.Fatal(err)
+	}
+	if top := r.top(); top.Percent != 90 || top.Timed || len(r.status().Layers) != 1 {
+		t.Errorf("top = %+v", top)
+	}
+}
+
+func TestAQueuedSessionStartsWhenTheRoutineGoesMissing(t *testing.T) {
+	r := newRoutineRig(t, pomodoroLite)
+	r.start("pomo")
+	r.queue(50, 10*time.Minute, "later")
+	*r.text = `{"routines": {}}`
+	r.pass(time.Second)
+	if r.info().Active != nil || r.top().Percent != 50 {
+		t.Errorf("a routine that vanished still ends the run, and the queue starts")
+	}
+}
+
+func TestQueuingAgainReplacesTheQueuedSessionAndUnqueueDropsIt(t *testing.T) {
+	r := newRoutineRig(t, pomodoroLite)
+	r.start("pomo")
+	r.queue(90, 30*time.Minute, "first")
+	r.queue(50, 10*time.Minute, "second")
+	if v := r.info().Active; !strings.Contains(v.Queued, "second") || strings.Contains(v.Queued, "first") {
+		t.Errorf("queued = %q", v.Queued)
+	}
+	if err := r.worker.RoutineUnqueue(); err != nil {
+		t.Fatal(err)
+	}
+	if r.info().Active.Queued != "" {
+		t.Error("unqueue should drop it")
+	}
+	r.worker.RoutineStop()
+	if len(r.status().Layers) != 0 {
+		t.Errorf("nothing should start: %+v", r.status().Layers)
+	}
+	if err := r.worker.RoutineUnqueue(); !errors.Is(err, session.ErrNoRoutine) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestABadQueuedSessionIsRefusedNowNotWhenItsTimeComes(t *testing.T) {
+	r := newRoutineRig(t, pomodoroLite)
+	r.start("pomo")
+	for _, e := range []session.Escalation{
+		{Level: 150, QueueAfterRoutine: true},
+		{Level: 50, Duration: -time.Minute, QueueAfterRoutine: true},
+		{Level: 50, Alert: "banner", QueueAfterRoutine: true}, // an alert needs a length
+		{Level: 50, Alert: "loud", Duration: time.Minute, QueueAfterRoutine: true},
+	} {
+		if _, err := r.worker.Escalate(e); !errors.Is(err, session.ErrInvalid) {
+			t.Errorf("%+v: err = %v", e, err)
+		}
+	}
+	if r.info().Active.Queued != "" {
+		t.Error("nothing bad should have been kept")
+	}
+}
+
+func TestAQueuedSessionSurvivesARestartAndKeepsItsAlert(t *testing.T) {
+	r := newRoutineRig(t, `{"routines": {"one": {"steps": ["off 10m a"]}}}`)
+	r.start("one")
+	if _, err := r.worker.Escalate(session.Escalation{Level: 90, Duration: 20 * time.Minute, Alert: "banner", QueueAfterRoutine: true}); err != nil {
+		t.Fatal(err)
+	}
+	r.restart()
+	r.pass(10 * time.Minute)
+	r.pass(20 * time.Minute) // the queued session ends and announces itself
+	got := r.shown()
+	found := false
+	for _, g := range got {
+		found = found || strings.Contains(g, "Focus session over")
+	}
+	if !found {
+		t.Errorf("the queued session's own alert should be given: %v", got)
+	}
+}
+
+func TestQueueingWithNoRoutineRunningStartsTheSessionAsUsual(t *testing.T) {
+	r := newRoutineRig(t, pomodoroLite)
+	if _, err := r.worker.Escalate(session.Escalation{Level: 90, Duration: time.Minute, QueueAfterRoutine: true}); err != nil {
+		t.Fatal(err)
+	}
+	if r.top().Percent != 90 {
+		t.Error("with no routine there is nothing to wait for")
+	}
+}

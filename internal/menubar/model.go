@@ -106,6 +106,9 @@ func items(v session.StatusView) []Item {
 	// one, which keeps the menu short and stops it reading like a log.
 	if r := v.Routine; r != nil {
 		out = append(out, Item{Title: fmt.Sprintf("Routine %s · step %d of %d", r.Name, r.Position+1, r.Total)})
+		if r.Queued != "" {
+			out = append(out, Item{Title: "Queued for when it ends: " + r.Queued})
+		}
 	}
 	if l := v.LastRoutine; l != nil && v.Routine == nil && l.Shows("menu") && !v.Now.IsZero() && v.Now.Sub(l.Ended) < lastRoutineFor {
 		out = append(out, Item{Title: "Last routine: " + l.Line()}, Item{Separator: true})
