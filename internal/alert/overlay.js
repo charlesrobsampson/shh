@@ -133,9 +133,10 @@ layoutText();
 
 // Buttons look like the system's unless the configuration gives them a color: then they are drawn as a patch of that color with the
 // button text color on it (the banner's own text color when only a button color was given, and a faint white patch when only a text
-// color was). A bezel cannot be recolored, so a colored button has none: its face is a box behind it, and its text color is the
-// button's content tint, which a borderless button draws its title in. (An attributed title would be the usual way to color text, but
-// JXA cannot build one: NSAttributedString's initializers are not callable from it.) Anything that goes wrong leaves the system look.
+// color was). A bezel cannot be recolored, so a colored button has none: its face is a box behind it and its text a label of its own on
+// that box, with the (now empty and invisible) button on top to take the clicks. Both are things the banner is already made of, which
+// is the point: the two ways of coloring a button's own title do not work from here (JXA cannot call NSAttributedString's
+// initializers, and a content tint did nothing in the banner's window). Anything that goes wrong leaves the system look.
 const buttonHex = h => {
   const rgb = h.replace('#', '');
   const ch = i => parseInt(rgb.slice(i, i + 2), 16) / 255;
@@ -144,17 +145,23 @@ const buttonHex = h => {
 const buttonFill = cfg.buttonColor ? buttonHex(cfg.buttonColor)
   : (cfg.buttonTextColor ? $.NSColor.colorWithSRGBRedGreenBlueAlpha(1, 1, 1, 0.25) : null);
 const buttonInk = cfg.buttonTextColor ? buttonHex(cfg.buttonTextColor) : (buttonFill ? textColor : null);
-function setButtonTitle(button, text) {
-  button.setTitle($(text)); // the tint set when the button was painted stays through a new title
+// A painted button says its words through its label, and the button itself says nothing.
+const inks = [];
+function setButtonTitle(button, text, i) {
+  if (inks[i]) {
+    inks[i].setStringValue($(text));
+    button.setTitle($(''));
+  } else {
+    button.setTitle($(text));
+  }
 }
 // A button with a color has no bezel of its own: a box of that color sits behind it as its face (the same kind of box the banner itself
-// is made of), and layoutButtons keeps each box under its button.
+// is made of), its words are a label over the box, and layoutButtons keeps both under the button.
 const backdrops = [];
-function paintButton(button, i) {
+function paintButton(button, i, text) {
   if (!buttonFill) return;
   try {
     button.setBordered(false);
-    if (buttonInk) button.setContentTintColor(buttonInk);
     const box = $.NSBox.alloc.initWithFrame($.NSMakeRect(0, 0, 10, 10));
     box.setBoxType($.NSBoxCustom);
     box.setTitlePosition($.NSNoTitle);
@@ -162,8 +169,15 @@ function paintButton(button, i) {
     box.setCornerRadius(6);
     box.setFillColor(buttonFill);
     view.addSubview(box); // before the button is added, so it is behind it
+    const ink = $.NSTextField.labelWithString($(text));
+    ink.setFont($.NSFont.systemFontOfSize(12));
+    ink.setTextColor(buttonInk);
+    ink.setAlignment($.NSTextAlignmentCenter);
+    view.addSubview(ink);
     backdrops[i] = box;
-  } catch (e) { button.setBordered(true); /* the system's look stays */ }
+    inks[i] = ink;
+    button.setTitle($(''));
+  } catch (e) { button.setBordered(true); button.setTitle($(text)); /* the system's look stays */ }
 }
 
 const actions = $.ShhBannerActions.alloc.init;
@@ -175,8 +189,8 @@ const buttons = cfg.buttons.map((spec, i) => {
   button.setTag(i);
   button.setTarget(actions);
   button.setAction('press:');
-  setButtonTitle(button, spec.label);
-  paintButton(button, i);
+  button.setTitle($(spec.label));
+  paintButton(button, i, spec.label);
   view.addSubview(button);
   return button;
 });
@@ -190,7 +204,12 @@ function layoutButtons() {
     const box = backdrops[i];
     if (!box) return;
     box.setHidden(b.isHidden);
-    if (!b.isHidden) box.setFrame(b.frame);
+    inks[i].setHidden(b.isHidden);
+    if (!b.isHidden) {
+      box.setFrame(b.frame);
+      // the label is a little shorter than the button, so it sits in the middle of it
+      inks[i].setFrame($.NSMakeRect(b.frame.origin.x, b.frame.origin.y + 4, b.frame.size.width, 16));
+    }
   });
 }
 layoutButtons();
@@ -233,14 +252,14 @@ function press(spec) {
     // the mark. The script tells Go the state it now has (1 or 0), not just that it was pressed, so the two cannot drift apart.
     const button = buttons[cfg.buttons.indexOf(spec)];
     flagged = !flagged;
-    setButtonTitle(button, flagged ? (spec.flaggedLabel || 'Flagged') : spec.label);
+    setButtonTitle(button, flagged ? (spec.flaggedLabel || 'Flagged') : spec.label, cfg.buttons.indexOf(spec));
     emit('flag ' + (flagged ? 1 : 0));
   } else if (spec.type === 'preview') {
     expanded = !expanded;
     // Someone reading the full text should not have it vanish: stop the auto-dismiss timer.
     if (expanded && timer) { timer.invalidate; timer = null; }
     const button = buttons[cfg.buttons.indexOf(spec)];
-    setButtonTitle(button, expanded ? (spec.collapseLabel || 'Collapse') : spec.label);
+    setButtonTitle(button, expanded ? (spec.collapseLabel || 'Collapse') : spec.label, cfg.buttons.indexOf(spec));
     // Resize at once, then tell Go so it can move the banners after this one; Go answers with the same height and so changes nothing.
     layoutTo(indent, offset, expanded ? Math.max(cfg.previewHeight, cfg.height) : cfg.height);
     emit('height ' + height);
