@@ -15,6 +15,7 @@ import (
 	"github.com/charlesrobsampson/shh/internal/cli"
 	"github.com/charlesrobsampson/shh/internal/config"
 	"github.com/charlesrobsampson/shh/internal/decide"
+	"github.com/charlesrobsampson/shh/internal/routine"
 	"github.com/charlesrobsampson/shh/internal/rules"
 	"github.com/charlesrobsampson/shh/internal/session"
 	"github.com/charlesrobsampson/shh/internal/store"
@@ -36,6 +37,7 @@ type rig struct {
 	stop       context.CancelFunc
 	served     chan struct{}
 	spawns     int
+	routines   string // the path of routines.json
 }
 
 func shortSocketPath(t *testing.T) string {
@@ -61,13 +63,16 @@ func newRig(t *testing.T, serve bool) *rig {
 	if err != nil {
 		t.Fatal(err)
 	}
+	configDir := t.TempDir()
+	r.routines = filepath.Join(configDir, "routines.json")
 	r.worker, err = session.NewWorker(session.Config{
 		Store: s, Source: testkit.NewFakeSource(), Clock: r.clock, Rules: rl, Alerter: r.alerter, Suppressor: r.suppressor, Location: time.UTC,
+		Routines: func() ([]routine.Routine, error) { return routine.Load(r.routines) },
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.env = cli.Env{Stdout: &r.out, Stderr: &r.err, SocketPath: r.socket, ConfigDir: t.TempDir(), Version: "test", Label: "shh", SpawnWait: 500 * time.Millisecond}
+	r.env = cli.Env{Stdout: &r.out, Stderr: &r.err, SocketPath: r.socket, ConfigDir: configDir, RoutinesPath: r.routines, Version: "test", Label: "shh", SpawnWait: 500 * time.Millisecond}
 	if serve {
 		r.serve()
 	}
@@ -890,7 +895,7 @@ func TestACommandWarnsWhenTheWorkerIsFromAnotherBuild(t *testing.T) {
 }
 
 func TestNoWarningWhenTheBuildsMatchOrAreUnknown(t *testing.T) {
-	for _, tt := range []struct{ worker, cli string }{{"abc", "abc"}, {"", "abc"}, {"abc", ""}} {
+	for _, tt := range []struct{ worker, cli string }{{"abc", "abc"}, {"abc", ""}, {"", ""}} {
 		r := newRig(t, true)
 		session.BuildID = tt.worker
 		r.env.Build = tt.cli
@@ -914,5 +919,61 @@ func TestTheMessageSamplesShowTheFlagButtonWithoutMarkingAnythingReal(t *testing
 		if a.NotificationID > 0 {
 			t.Errorf("a sample claims to be a real notification: %+v", a)
 		}
+	}
+}
+
+func TestAWorkerThatReportsNoBuildIsOlderThanAnyThatCanAndCountsAsStale(t *testing.T) {
+	r := newRig(t, true)
+	session.BuildID = "" // what a worker from before builds were reported says
+	t.Cleanup(func() { session.BuildID = "" })
+	r.env.Build = "newbuild0002"
+	r.mustRun("status")
+	if got := r.err.String(); !strings.Contains(got, "different build") {
+		t.Errorf("stderr = %q, want the note: a worker that does not even report its build is an old one", got)
+	}
+}
+
+func TestFocusAlertAsksTheWorkerToAnnounceTheEndAndStatusSaysSo(t *testing.T) {
+	r := newRig(t, true)
+	out := r.mustRun("focus", "75%", "25m", "--alert", "banner")
+	if !strings.Contains(out, "alerts at the end (banner)") {
+		t.Errorf("output = %q", out)
+	}
+	st, err := session.NewClient(r.socket).Status()
+	if err != nil || len(st.Layers) != 1 || st.Layers[0].Alert != "banner" {
+		t.Errorf("status = %+v, %v", st.Layers, err)
+	}
+}
+
+func TestTheShorthandTakesAlertToo(t *testing.T) {
+	r := newRig(t, true)
+	r.mustRun("25m", "--alert", "sound")
+	st, _ := session.NewClient(r.socket).Status()
+	if len(st.Layers) != 1 || st.Layers[0].Alert != "sound" || st.Level != 65 {
+		t.Errorf("status = %+v", st)
+	}
+}
+
+func TestAlertOffByDefaultAndNoneMeansNone(t *testing.T) {
+	for _, args := range [][]string{{"focus", "30%", "10m"}, {"focus", "30%", "10m", "--alert", "none"}} {
+		r := newRig(t, true)
+		out := r.mustRun(args...)
+		if strings.Contains(out, "alerts at the end") {
+			t.Errorf("%v: output = %q", args, out)
+		}
+	}
+}
+
+func TestAlertNeedsAKnownKindAndALength(t *testing.T) {
+	r := newRig(t, true)
+	if code := r.run("focus", "30%", "10m", "--alert", "loud"); code != 2 || !strings.Contains(r.err.String(), "--alert") {
+		t.Errorf("an unknown alert: exit %d, stderr %q", code, r.err.String())
+	}
+	r.err.Reset()
+	if code := r.run("focus", "30%", "--alert", "banner"); code != 2 || !strings.Contains(r.err.String(), "needs a length") {
+		t.Errorf("an alert with no length: exit %d, stderr %q", code, r.err.String())
+	}
+	if st, _ := session.NewClient(r.socket).Status(); st.Level != 0 {
+		t.Errorf("a refused command started something: %+v", st)
 	}
 }

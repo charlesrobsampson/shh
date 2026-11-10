@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -124,7 +125,7 @@ func (s *Server) handle(req Request) Response {
 		err = withLevel(req, func(level int) error { return w.SetBaseline(level) })
 	case "focus":
 		err = withLevel(req, func(level int) error {
-			_, err := w.Escalate(Escalation{Level: level, Duration: time.Duration(req.DurationSecs) * time.Second, Then: req.Then, Note: req.Note})
+			_, err := w.Escalate(Escalation{Level: level, Duration: time.Duration(req.DurationSecs) * time.Second, Then: req.Then, Note: req.Note, Alert: req.SessionAlert, ContinueRoutine: req.ContinueRoutine, QueueAfterRoutine: req.QueueAfterRoutine})
 			return err
 		})
 	case "level":
@@ -145,6 +146,17 @@ func (s *Server) handle(req Request) Response {
 		err = w.showAlert(req.Alert)
 	case "train", "undo":
 		return s.handleTraining(req)
+	case "routine_run":
+		err = w.RoutineStart(req.Name)
+	case "routine_next":
+		err = w.RoutineNext()
+	case "routine_back":
+		err = w.RoutineBack()
+	case "routine_stop":
+		err = w.RoutineStop()
+	case "routine_unqueue":
+		err = w.RoutineUnqueue()
+	case "routine_status":
 	default:
 		return Response{Code: "bad_request", Error: fmt.Sprintf("unknown command %q", req.Cmd)}
 	}
@@ -156,7 +168,19 @@ func (s *Server) handle(req Request) Response {
 		return Response{Code: "internal", Error: err.Error()}
 	}
 	view := statusView(st, w.cfg.Clock.Now())
-	return Response{OK: true, Status: &view}
+	view.Routine = w.routines.View()
+	if view.Routine == nil {
+		view.LastRoutine = w.routines.Last()
+	}
+	resp := Response{OK: true, Status: &view}
+	if strings.HasPrefix(req.Cmd, "routine_") {
+		info, err := w.RoutineInfo()
+		if err != nil {
+			return Response{Code: "internal", Error: err.Error()}
+		}
+		resp.Routine = &info
+	}
+	return resp
 }
 
 // handleTraining answers "train" and "undo", whose answer is the outcome rather than the focus status.

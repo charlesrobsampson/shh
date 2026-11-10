@@ -29,6 +29,14 @@ type Controller interface {
 	Stop(all bool) (session.StatusView, error)
 }
 
+// RoutineController is the worker's routine commands. A Controller that also has them gets the routine items of the menu to work;
+// *session.Client does.
+type RoutineController interface {
+	RoutineNext() (session.RoutineInfo, error)
+	RoutineBack() (session.RoutineInfo, error)
+	RoutineStop() (session.RoutineInfo, error)
+}
+
 // Helper is one status item on screen. Send replaces what it shows; Clicks delivers the id of each menu item chosen and is closed
 // when the item has gone, whether it was stopped or died; Stop removes it.
 type Helper interface {
@@ -191,6 +199,20 @@ func (r *runner) act(id string) {
 		_, err = c.Stop(false)
 	case IDOff:
 		_, err = c.Stop(true)
+	case IDRoutineNext, IDRoutineBack, IDRoutineStop:
+		rc, ok := c.(RoutineController)
+		if !ok {
+			err = fmt.Errorf("this controller cannot steer routines")
+			break
+		}
+		switch id {
+		case IDRoutineNext:
+			_, err = rc.RoutineNext()
+		case IDRoutineBack:
+			_, err = rc.RoutineBack()
+		default:
+			_, err = rc.RoutineStop()
+		}
 	case IDOpen:
 		if r.cfg.Open != nil {
 			err = r.cfg.Open()

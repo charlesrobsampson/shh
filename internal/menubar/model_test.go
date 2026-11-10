@@ -3,6 +3,7 @@ package menubar_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charlesrobsampson/shh/internal/menubar"
 	"github.com/charlesrobsampson/shh/internal/session"
@@ -124,5 +125,74 @@ func TestOnlyActionsAreClickable(t *testing.T) {
 		if it.ID == "" && !it.Separator && it.Title == "" {
 			t.Errorf("an item with nothing in it: %+v", it)
 		}
+	}
+}
+
+func TestARunningRoutineShowsItsStepInTheTitleAndItsOwnMenuItems(t *testing.T) {
+	work := session.LayerView{Kind: "escalation", Percent: 75, Timed: true, RemainingSecs: 14 * 60}
+	run := &session.RoutineView{Name: "pomodoro", Position: 2, Total: 9, Step: "work (2/4)"}
+	v := menubar.Build(session.StatusView{Level: 75, Layers: []session.LayerView{baseline, work}, Routine: run}, "shh")
+	if v.Title != "shh pomodoro · work (2/4) · 14m" {
+		t.Errorf("title = %q", v.Title)
+	}
+	got := ids(v)
+	for _, want := range []string{"(Routine pomodoro · step 3 of 9)", "routine_next", "routine_back", "routine_stop", "pause", "plus", "open"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("menu %q should have %s", got, want)
+		}
+	}
+	for _, not := range []string{" stop ", " off "} {
+		if strings.Contains(" "+got+" ", not) {
+			t.Errorf("menu %q should not offer to stop the session by hand, the worker refuses it while a routine runs", got)
+		}
+	}
+	paused := work
+	paused.Paused = true
+	if title := menubar.Build(session.StatusView{Level: 75, Layers: []session.LayerView{paused}, Routine: run}, "shh").Title; title != "shh pomodoro · work (2/4) · ⏸" {
+		t.Errorf("paused title = %q", title)
+	}
+	waiting := &session.RoutineView{Name: "pomodoro", Step: "break (2/4)", Waiting: true}
+	w := menubar.Build(session.StatusView{Level: 75, Layers: []session.LayerView{{Kind: "escalation", Percent: 75}}, Routine: waiting}, "shh")
+	if w.Title != "shh pomodoro · break (2/4) ?" || !strings.Contains(ids(w), "routine_next") {
+		t.Errorf("waiting: %q %s", w.Title, ids(w))
+	}
+	found := false
+	for _, it := range w.Items {
+		found = found || it.Title == "Start break (2/4)"
+	}
+	if !found {
+		t.Errorf("while waiting the next item should say it starts the step: %+v", w.Items)
+	}
+}
+
+func TestTheLastRoutineIsInTheMenuOnlyWhenItAsksForItAndOnlyForAWhile(t *testing.T) {
+	end := time.Date(2026, 11, 10, 15, 0, 0, 0, time.UTC)
+	last := &session.RoutineSummary{Name: "pomo", Reason: "finished", Steps: 4, ElapsedSecs: 3600, Held: 3, Let: 1, Ended: end, Where: []string{"menu"}}
+	view := func(l *session.RoutineSummary, after time.Duration) menubar.View {
+		return menubar.Build(session.StatusView{Now: end.Add(after), LastRoutine: l}, "shh")
+	}
+	v := view(last, time.Minute)
+	if len(v.Items) < 2 || v.Items[0].Title != "Last routine: pomo finished: 4 steps in 1h. Held back 3 notifications, let through 1." {
+		t.Errorf("items = %+v", v.Items)
+	}
+	if got := view(last, 2*time.Hour); strings.Contains(ids(got), "Last routine") {
+		t.Errorf("an old summary should have gone from the menu: %s", ids(got))
+	}
+	banner := *last
+	banner.Where = []string{"banner", "ui"}
+	if got := view(&banner, time.Minute); strings.Contains(ids(got), "Last routine") {
+		t.Errorf("a routine that did not ask for the menu stays out of it: %s", ids(got))
+	}
+	running := menubar.Build(session.StatusView{Now: end, LastRoutine: last, Routine: &session.RoutineView{Name: "x", Step: "s"}}, "shh")
+	if strings.Contains(ids(running), "Last routine") {
+		t.Error("while a routine runs the old summary is not shown")
+	}
+}
+
+func TestAQueuedSessionIsListedUnderTheRoutine(t *testing.T) {
+	run := &session.RoutineView{Name: "pomo", Step: "work (1/2)", Total: 5, Queued: `90% (deep) for 30m, "deep block"`}
+	v := menubar.Build(session.StatusView{Level: 75, Layers: []session.LayerView{timed}, Routine: run}, "shh")
+	if !strings.Contains(ids(v), `(Queued for when it ends: 90% (deep) for 30m, "deep block")`) {
+		t.Errorf("menu = %s", ids(v))
 	}
 }

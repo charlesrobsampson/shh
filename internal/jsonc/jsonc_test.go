@@ -183,3 +183,55 @@ func TestNullsLeaveFieldsUnset(t *testing.T) {
 		t.Fatalf("color = %v, %v; want null to mean not set", d.Alert.Color, err)
 	}
 }
+
+func TestADuplicateKeyIsAnErrorWithItsLine(t *testing.T) {
+	type sample struct {
+		Routines map[string]struct {
+			Steps int `json:"steps"`
+		} `json:"routines"`
+	}
+	var v sample
+	err := jsonc.Decode("f.json", []byte("{\n  \"routines\": {\n    \"a\": {\"steps\": 1},\n    \"b\": {\"steps\": 2},\n    \"a\": {\"steps\": 3}\n  }\n}\n"), &v)
+	if err == nil || !strings.Contains(err.Error(), "duplicate key") || !strings.Contains(err.Error(), `"routines.a"`) || !strings.Contains(err.Error(), "f.json:5") {
+		t.Errorf("err = %v, want a duplicate key error naming routines.a at line 5", err)
+	}
+	var plain struct {
+		A int `json:"a"`
+	}
+	if err := jsonc.Decode("f.json", []byte(`{"a": 1, "a": 2}`), &plain); err == nil || !strings.Contains(err.Error(), "duplicate key") {
+		t.Errorf("a repeated key in an ordinary object: err = %v", err)
+	}
+	if err := jsonc.Decode("f.json", []byte(`{"x": {"a": 1}, "y": {"a": 2}}`), &struct {
+		X struct {
+			A int `json:"a"`
+		} `json:"x"`
+		Y struct {
+			A int `json:"a"`
+		} `json:"y"`
+	}{}); err != nil {
+		t.Errorf("the same key in two different objects is fine: %v", err)
+	}
+}
+
+func TestKeysComeBackInFileOrder(t *testing.T) {
+	raw := []byte("// c\n{\n \"other\": {\"routines\": 1},\n \"routines\": {\"zeta\": {\"a\": [1, {\"b\": 2}]}, \"alpha\": 1, \"mid\": [1,2], \"beta\": {}},\n}\n")
+	got, err := jsonc.Keys("f.json", raw, "routines")
+	if err != nil || strings.Join(got, ",") != "zeta,alpha,mid,beta" {
+		t.Errorf("keys = %v, %v; want zeta,alpha,mid,beta (the order in the file, not sorted)", got, err)
+	}
+	if got, _ := jsonc.Keys("f.json", raw, "nothing"); len(got) != 0 {
+		t.Errorf("a missing path gave %v", got)
+	}
+	if got, _ := jsonc.Keys("f.json", raw); strings.Join(got, ",") != "other,routines" {
+		t.Errorf("top-level keys = %v", got)
+	}
+	if got, err := jsonc.Keys("f.json", nil, "routines"); got != nil || err != nil {
+		t.Errorf("an empty file: %v, %v", got, err)
+	}
+	if _, err := jsonc.Keys("f.json", []byte(`{"routines": {`), "routines"); err == nil {
+		t.Error("broken JSON should be an error")
+	}
+	if got, _ := jsonc.Keys("f.json", []byte(`{"routines": [1, 2]}`), "routines"); len(got) != 0 {
+		t.Errorf("a path to something that is not an object gave %v", got)
+	}
+}

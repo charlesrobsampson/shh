@@ -19,11 +19,15 @@ import (
 )
 
 type focusCmd struct {
-	Timer string   `short:"t" help:"Session length such as 25m or 1h30m; 0 means until stopped (the default)."`
-	Focus string   `short:"f" help:"Threshold: a percentage like 75% or a tier: off (0), light (35%), medium (65%), deep (90%), lockdown (99%). Default: medium."`
-	Note  string   `short:"m" help:"A note about what you are doing."`
-	Then  string   `aliases:"clear" help:"What to fall back to when the timer ends: a percentage or a tier (see -f). Default: the layer beneath."`
-	Words []string `arg:"" optional:"" name:"note" help:"The note, as plain words (same as -m). A leading level or length is read as one, so \"shh focus deep 25m writing\" works; tiers: off (0), light (35%), medium (65%), deep (90%), lockdown (99%)."`
+	Timer      string   `short:"t" help:"Session length such as 25m or 1h30m; 0 means until stopped (the default)."`
+	Focus      string   `short:"f" help:"Threshold: a percentage like 75% or a tier: off (0), light (35%), medium (65%), deep (90%), lockdown (99%). Default: medium."`
+	Note       string   `short:"m" help:"A note about what you are doing."`
+	Then       string   `aliases:"clear" help:"What to fall back to when the timer ends: a percentage or a tier (see -f). Default: the layer beneath."`
+	EndRoutine bool     `name:"end-routine" help:"If a routine is running, end it and start this session (without it you are asked)."`
+	Continue   bool     `name:"continue-routine" help:"If a routine is running, interrupt it: this session starts now, the routine waits, and it carries on when this session ends."`
+	After      bool     `name:"after-routine" help:"If a routine is running, queue this session to start when the routine ends (nothing changes now)."`
+	Alert      string   `help:"Announce when the timer ends: none (the default), sound or banner. Needs a length."`
+	Words      []string `arg:"" optional:"" name:"note" help:"The note, as plain words (same as -m). A leading level or length is read as one, so \"shh focus deep 25m writing\" works; tiers: off (0), light (35%), medium (65%), deep (90%), lockdown (99%)."`
 }
 
 func (c *focusCmd) Run(env *Env) error {
@@ -60,10 +64,38 @@ func (c *focusCmd) Run(env *Env) error {
 		}
 		note = joined
 	}
+	if err := session.CheckAlert(c.Alert); err != nil {
+		return usagef("--alert: %w", err)
+	}
+	if c.Alert != "" && c.Alert != session.AlertNone && duration == 0 {
+		return usagef("--alert needs a length, since a session with no timer never ends: for example shh 25m --alert banner")
+	}
 	if err := env.ensureWorker(); err != nil {
 		return err
 	}
-	view, err := env.client().Focus(level, duration, then, note)
+	view, err := env.client().FocusAlert(level, duration, then, note, c.Alert)
+	if errors.Is(err, session.ErrRoutineRunning) {
+		if n := b2i(c.EndRoutine) + b2i(c.Continue) + b2i(c.After); n > 1 {
+			return usagef("--end-routine, --continue-routine and --after-routine are three different answers: use one")
+		}
+		choice, askErr := env.routineInTheWay(err, c.EndRoutine, c.Continue, c.After, "start this session", true)
+		if askErr != nil {
+			return askErr
+		}
+		switch choice {
+		case choiceEnd:
+			view, err = env.client().FocusAlert(level, duration, then, note, c.Alert)
+		case choiceContinue:
+			view, err = env.client().FocusAfterRoutine(level, duration, then, note, c.Alert)
+		case choiceQueue:
+			view, err = env.client().FocusQueued(level, duration, then, note, c.Alert)
+			if err == nil {
+				fmt.Fprintf(env.Stdout, "Queued: this session starts when the routine ends. Drop it with: shh routine unqueue\n")
+			}
+		default:
+			return nil
+		}
+	}
 	if err != nil {
 		return err
 	}
@@ -71,8 +103,16 @@ func (c *focusCmd) Run(env *Env) error {
 	return nil
 }
 
+func b2i(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 type stopCmd struct {
-	All bool `help:"Also clear the baseline, ending all focus."`
+	All        bool `help:"Also clear the baseline, ending all focus."`
+	EndRoutine bool `name:"end-routine" help:"If a routine is running, end it too (without it you are asked)."`
 }
 
 func (c *stopCmd) Run(env *Env) error {
@@ -80,6 +120,18 @@ func (c *stopCmd) Run(env *Env) error {
 	if errors.Is(err, session.ErrNotRunning) {
 		fmt.Fprintln(env.Stdout, "shh is not running; nothing to stop")
 		return nil
+	}
+	if errors.Is(err, session.ErrRoutineRunning) {
+		choice, askErr := env.routineInTheWay(err, c.EndRoutine, false, false, "stop", false)
+		if askErr != nil || choice != choiceEnd {
+			return askErr
+		}
+		// Ending the routine closed the session it was running, which is what stop asked for; only --all has more (the baseline) to do.
+		if c.All {
+			view, err = env.client().Stop(true)
+		} else {
+			view, err = env.client().Status()
+		}
 	}
 	if err != nil {
 		return err

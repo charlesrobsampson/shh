@@ -84,11 +84,17 @@ func standardize(raw []byte) []byte {
 }
 
 type keyError struct {
-	path   string
-	offset int64
+	path      string
+	offset    int64
+	duplicate bool // the key is there twice, rather than not known
 }
 
-func (e *keyError) Error() string { return fmt.Sprintf("unknown key %q", e.path) }
+func (e *keyError) Error() string {
+	if e.duplicate {
+		return fmt.Sprintf("duplicate key %q (the second one would silently replace the first)", e.path)
+	}
+	return fmt.Sprintf("unknown key %q", e.path)
+}
 
 func describe(name string, text []byte, err error) error {
 	var key *keyError
@@ -139,6 +145,7 @@ func walkObject(decoder *json.Decoder, t reflect.Type, path string) error {
 			elem = t.Elem()
 		}
 	}
+	seen := map[string]bool{}
 	for decoder.More() {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -146,6 +153,11 @@ func walkObject(decoder *json.Decoder, t reflect.Type, path string) error {
 		}
 		key := tok.(string)
 		memberPath := joinPath(path, key)
+		// encoding/json lets a repeated key quietly replace the one before it, which in a settings file is a mistake nobody sees.
+		if seen[key] {
+			return &keyError{path: memberPath, offset: decoder.InputOffset(), duplicate: true}
+		}
+		seen[key] = true
 		var memberType reflect.Type
 		switch {
 		case known != nil:
@@ -231,4 +243,173 @@ func joinPath(path, key string) string {
 		return key
 	}
 	return path + "." + key
+}
+
+// Keys returns the keys of the object found by following path (each element a key) from the top of raw, in the order they appear in
+// the text, which decoding into a map cannot keep. A path that is not there gives no keys.
+func Keys(name string, raw []byte, path ...string) ([]string, error) {
+	clean := standardize(raw)
+	if len(bytes.TrimSpace(clean)) == 0 {
+		return nil, nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(clean))
+	if tok, err := decoder.Token(); err != nil {
+		return nil, describe(name, clean, err)
+	} else if d, ok := tok.(json.Delim); !ok || d != '{' {
+		return nil, nil
+	}
+	keys, err := keysAt(decoder, path)
+	if err != nil {
+		return nil, describe(name, clean, err)
+	}
+	return keys, nil
+}
+
+// keysAt reads the members of an object whose opening brace has been consumed, descending along path.
+func keysAt(decoder *json.Decoder, path []string) ([]string, error) {
+	var keys []string
+	for decoder.More() {
+		tok, err := decoder.Token()
+		if err != nil {
+			return nil, err
+		}
+		key := tok.(string)
+		if len(path) == 0 {
+			keys = append(keys, key)
+			if err := skipValue(decoder); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if key != path[0] {
+			if err := skipValue(decoder); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		next, err := decoder.Token()
+		if err != nil {
+			return nil, err
+		}
+		if d, ok := next.(json.Delim); !ok || d != '{' {
+			if ok {
+				if err := skipRest(decoder, d); err != nil {
+					return nil, err
+				}
+			}
+			continue
+		}
+		found, err := keysAt(decoder, path[1:])
+		if err != nil {
+			return nil, err
+		}
+		keys = append(keys, found...)
+	}
+	_, err := decoder.Token() // the closing brace
+	return keys, err
+}
+
+// skipValue reads one whole value.
+func skipValue(decoder *json.Decoder) error {
+	tok, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	if d, ok := tok.(json.Delim); ok {
+		return skipRest(decoder, d)
+	}
+	return nil
+}
+
+// skipRest reads the rest of an object or array whose opening delimiter has been consumed.
+func skipRest(decoder *json.Decoder, open json.Delim) error {
+	for decoder.More() {
+		if open == '{' {
+			if _, err := decoder.Token(); err != nil { // the key
+				return err
+			}
+		}
+		if err := skipValue(decoder); err != nil {
+			return err
+		}
+	}
+	_, err := decoder.Token()
+	return err
+}
+
+// Member is one `"key": value` of an object, as the byte range it covers in the original text (comments between members are outside
+// it, comments inside the value are part of it).
+type Member struct {
+	Key        string
+	Start, End int
+}
+
+// Members finds the object reached by following path from the top of raw, and returns its members' byte ranges in order, plus the
+// offset of the object's closing brace. found is false when there is no such object. It is what lets a program change one member of a
+// file and leave everything else, comments included, as the person wrote it.
+func Members(name string, raw []byte, path ...string) (members []Member, closeAt int, found bool, err error) {
+	clean := standardize(raw)
+	decoder := json.NewDecoder(bytes.NewReader(clean))
+	if tok, e := decoder.Token(); e != nil {
+		if len(bytes.TrimSpace(clean)) == 0 {
+			return nil, 0, false, nil
+		}
+		return nil, 0, false, describe(name, clean, e)
+	} else if d, ok := tok.(json.Delim); !ok || d != '{' {
+		return nil, 0, false, nil
+	}
+	members, closeAt, found, err = membersAt(decoder, clean, path)
+	if err != nil {
+		return nil, 0, false, describe(name, clean, err)
+	}
+	return members, closeAt, found, nil
+}
+
+// membersAt reads the members of an object whose opening brace has been consumed, descending along path.
+func membersAt(decoder *json.Decoder, clean []byte, path []string) (out []Member, closeAt int, found bool, err error) {
+	for decoder.More() {
+		before := int(decoder.InputOffset())
+		tok, err := decoder.Token()
+		if err != nil {
+			return nil, 0, false, err
+		}
+		key := tok.(string)
+		start := before + bytes.IndexByte(clean[before:], '"') // past the comma and blanks that lead up to the key
+		if len(path) > 0 && key == path[0] {
+			next, err := decoder.Token()
+			if err != nil {
+				return nil, 0, false, err
+			}
+			if d, ok := next.(json.Delim); ok && d == '{' {
+				inner, at, ok, err := membersAt(decoder, clean, path[1:])
+				if err != nil {
+					return nil, 0, false, err
+				}
+				if ok {
+					out, closeAt, found = inner, at, true
+				}
+				continue
+			} else if ok {
+				if err := skipRest(decoder, d); err != nil {
+					return nil, 0, false, err
+				}
+			}
+			continue
+		}
+		if err := skipValue(decoder); err != nil {
+			return nil, 0, false, err
+		}
+		if len(path) == 0 {
+			out = append(out, Member{Key: key, Start: start, End: int(decoder.InputOffset())})
+		}
+	}
+	at := int(decoder.InputOffset())
+	at += bytes.IndexByte(clean[at:], '}') // the brace follows any blanks and a trailing comma
+	if _, err := decoder.Token(); err != nil {
+		return nil, 0, false, err
+	}
+	if len(path) == 0 {
+		return out, at, true, nil
+	}
+	return out, closeAt, found, nil
 }

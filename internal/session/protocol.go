@@ -2,7 +2,12 @@ package session
 
 import (
 	"errors"
+	"fmt"
+	"slices"
+	"strings"
 	"time"
+
+	"github.com/charlesrobsampson/shh/internal/decide"
 )
 
 // The worker speaks JSON lines over a unix socket. A client sends one Request per line and gets one Response per line. After a
@@ -31,6 +36,14 @@ type Request struct {
 	NotificationID int64  `json:"notification_id,omitempty"`
 	Label          *int   `json:"label,omitempty"`
 	Feedback       string `json:"feedback,omitempty"`
+	// SessionAlert is how "focus" announces the end of the session: none, sound or banner.
+	SessionAlert string `json:"session_alert,omitempty"`
+	// ContinueRoutine says "focus" may go on top of a running routine, which carries on when it ends.
+	ContinueRoutine bool `json:"continue_routine,omitempty"`
+	// QueueAfterRoutine says "focus" is to start when a running routine ends, not now.
+	QueueAfterRoutine bool `json:"queue_after_routine,omitempty"`
+	// Name is the routine that "routine_run" starts.
+	Name string `json:"name,omitempty"`
 	// Alert is what the "alert" command shows, through the same alerter the worker uses, so that every banner on screen is
 	// laid out by one process.
 	Alert *AlertMsg `json:"alert,omitempty"`
@@ -55,6 +68,70 @@ type Response struct {
 	Status *StatusView `json:"status,omitempty"`
 	// Train is the outcome of a "train" or "undo" command.
 	Train *TrainView `json:"train,omitempty"`
+	// Routine answers the routine commands: the run in progress, if any, and the last one that ended.
+	Routine *RoutineInfo `json:"routine,omitempty"`
+}
+
+// RoutineView is the routine run in progress, as clients see it.
+type RoutineView struct {
+	Name string `json:"name"`
+	// Position is the step in force or, while Waiting, the step waiting to be started; counting from 0. Total is how many steps there are.
+	Position int `json:"position"`
+	Total    int `json:"total"`
+	// Step is that step as it is labelled on screen ("work (2/4)"); Previous is the step that just ended while waiting, and Next the
+	// one after Step ("" when Step is the last).
+	Step     string `json:"step"`
+	Previous string `json:"previous,omitempty"`
+	Next     string `json:"next,omitempty"`
+	Waiting  bool   `json:"waiting"`
+	// Interrupted says the user's own session is running on top of the step, whose countdown is held until it ends.
+	Interrupted bool `json:"interrupted,omitempty"`
+	// Queued describes the session that will start when the routine ends ("" for none).
+	Queued string `json:"queued,omitempty"`
+	// Level and LengthSecs are those of Step, so a client can say "break: 5m at off" for a step that has not started.
+	Level      int       `json:"level"`
+	LengthSecs int       `json:"length_secs"`
+	Started    time.Time `json:"started"`
+}
+
+// RoutineSummary is what a finished run did.
+type RoutineSummary struct {
+	Name   string `json:"name"`
+	Reason string `json:"reason"` // finished, stopped, replaced or missing
+	// Steps is how many steps were started, out of Total.
+	Steps       int       `json:"steps"`
+	Total       int       `json:"total"`
+	Started     time.Time `json:"started"`
+	Ended       time.Time `json:"ended"`
+	ElapsedSecs int       `json:"elapsed_secs"`
+	Held        int       `json:"held"`
+	Let         int       `json:"let"`
+	// Where is the places the routine says its summary should be shown: banner, menu, ui.
+	Where []string `json:"where,omitempty"`
+}
+
+// Sentence is the summary as one sentence: how many steps, how long, and what was held back and let through.
+func (s RoutineSummary) Sentence() string {
+	took := decide.FormatRemaining(s.ElapsedSecs)
+	held := fmt.Sprintf("held back %d notifications", s.Held)
+	if s.Held == 1 {
+		held = "held back 1 notification"
+	}
+	return fmt.Sprintf("%d steps in %s. %s, let through %d.", s.Steps, took, strings.ToUpper(held[:1])+held[1:], s.Let)
+}
+
+// Line is the summary with the routine and how it ended in front: "pomodoro finished: 4 steps in 1h15m. ...".
+func (s RoutineSummary) Line() string {
+	return fmt.Sprintf("%s %s: %s", s.Name, s.Reason, s.Sentence())
+}
+
+// Shows says whether the routine asked for its summary to be shown there.
+func (s RoutineSummary) Shows(where string) bool { return slices.Contains(s.Where, where) }
+
+// RoutineInfo is the answer to the routine commands.
+type RoutineInfo struct {
+	Active *RoutineView    `json:"active,omitempty"`
+	Last   *RoutineSummary `json:"last,omitempty"`
 }
 
 // TrainView is a TrainOutcome on the wire.
@@ -71,6 +148,11 @@ type StatusView struct {
 	Level  int         `json:"level"`
 	Layers []LayerView `json:"layers"`
 	Now    time.Time   `json:"now"`
+	// Routine is the routine run in progress, if there is one.
+	Routine *RoutineView `json:"routine,omitempty"`
+	// LastRoutine is the run that ended most recently, while none is in progress, for the places its summary is to be shown (see
+	// RoutineSummary.Where).
+	LastRoutine *RoutineSummary `json:"last_routine,omitempty"`
 	// Build identifies the executable the worker is running (see BuildID), so a command can tell when the worker predates the
 	// binary it was typed with, which would otherwise be easy to mistake for a bug in the new code.
 	Build string `json:"build,omitempty"`
@@ -90,6 +172,8 @@ type LayerView struct {
 	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
 	Blocked       int        `json:"blocked"`
 	Allowed       int        `json:"allowed"`
+	// Alert is how the end of the session is announced ("sound" or "banner"); empty for none.
+	Alert string `json:"alert,omitempty"`
 }
 
 // Event is one line of a subscription.
@@ -131,6 +215,9 @@ var codes = map[string]error{
 	"already_trained": ErrAlreadyTrained,
 	"nothing_to_undo": ErrNothingToUndo,
 	"not_found":       ErrNoSuchNotification,
+	"routine_running": ErrRoutineRunning,
+	"no_routine":      ErrNoRoutine,
+	"unknown_routine": ErrUnknownRoutine,
 }
 
 func (e *RemoteError) Is(target error) bool {
@@ -153,7 +240,7 @@ func statusView(st Status, now time.Time) StatusView {
 		view.Layers = append(view.Layers, LayerView{
 			ID: l.ID, Kind: string(l.Kind), Percent: l.Percent, ThenLevel: l.ThenLevel, Note: l.Note, Started: l.StartTime,
 			Timed: l.Timed, Paused: l.Paused, RemainingSecs: int(l.Remaining / time.Second), ExpiresAt: l.ExpiresAt,
-			Blocked: l.Blocked, Allowed: l.Allowed,
+			Blocked: l.Blocked, Allowed: l.Allowed, Alert: l.Alert,
 		})
 	}
 	return view

@@ -40,6 +40,18 @@ func (c *fakeController) Adjust(d time.Duration) (session.StatusView, error) {
 func (c *fakeController) Stop(all bool) (session.StatusView, error) {
 	return c.record(fmt.Sprintf("stop all=%v", all))
 }
+func (c *fakeController) RoutineNext() (session.RoutineInfo, error) {
+	_, err := c.record("routine next")
+	return session.RoutineInfo{}, err
+}
+func (c *fakeController) RoutineBack() (session.RoutineInfo, error) {
+	_, err := c.record("routine back")
+	return session.RoutineInfo{}, err
+}
+func (c *fakeController) RoutineStop() (session.RoutineInfo, error) {
+	_, err := c.record("routine stop")
+	return session.RoutineInfo{}, err
+}
 func (c *fakeController) set(st session.StatusView, err error) {
 	c.mu.Lock()
 	c.status, c.err = st, err
@@ -291,5 +303,20 @@ func TestTheDefaultHelperRunsTheEmbeddedScript(t *testing.T) {
 		if !strings.Contains(menubar.Script(), want) {
 			t.Errorf("the status item script does not mention %s", want)
 		}
+	}
+}
+
+func TestRoutineItemsSteerTheRoutine(t *testing.T) {
+	r := newRig(t)
+	r.ctl.set(session.StatusView{Level: 75, Layers: []session.LayerView{timed}, Routine: &session.RoutineView{Name: "pomo", Step: "work (1/2)"}}, nil)
+	r.start(func(c *menubar.Config) { c.Interval = time.Hour })
+	h := r.helper(0)
+	r.eventually("the first title", func() bool { return len(h.titles()) == 1 })
+	for _, id := range []string{"routine_next", "routine_back", "routine_stop"} {
+		h.clicks <- id
+	}
+	r.eventually("every click to be handled", func() bool { return strings.Count(r.ctl.called(), ",") == 2 })
+	if got, want := r.ctl.called(), "routine next,routine back,routine stop"; got != want {
+		t.Errorf("worker calls = %s, want %s", got, want)
 	}
 }

@@ -16,6 +16,8 @@ import (
 type Control interface {
 	Baseline(level int) (session.StatusView, error)
 	Focus(level int, duration time.Duration, then *int, note string) (session.StatusView, error)
+	FocusAfterRoutine(level int, duration time.Duration, then *int, note, alert string) (session.StatusView, error)
+	FocusQueued(level int, duration time.Duration, then *int, note, alert string) (session.StatusView, error)
 	SetLevel(level int) (session.StatusView, error)
 	Stop(all bool) (session.StatusView, error)
 	Pause() (session.StatusView, error)
@@ -157,7 +159,23 @@ func (m *Model) run(needsWorker bool, cmd string, do func(Control) (session.Stat
 		m.notice = "shh is not running, so there is no focus session to change"
 		return false
 	}
+	cont, queue := m.continueWith, m.queueWith
+	m.continueWith, m.queueWith = nil, nil
 	view, err := do(m.cfg.Control)
+	if errors.Is(err, session.ErrRoutineRunning) && m.cfg.Routines != nil {
+		// A routine is in charge of focus: ask before ending it, and do what was asked if the answer is yes. A new session may also go
+		// on top of it, and the routine carries on afterwards.
+		var continuing func()
+		if cont != nil {
+			continuing = func() { m.run(needsWorker, cmd+" --continue-routine", cont, done) }
+		}
+		var queueing func()
+		if queue != nil {
+			queueing = func() { m.run(needsWorker, cmd+" --after-routine", queue, done) }
+		}
+		m.askToEndRoutine(func() { m.run(needsWorker, cmd, do, done) }, continuing, queueing)
+		return false
+	}
 	if err != nil {
 		m.notice = describeFocusError(err)
 		return false
@@ -180,6 +198,8 @@ func describeFocusError(err error) string {
 		return "no focus session to change"
 	case errors.Is(err, session.ErrNotRunning):
 		return "shh is not running"
+	case errors.Is(err, session.ErrRoutineRunning):
+		return "a routine is running: end it on the Routines tab ($) first"
 	}
 	return err.Error()
 }
@@ -192,6 +212,8 @@ func (m *Model) startFocus(p *prompt) {
 		return
 	}
 	m.prompt = nil
+	m.continueWith = func(c Control) (session.StatusView, error) { return c.FocusAfterRoutine(level, length, then, note, "") }
+	m.queueWith = func(c Control) (session.StatusView, error) { return c.FocusQueued(level, length, then, note, "") }
 	m.run(true, startCommand(level, length, then, note), func(c Control) (session.StatusView, error) { return c.Focus(level, length, then, note) },
 		func(session.StatusView) string {
 			text := "focus started at " + decide.FormatLevel(level)
@@ -350,6 +372,9 @@ func (m *Model) focusView() string {
 				lines = append(lines, "      "+dim.Render(fmt.Sprintf("%q", oneLine(l.Note))))
 			}
 		}
+	}
+	if m.haveStatus && m.status.Routine != nil {
+		lines = append(lines, "", "  "+bold.Render("Routine ")+routineLine(*m.status.Routine)+dim.Render("  (the $ tab)"))
 	}
 	lines = append(lines, "", "  "+bold.Underline(true).Render("What to do")+dim.Render("  (j/k to select, Enter to do it, or press the key)"))
 

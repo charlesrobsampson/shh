@@ -12,6 +12,11 @@ import (
 
 // renderStatus prints the stack of focus levels for people.
 func renderStatus(w io.Writer, v session.StatusView, running bool) {
+	defer func() {
+		if v.Routine != nil {
+			fmt.Fprintf(w, "Routine: %s\n", describeStep(*v.Routine))
+		}
+	}()
 	if v.Level == 0 {
 		suffix := ""
 		if !running {
@@ -33,6 +38,9 @@ func renderStatus(w io.Writer, v session.StatusView, running bool) {
 		}
 		if l.ThenLevel != nil {
 			detail = append(detail, "then "+decide.FormatLevel(*l.ThenLevel))
+		}
+		if l.Alert != "" {
+			detail = append(detail, "alerts at the end ("+l.Alert+")")
 		}
 		line := fmt.Sprintf("  %-10s  %-14s", l.Kind, decide.FormatLevel(l.Percent))
 		if len(detail) > 0 {

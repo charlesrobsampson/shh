@@ -93,6 +93,12 @@ func (f *fakeControl) Focus(level int, d time.Duration, then *int, note string) 
 	}
 	return f.answer(fmt.Sprintf("focus %d %v then=%s note=%q", level, d, t, note))
 }
+func (f *fakeControl) FocusAfterRoutine(level int, d time.Duration, then *int, note, _ string) (session.StatusView, error) {
+	return f.answer(fmt.Sprintf("focus-after-routine %d %v note=%q", level, d, note))
+}
+func (f *fakeControl) FocusQueued(level int, d time.Duration, then *int, note, _ string) (session.StatusView, error) {
+	return f.answer(fmt.Sprintf("focus-queued %d %v note=%q", level, d, note))
+}
 func (f *fakeControl) SetLevel(level int) (session.StatusView, error) {
 	return f.answer(fmt.Sprintf("level %d", level))
 }
@@ -201,6 +207,26 @@ func key(k string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyRight}
 	case "backspace":
 		return tea.KeyMsg{Type: tea.KeyBackspace}
+	case "home":
+		return tea.KeyMsg{Type: tea.KeyHome}
+	case "end":
+		return tea.KeyMsg{Type: tea.KeyEnd}
+	case "delete":
+		return tea.KeyMsg{Type: tea.KeyDelete}
+	case "ctrl+a":
+		return tea.KeyMsg{Type: tea.KeyCtrlA}
+	case "ctrl+e":
+		return tea.KeyMsg{Type: tea.KeyCtrlE}
+	case "ctrl+u":
+		return tea.KeyMsg{Type: tea.KeyCtrlU}
+	case "ctrl+k":
+		return tea.KeyMsg{Type: tea.KeyCtrlK}
+	case "ctrl+w":
+		return tea.KeyMsg{Type: tea.KeyCtrlW}
+	case "alt+left":
+		return tea.KeyMsg{Type: tea.KeyLeft, Alt: true}
+	case "alt+right":
+		return tea.KeyMsg{Type: tea.KeyRight, Alt: true}
 	}
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
 }
@@ -225,18 +251,22 @@ func TestTabsSwitchWithTabShiftTabAndFunctionKeys(t *testing.T) {
 		want Tab
 	}{
 		{[]string{"tab"}, TabTrain},
+		{[]string{"tab"}, TabRoutines},
 		{[]string{"tab"}, TabFocus},
 		{[]string{"tab"}, TabNotifications},
 		{[]string{"shift+tab"}, TabFocus},
-		{[]string{"shift+tab"}, TabTrain},
+		{[]string{"shift+tab"}, TabRoutines},
 		{[]string{"f1"}, TabFocus},
 		{[]string{"f3"}, TabTrain},
+		{[]string{"f4"}, TabRoutines},
 		{[]string{"f2"}, TabNotifications},
 		{[]string{"right"}, TabTrain},
 		{[]string{"left"}, TabNotifications},
 		{[]string{"l"}, TabTrain},
 		{[]string{"h"}, TabNotifications},
 		{[]string{"h"}, TabFocus},
+		{[]string{"h"}, TabRoutines},
+		{[]string{"l"}, TabFocus},
 		{[]string{"l"}, TabNotifications},
 	} {
 		r.press(step.keys...)
@@ -244,7 +274,7 @@ func TestTabsSwitchWithTabShiftTabAndFunctionKeys(t *testing.T) {
 			t.Fatalf("after %v the tab is %v, want %v", step.keys, r.m.Tab(), step.want)
 		}
 	}
-	for _, name := range []string{"Focus", "Notifications", "Train"} {
+	for _, name := range []string{"Focus", "Notifications", "Train", "Routines"} {
 		if !strings.Contains(r.view(), name) {
 			t.Errorf("the tab bar does not show %q:\n%s", name, r.view())
 		}

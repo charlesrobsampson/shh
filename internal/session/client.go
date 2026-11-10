@@ -33,7 +33,22 @@ func (c *Client) Baseline(level int) (StatusView, error) {
 
 // Focus starts an escalation. duration 0 means until stopped; then may be nil.
 func (c *Client) Focus(level int, duration time.Duration, then *int, note string) (StatusView, error) {
-	return c.do(Request{Cmd: "focus", Level: &level, DurationSecs: int(duration / time.Second), Then: then, Note: note})
+	return c.FocusAlert(level, duration, then, note, "")
+}
+
+// FocusAlert starts a session that announces its end: alert is none, sound or banner ("" means none).
+func (c *Client) FocusAlert(level int, duration time.Duration, then *int, note, alert string) (StatusView, error) {
+	return c.do(Request{Cmd: "focus", Level: &level, DurationSecs: int(duration / time.Second), Then: then, Note: note, SessionAlert: alert})
+}
+
+// FocusQueued keeps a session to start when the running routine ends.
+func (c *Client) FocusQueued(level int, duration time.Duration, then *int, note, alert string) (StatusView, error) {
+	return c.do(Request{Cmd: "focus", Level: &level, DurationSecs: int(duration / time.Second), Then: then, Note: note, SessionAlert: alert, QueueAfterRoutine: true})
+}
+
+// FocusAfterRoutine starts a session on top of a running routine, which waits for it to end and then carries on.
+func (c *Client) FocusAfterRoutine(level int, duration time.Duration, then *int, note, alert string) (StatusView, error) {
+	return c.do(Request{Cmd: "focus", Level: &level, DurationSecs: int(duration / time.Second), Then: then, Note: note, SessionAlert: alert, ContinueRoutine: true})
 }
 
 func (c *Client) SetLevel(level int) (StatusView, error) {
@@ -119,6 +134,38 @@ func (c *Client) call(req Request) (Response, error) {
 	scanner := bufio.NewScanner(conn)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
 	return readResponse(scanner)
+}
+
+// RoutineRun starts a saved routine.
+func (c *Client) RoutineRun(name string) (RoutineInfo, error) {
+	return c.routine(Request{Cmd: "routine_run", Name: name})
+}
+
+// RoutineNext starts the step a waiting routine is waiting on, or skips to the next step of a running one.
+func (c *Client) RoutineNext() (RoutineInfo, error) { return c.routine(Request{Cmd: "routine_next"}) }
+
+// RoutineBack restarts the step before the one in focus.
+func (c *Client) RoutineBack() (RoutineInfo, error) { return c.routine(Request{Cmd: "routine_back"}) }
+
+// RoutineUnqueue drops the session that was to start when the routine ends.
+func (c *Client) RoutineUnqueue() (RoutineInfo, error) {
+	return c.routine(Request{Cmd: "routine_unqueue"})
+}
+
+// RoutineStop ends the routine run.
+func (c *Client) RoutineStop() (RoutineInfo, error) { return c.routine(Request{Cmd: "routine_stop"}) }
+
+// RoutineStatus is the routine run in progress and the last one that ended.
+func (c *Client) RoutineStatus() (RoutineInfo, error) {
+	return c.routine(Request{Cmd: "routine_status"})
+}
+
+func (c *Client) routine(req Request) (RoutineInfo, error) {
+	resp, err := c.call(req)
+	if err != nil || resp.Routine == nil {
+		return RoutineInfo{}, err
+	}
+	return *resp.Routine, nil
 }
 
 // Train labels a stored notification, teaching the worker's model, and says how its score moved.

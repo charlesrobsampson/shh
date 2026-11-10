@@ -41,6 +41,10 @@ type Config struct {
 	OnError func(error)
 	// OnDecision is told about every notification that was decided. Optional.
 	OnDecision func(Decision)
+	// Routines loads the saved routines (routines.json). Nil means there are none.
+	Routines RoutineLoader
+	// PlaySound plays the alert sound, for sessions and routine steps whose alert is "sound". Nil means it is silent.
+	PlaySound func() error
 }
 
 // Decision is the outcome for one notification.
@@ -58,6 +62,7 @@ type Worker struct {
 	stack      *Stack
 	classifier *classify.Classifier
 	parser     *calendar.Parser
+	routines   *routineRunner
 	scheduler  *calendar.Scheduler
 	tailer     *ingest.Tailer
 
@@ -83,6 +88,7 @@ func NewWorker(cfg Config) (*Worker, error) {
 			Clock: cfg.Clock, Store: cfg.Store, Alerter: cfg.Alerter, Location: cfg.Location, OnError: cfg.OnError,
 		}),
 	}
+	w.routines = newRoutineRunner(w)
 	w.tailer = ingest.NewTailer(ingest.Config{
 		Source: cfg.Source, Store: cfg.Store, Clock: cfg.Clock, Sources: cfg.Rules.Sources, OwnBundles: cfg.OwnBundles,
 		Interval: cfg.Interval, Handle: w.handle, OnError: cfg.OnError,
@@ -97,14 +103,36 @@ func (w *Worker) SetBaseline(level int) error {
 }
 
 func (w *Worker) Escalate(e Escalation) (int64, error) {
+	if w.routines.Active() {
+		if e.QueueAfterRoutine {
+			return 0, w.routines.Queue(e)
+		}
+		if !e.ContinueRoutine {
+			return 0, ErrRoutineRunning
+		}
+		if err := w.routines.Interrupt(); err != nil {
+			return 0, err
+		}
+	}
 	id, err := w.stack.Escalate(e)
 	return id, w.then(err)
 }
 
-func (w *Worker) Stop() error    { return w.then(w.stack.Stop()) }
-func (w *Worker) StopAll() error { return w.then(w.stack.StopAll()) }
-func (w *Worker) Pause() error   { return w.then(w.stack.Pause()) }
-func (w *Worker) Resume() error  { return w.then(w.stack.Resume()) }
+func (w *Worker) Stop() error {
+	if w.routines.Active() && !w.routines.Interrupted() { // ending the user's own session over a routine is what Stop is then for
+		return ErrRoutineRunning
+	}
+	return w.then(w.stack.Stop())
+}
+
+func (w *Worker) StopAll() error {
+	if w.routines.Active() {
+		return ErrRoutineRunning
+	}
+	return w.then(w.stack.StopAll())
+}
+func (w *Worker) Pause() error  { return w.then(w.stack.Pause()) }
+func (w *Worker) Resume() error { return w.then(w.stack.Resume()) }
 
 func (w *Worker) Adjust(delta time.Duration) error { return w.then(w.stack.Adjust(delta)) }
 func (w *Worker) SetLevel(level int) error         { return w.then(w.stack.SetLevel(level)) }
@@ -160,6 +188,12 @@ func (w *Worker) Init(backfillSince time.Time) error {
 // Tick runs one cycle: bring the suppressor in line with the effective level (a timed layer may have ended), then poll for
 // new notifications.
 func (w *Worker) Tick() error {
+	if err := w.routines.Tick(); err != nil && w.cfg.OnError != nil {
+		w.cfg.OnError(fmt.Errorf("routine: %w", err))
+	}
+	if err := w.announceEnded(); err != nil && w.cfg.OnError != nil {
+		w.cfg.OnError(fmt.Errorf("session alerts: %w", err))
+	}
 	if err := w.syncSuppressor(); err != nil {
 		return err
 	}
@@ -340,4 +374,88 @@ func (w *Worker) showAlert(msg *AlertMsg) error {
 		return errors.New("this worker cannot show alerts")
 	}
 	return w.cfg.Alerter.Show(alert.Alert{Kind: kind, Source: msg.Source, BundleID: msg.BundleID, NotificationID: msg.NotificationID, Title: msg.Title, Body: msg.Body})
+}
+
+// RoutineStart begins a saved routine at its first step.
+func (w *Worker) RoutineStart(name string) error { return w.routines.Start(name) }
+
+// RoutineNext starts the step a waiting routine is waiting on, or skips to the next step of a running one.
+func (w *Worker) RoutineNext() error { return w.routines.Next() }
+
+// RoutineUnqueue drops the session that was to start when the routine ends.
+func (w *Worker) RoutineUnqueue() error { return w.routines.Unqueue() }
+
+// RoutineAction is a button on a routine's banner being pressed (see alert.Action).
+func (w *Worker) RoutineAction(token, id string) error { return w.routines.Action(token, id) }
+
+// RoutineBack restarts the step before the one in focus.
+func (w *Worker) RoutineBack() error { return w.routines.Back() }
+
+// RoutineStop ends the routine run, closing its focus level.
+func (w *Worker) RoutineStop() error { return w.routines.Stop() }
+
+// RoutineActive says whether a routine run is in progress. The worker must stay up while one is, even with nothing in force.
+func (w *Worker) RoutineActive() bool { return w.routines.Active() }
+
+// RoutineLast is the summary of the run that ended most recently, or nil.
+func (w *Worker) RoutineLast() *RoutineSummary { return w.routines.Last() }
+
+// RoutineInfo is the routine run in progress and the last one that ended.
+func (w *Worker) RoutineInfo() (RoutineInfo, error) { return w.routines.Info() }
+
+// staleAlert is how long after a session ended its alert can still be given. A worker that was down for longer than this does not
+// announce, on its return, something that ended hours ago.
+const staleAlert = time.Hour
+
+// announceEnded gives the alert of every session that ran out of time on its own and asked for one (shh focus --alert), once each. A
+// session stopped by hand ended before its time and is not announced.
+func (w *Worker) announceEnded() error {
+	if _, err := w.stack.Status(); err != nil { // settles timers that have run out, closing their sessions
+		return err
+	}
+	due, err := w.cfg.Store.EndedWithAlert()
+	if err != nil {
+		return err
+	}
+	now := w.cfg.Clock.Now()
+	for _, l := range due {
+		// Marked first: an alert that fails is reported once, not retried on every tick for ever.
+		if err := w.cfg.Store.MarkAlertDone(l.ID); err != nil {
+			return err
+		}
+		if l.EndTime != nil && now.Sub(*l.EndTime) > staleAlert {
+			continue
+		}
+		switch l.Alert {
+		case AlertBanner:
+			w.say(alert.Alert{Kind: config.KindMessage, Source: "Focus", Title: "Focus session over", Body: describeEnded(l)})
+		case AlertSound:
+			w.playSound()
+		}
+	}
+	return nil
+}
+
+// describeEnded says what a session that has just ended was: "25m at 75% · writing docs".
+func describeEnded(l store.Level) string {
+	text := fmt.Sprintf("%s at %s", decide.FormatRemaining(l.TargetMinutes*60), levelText(l.Percent))
+	if l.Note != "" {
+		text += " · " + l.Note
+	}
+	return text
+}
+
+func (w *Worker) say(a alert.Alert) {
+	if err := w.cfg.Alerter.Show(a); err != nil && w.cfg.OnError != nil {
+		w.cfg.OnError(fmt.Errorf("showing the alert %q: %w", a.Title, err))
+	}
+}
+
+func (w *Worker) playSound() {
+	if w.cfg.PlaySound == nil {
+		return
+	}
+	if err := w.cfg.PlaySound(); err != nil && w.cfg.OnError != nil {
+		w.cfg.OnError(fmt.Errorf("playing the alert sound: %w", err))
+	}
 }

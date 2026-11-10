@@ -771,3 +771,52 @@ func TestTheFlaggedLabelTravelsWithTheBannerAndTheScriptHandlesTheButton(t *test
 		}
 	}
 }
+
+func TestAnActionButtonReportsItsTokenAndIDWhenPressed(t *testing.T) {
+	var mu sync.Mutex
+	var got []string
+	r := &overlayRig{t: t}
+	r.overlay = alert.NewOverlay(alert.OverlayConfig{
+		Start: func(env []string, onEvent func(string)) (alert.Process, error) {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			p := &fakeProcess{env: env, finish: make(chan string, 1), onEvent: onEvent}
+			r.started = append(r.started, p)
+			return p, nil
+		},
+		OnAction: func(token, id string) { mu.Lock(); got = append(got, token+"/"+id); mu.Unlock() },
+	})
+	req := request("work is over", "top-right")
+	req.ActionToken = "7:3"
+	req.Buttons = []config.Button{{Type: alert.ButtonAction, Label: "Start next", ID: "next", Enabled: true}}
+	r.show(req)
+	r.process(0).emit("action next")
+	r.process(0).finish <- "dismissed"
+	settle()
+	r.process(0).emit("action next") // from a banner that has gone: ignored
+	mu.Lock()
+	defer mu.Unlock()
+	if fmt.Sprint(got) != "[7:3/next]" {
+		t.Errorf("OnAction calls = %v", got)
+	}
+	var spec struct {
+		Buttons []struct{ Type, Label, ID string } `json:"buttons"`
+	}
+	for _, kv := range r.process(0).env {
+		if v, ok := strings.CutPrefix(kv, "SHH_BANNER="); ok {
+			_ = json.Unmarshal([]byte(v), &spec)
+		}
+	}
+	if len(spec.Buttons) != 1 || spec.Buttons[0].Type != "action" || spec.Buttons[0].ID != "next" || spec.Buttons[0].Label != "Start next" {
+		t.Errorf("buttons = %+v", spec.Buttons)
+	}
+	if script := strings.Join(alert.OverlayCommand(req).Args, " "); !strings.Contains(script, "'action'") || !strings.Contains(script, "emit('action '") {
+		t.Error("the script must handle action buttons")
+	}
+}
+
+func TestAnActionEventWithNoHookIsHarmless(t *testing.T) {
+	r := newOverlayRig(t)
+	r.show(request("a", "top-right"))
+	r.process(0).emit("action next")
+}
