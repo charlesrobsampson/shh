@@ -173,3 +173,39 @@ func TestButtonColorsAreTheirOwnSettingsAndDefaultToTheSystemLook(t *testing.T) 
 		t.Errorf("round trip: %+v %v", again.Alert.Base, err)
 	}
 }
+
+func TestTheTrainButtonHasItsOwnLabelsAndIsOffByDefault(t *testing.T) {
+	def, err := config.Load(write(t, `{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var train config.Button
+	for _, b := range def.Alert.ButtonsFor(config.KindMessage, "") {
+		if b.Type == config.ButtonTrain {
+			train = b
+		}
+	}
+	if train.Enabled || train.Label != "Not important" || train.TrainedLabel != "Noted" {
+		t.Errorf("default train button = %+v", train)
+	}
+	cfg, err := config.Load(write(t, `{"alert": {"buttons": [{"type": "train", "label": "Noise", "trained_label": "Got it"}]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range cfg.Alert.ButtonsFor(config.KindMessage, "") {
+		if b.Type == config.ButtonTrain && (!b.Enabled || b.Label != "Noise" || b.TrainedLabel != "Got it") {
+			t.Errorf("configured train button = %+v", b)
+		}
+	}
+	for _, bad := range []string{`{"alert": {"buttons": [{"type": "flag", "trained_label": "x"}]}}`, `{"alert": {"buttons": [{"type": "train", "trained_label": ""}]}}`} {
+		if _, err := config.Load(write(t, bad)); err == nil || !contains(err.Error(), "trained_label") {
+			t.Errorf("%s: %v", bad, err)
+		}
+	}
+	shown, _ := cfg.Effective()
+	if again, err := config.Load(write(t, string(shown))); err != nil || !contains(string(shown), `"trained_label": "Got it"`) {
+		t.Errorf("round trip: %v\n%s", err, shown)
+	} else {
+		_ = again
+	}
+}

@@ -188,3 +188,94 @@ func mustLoad(t *testing.T, path string) []routine.Routine {
 func findRoutine(rs []routine.Routine, name string) (routine.Routine, bool) {
 	return routine.Find(rs, name)
 }
+
+// ---- v: held back / let through ----
+
+func (r *rig) addWithStatus(sender string, status store.Status, minutesAgo int) int64 {
+	return r.add(sender, "message "+sender, minutesAgo, func(n *store.Notification) { n.Status = status })
+}
+
+func TestVShowsOnlyWhatWasHeldBackThenOnlyWhatWasLetThroughThenEverything(t *testing.T) {
+	r := newRig(t)
+	r.addWithStatus("Held One", store.StatusBlocked, 3)
+	r.addWithStatus("Held Two", store.StatusBlocked, 2)
+	r.addWithStatus("Let Through", store.StatusAlerted, 1)
+	r.refresh()
+	if got := len(r.m.lists[TabNotifications]); got != 3 {
+		t.Fatalf("everything: %d", got)
+	}
+	r.press("v")
+	if got := len(r.m.lists[TabNotifications]); got != 2 || r.m.show != store.StatusBlocked {
+		t.Fatalf("held back only: %d rows, show %q", got, r.m.show)
+	}
+	for _, n := range r.m.lists[TabNotifications] {
+		if n.Status != store.StatusBlocked {
+			t.Errorf("a notification that was not held back is listed: %+v", n)
+		}
+	}
+	if bar := r.m.tabBar(); !strings.Contains(bar, "held back only") {
+		t.Errorf("the tab bar should say what is shown: %q", bar)
+	}
+	if !strings.Contains(r.m.notice, "n on one that should have reached you") {
+		t.Errorf("notice = %q", r.m.notice)
+	}
+	if hints := r.m.messageLine(); r.m.notice == "" && !strings.Contains(hints, "n = it should have reached me") {
+		t.Errorf("hints = %q", hints)
+	}
+	r.press("v")
+	if got := len(r.m.lists[TabNotifications]); got != 1 || r.m.show != store.StatusAlerted || !strings.Contains(r.m.tabBar(), "let through only") {
+		t.Errorf("let through only: %d rows, show %q, bar %q", got, r.m.show, r.m.tabBar())
+	}
+	r.press("v")
+	if got := len(r.m.lists[TabNotifications]); got != 3 || r.m.show != "" || strings.Contains(r.m.tabBar(), "only") {
+		t.Errorf("everything again: %d rows, show %q", got, r.m.show)
+	}
+}
+
+func TestVAppliesToTheTrainTabToAndEscShowsEverythingAgain(t *testing.T) {
+	r := newRig(t)
+	r.addWithStatus("Held", store.StatusBlocked, 3)
+	r.addWithStatus("Let", store.StatusAlerted, 1)
+	r.refresh()
+	r.press("f3", "v")
+	if got := len(r.m.lists[TabTrain]); got != 1 || r.m.lists[TabTrain][0].Sender != "Held" {
+		t.Fatalf("the Train tab shows only what was held back: %+v", r.m.lists[TabTrain])
+	}
+	if hints := r.m.keyHints(); !strings.Contains(hints, "n = it should have reached me") {
+		t.Errorf("hints = %q", hints)
+	}
+	r.press("esc")
+	if r.m.show != "" || len(r.m.lists[TabTrain]) != 2 {
+		t.Errorf("Esc shows everything again: show %q rows %d", r.m.show, len(r.m.lists[TabTrain]))
+	}
+}
+
+func TestNOnAHeldBackNotificationSaysItShouldHaveReachedTheUser(t *testing.T) {
+	r := newRig(t)
+	id := r.addWithStatus("Held", store.StatusBlocked, 3)
+	r.refresh()
+	r.press("v", "n")
+	if len(r.trainer.requests) != 1 || r.trainer.requests[0].NotificationID != id || r.trainer.requests[0].Feedback != "y" {
+		t.Errorf("requests = %+v: n on a held back notification means it should have been alerted, which is feedback y", r.trainer.requests)
+	}
+}
+
+func TestVDoesNothingOnTheFocusAndRoutinesTabsAndIsOnTheStateLineOfTheListTabs(t *testing.T) {
+	r := newRig(t)
+	r.press("f1", "v")
+	if r.m.show != "" {
+		t.Error("v does nothing on the Focus tab")
+	}
+	r.press("f4", "v")
+	if r.m.show != "" {
+		t.Error("v does nothing on the Routines tab")
+	}
+	r.press("f2")
+	if state := r.promptBar(); !strings.Contains(state, "v view") {
+		t.Errorf("state line = %q", state)
+	}
+	r.press("f1")
+	if state := r.promptBar(); strings.Contains(state, "v view") {
+		t.Errorf("the Focus tab has no view to change: %q", state)
+	}
+}

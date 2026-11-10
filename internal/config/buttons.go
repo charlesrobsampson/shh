@@ -25,8 +25,8 @@ var buttonSpecs = []buttonSpec{
 	{ButtonPreview, "Preview", true},
 	{ButtonGoto, "Go to", true},
 	{ButtonDismiss, "Dismiss", true},
-	{ButtonFlag, "Flag", true},    // marks the notification to look at again in the Train tab; shown only for alerts that have one
-	{ButtonTrain, "Train", false}, // reserved until task 45
+	{ButtonFlag, "Flag", true},            // marks the notification to look at again in the Train tab; shown only for alerts that have one
+	{ButtonTrain, "Not important", false}, // teaches the model at once that this alert should not have come; off until it is asked for
 }
 
 // ButtonEntry is one button as written in config.json. Label and Enabled fall back to the defaults when left out; an entry that is
@@ -39,6 +39,8 @@ type ButtonEntry struct {
 	CollapseLabel *string `json:"collapse_label,omitempty"`
 	// FlaggedLabel (flag only) is what the button says once it has been pressed.
 	FlaggedLabel *string `json:"flagged_label,omitempty"`
+	// TrainedLabel (train only) is what the button says once it has been pressed.
+	TrainedLabel *string `json:"trained_label,omitempty"`
 }
 
 // Button is a resolved button.
@@ -49,6 +51,8 @@ type Button struct {
 	// CollapseLabel is only set for preview, and FlaggedLabel only for flag.
 	CollapseLabel string
 	FlaggedLabel  string
+	// TrainedLabel is only set for train.
+	TrainedLabel string
 	// ID is only set for an action button, one an alert brings with it (see alert.Action) and the configuration does not list.
 	ID string
 }
@@ -70,7 +74,7 @@ func normalize(entries []ButtonEntry) []Button {
 	if entries == nil {
 		out := make([]Button, 0, len(buttonSpecs))
 		for _, s := range buttonSpecs {
-			out = append(out, Button{Type: s.Type, Label: s.Label, Enabled: s.Enabled, CollapseLabel: defaultCollapse(s.Type), FlaggedLabel: defaultFlagged(s.Type)})
+			out = append(out, Button{Type: s.Type, Label: s.Label, Enabled: s.Enabled, CollapseLabel: defaultCollapse(s.Type), FlaggedLabel: defaultFlagged(s.Type), TrainedLabel: defaultTrained(s.Type)})
 		}
 		return out
 	}
@@ -78,7 +82,10 @@ func normalize(entries []ButtonEntry) []Button {
 	seen := map[string]bool{}
 	for _, e := range entries {
 		spec := buttonSpecs[specIndex(e.Type)]
-		b := Button{Type: spec.Type, Label: spec.Label, Enabled: true, CollapseLabel: defaultCollapse(spec.Type), FlaggedLabel: defaultFlagged(spec.Type)}
+		b := Button{Type: spec.Type, Label: spec.Label, Enabled: true, CollapseLabel: defaultCollapse(spec.Type), FlaggedLabel: defaultFlagged(spec.Type), TrainedLabel: defaultTrained(spec.Type)}
+		if e.TrainedLabel != nil {
+			b.TrainedLabel = *e.TrainedLabel
+		}
 		if e.CollapseLabel != nil {
 			b.CollapseLabel = *e.CollapseLabel
 		}
@@ -96,7 +103,7 @@ func normalize(entries []ButtonEntry) []Button {
 	}
 	for _, s := range buttonSpecs {
 		if !seen[s.Type] {
-			out = append(out, Button{Type: s.Type, Label: s.Label, CollapseLabel: defaultCollapse(s.Type), FlaggedLabel: defaultFlagged(s.Type)})
+			out = append(out, Button{Type: s.Type, Label: s.Label, CollapseLabel: defaultCollapse(s.Type), FlaggedLabel: defaultFlagged(s.Type), TrainedLabel: defaultTrained(s.Type)})
 		}
 	}
 	return out
@@ -112,6 +119,13 @@ func defaultCollapse(buttonType string) string {
 func defaultFlagged(buttonType string) string {
 	if buttonType == ButtonFlag {
 		return "Flagged"
+	}
+	return ""
+}
+
+func defaultTrained(buttonType string) string {
+	if buttonType == ButtonTrain {
+		return "Noted"
 	}
 	return ""
 }
@@ -132,6 +146,10 @@ func entries(buttons []Button) []ButtonEntry {
 		if b.FlaggedLabel != "" {
 			flagged := b.FlaggedLabel
 			entry.FlaggedLabel = &flagged
+		}
+		if b.TrainedLabel != "" {
+			trained := b.TrainedLabel
+			entry.TrainedLabel = &trained
 		}
 		out = append(out, entry)
 	}
@@ -157,6 +175,10 @@ func validateButtons(prefix string, list []ButtonEntry) error {
 			return fmt.Errorf("%q: only the preview button has a collapse label", key+".collapse_label")
 		case e.CollapseLabel != nil && *e.CollapseLabel == "":
 			return fmt.Errorf("%q must not be empty (leave it out to use the default label)", key+".collapse_label")
+		case e.TrainedLabel != nil && e.Type != ButtonTrain:
+			return fmt.Errorf("%q: only the train button has a trained label", key+".trained_label")
+		case e.TrainedLabel != nil && *e.TrainedLabel == "":
+			return fmt.Errorf("%q must not be empty (leave it out to use the default label)", key+".trained_label")
 		case e.FlaggedLabel != nil && e.Type != ButtonFlag:
 			return fmt.Errorf("%q: only the flag button has a flagged label", key+".flagged_label")
 		case e.FlaggedLabel != nil && *e.FlaggedLabel == "":

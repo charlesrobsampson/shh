@@ -129,6 +129,8 @@ type Model struct {
 	// expandedID is the notification shown in full across the whole screen (e); 0 when none is. scroll is how far down its text is.
 	expandedID int64
 	scroll     int
+	// show narrows both lists to the notifications shh held back or let through ("" for all): v goes through the choices.
+	show store.Status
 	// filter narrows both lists to notifications containing this text; totals is how many each list holds before it is applied.
 	filter string
 	totals [tabCount]int
@@ -220,7 +222,7 @@ func (m *Model) reload() {
 		if tab == TabTrain {
 			view = store.ViewTrain
 		}
-		rows, err := m.cfg.Data.ListNotifications(store.Filter{View: view, Limit: maxRows})
+		rows, err := m.cfg.Data.ListNotifications(store.Filter{View: view, Limit: maxRows, Status: m.show})
 		if err != nil {
 			m.err = "cannot read notifications: " + err.Error()
 			continue
@@ -366,9 +368,12 @@ func (m *Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		if m.expanded() {
 			m.collapse()
-		} else if m.filter != "" {
+		} else if m.filter != "" || m.show != "" {
+			m.show = ""
 			m.setFilter("")
 		}
+	case "v":
+		m.cycleShow()
 	case "/":
 		if !m.listless() {
 			m.openAsk(promptFilter, m.filter)
@@ -948,6 +953,43 @@ func (m *Model) setFilter(text string) {
 	}
 }
 
+// showText names a status for the tab bar and messages.
+func showText(s store.Status) string {
+	switch s {
+	case store.StatusBlocked:
+		return "held back"
+	case store.StatusAlerted:
+		return "let through"
+	}
+	return "everything"
+}
+
+// cycleShow (v) goes through everything, only what shh held back and only what it let through, on the two notification tabs. Held back
+// is the one to look at for notifications that should have reached you: they never made a banner, so this is the only place to say so.
+func (m *Model) cycleShow() {
+	if m.listless() {
+		return
+	}
+	switch m.show {
+	case "":
+		m.show = store.StatusBlocked
+	case store.StatusBlocked:
+		m.show = store.StatusAlerted
+	default:
+		m.show = ""
+	}
+	m.collapse()
+	m.reload()
+	switch m.show {
+	case store.StatusBlocked:
+		m.notice = "showing only what shh held back: n on one that should have reached you (v goes on, Esc shows everything)"
+	case store.StatusAlerted:
+		m.notice = "showing only what shh let through (v goes on, Esc shows everything)"
+	default:
+		m.notice = "showing everything"
+	}
+}
+
 // filterRows keeps the notifications whose sender, app, title, subtitle or message contains the text, ignoring case.
 func filterRows(rows []store.Notification, text string) []store.Notification {
 	needle := strings.ToLower(text)
@@ -1095,6 +1137,9 @@ func (m *Model) tabBar() string {
 		}
 	}
 	bar := strings.Join(parts, "")
+	if m.show != "" {
+		bar += dim.Render(" · " + showText(m.show) + " only")
+	}
 	if m.filter != "" {
 		bar += dim.Render(" / " + oneLine(m.filter))
 	}
@@ -1314,6 +1359,9 @@ func (m *Model) stateLine() string {
 	}
 	// "? help" is always shown. When the line is too narrow the counts go first, then the session text is shortened.
 	right := "? help · q quit "
+	if !m.listless() {
+		right = "v view · " + right // all, only what was held back, only what was let through
+	}
 	room := max(0, m.width-lipgloss.Width(right))
 	counts := fmt.Sprintf("%d notifications · %d to train", len(m.lists[TabNotifications]), len(m.lists[TabTrain]))
 	if m.filter != "" {
@@ -1398,7 +1446,13 @@ func (m *Model) keyHints() string {
 		}
 		return "j/k select · Enter start · n next · b back · x stop · a new · e edit · c copy · d delete · H history"
 	case TabTrain:
+		if m.show == store.StatusBlocked {
+			return "held back: n = it should have reached me · y = right call · t score · v next view · f flag · Esc all"
+		}
 		return "j/k move · / filter · y/n right/wrong · t score · u undo · f flag · e read · o open · d dismiss"
+	}
+	if m.show == store.StatusBlocked {
+		return "held back: n = it should have reached me · y = right call · t score · v next view · f flag · Esc all"
 	}
 	return "j/k move · / filter · e read · o open · d dismiss · f flag · y/n right/wrong · t score · u undo"
 }

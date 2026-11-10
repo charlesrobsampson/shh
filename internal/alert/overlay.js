@@ -243,6 +243,7 @@ emit('screen ' + Math.round(area.size.height - 2 * margin));
 
 let expanded = false;
 let flagged = false;
+let trainedOnce = false;
 function press(spec) {
   if (spec.type === 'dismiss') finish('dismissed');
   else if (spec.type === 'goto') finish('opened');
@@ -251,7 +252,16 @@ function press(spec) {
     emit('action ' + spec.id);
     finish('dismissed');
   }
-  else if (spec.type === 'flag') {
+  else if (spec.type === 'train') {
+    // One press: the notification is marked as one that should not have alerted, the button says so and stops being pressable.
+    const i = cfg.buttons.indexOf(spec);
+    if (!trainedOnce) {
+      trainedOnce = true;
+      setButtonTitle(buttons[i], spec.trainedLabel || 'Noted', i);
+      buttons[i].setEnabled(false);
+      emit('train 1');
+    }
+  } else if (spec.type === 'flag') {
     // A toggle: pressing it marks the notification for review in the Train tab and shows the flagged label; pressing it again clears
     // the mark. The script tells Go the state it now has (1 or 0), not just that it was pressed, so the two cannot drift apart.
     const button = buttons[cfg.buttons.indexOf(spec)];

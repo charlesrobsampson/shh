@@ -99,7 +99,7 @@ func applies(buttonType string, width int, a Alert) bool {
 		return a.BundleID != ""
 	case config.ButtonPreview:
 		return Truncated(width, a.Body)
-	case config.ButtonFlag:
+	case config.ButtonFlag, config.ButtonTrain:
 		return a.NotificationID != 0
 	}
 	return false

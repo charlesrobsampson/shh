@@ -491,7 +491,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Manual check: user runs `shh alert test`: buttons look right; Preview expands the long sample without dismissing; Go to opens Calculator and closes it; Dismiss closes it; a `config.json` listing only `dismiss` makes background clicks dismiss.
 
 ### 45 · Train button on alerts
-- [ ] Done
+- [x] Done
 - Session: _(fill on start)_
 - Branch: `task/45-alert-train` · Depends: 33, 44
 - Context: the Train button (registered in task 44, disabled by default) lets the user rate an alert without opening the TUI: it expands the banner to a 0 to 100 slider with Save, like the TUI's exact label, and optionally quick "not important" feedback. Training must reuse the TUI's training path from task 33 (flags, `user_label`, model update, undo), not a second implementation; the alert carries the stored notification id and the worker trains from the stored notification. Calendar alerts have no row to train and hide the button.
@@ -499,6 +499,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Build: `alert.Alert.NotificationID`; the banner reports `trained <score>` back to the daemon; a worker method (shared with the TUI) trains from the stored notification; the button applies only when the alert has a notification id.
 - Tests: fake overlay reporting a score trains the model and sets the flags exactly as the TUI does; undo works; the button is hidden for calendar alerts.
 - Manual check: rate a real alert from the banner, then see the label in the Train tab history and the score change in `shh replay`.
+- **Built differently from the plan (user decision, 2026-11-10):** the user first asked whether it was still needed now that banners have a Flag button, then wanted immediate feedback on specific alerts. So instead of a 0 to 100 slider it is **one button, "Not important"** (config `train`, label and `trained_label` configurable, **off by default**: list it in `alert.buttons`), which teaches the model at once that this alert should not have come (the same answer as `n` on the Notifications tab: quick feedback `n`, undoable with `u`), says "Noted" and cannot be pressed twice (`OverlayConfig.OnTrain`, event `train`, `Worker.Train`). It shows only for alerts about a stored notification; a sample from `shh alert test` does nothing. A slider or an exact score from a banner was left out; the TUI's `t` does that. **Also from this discussion:** a banner exists only for what shh let through, so for a notification that was *held back* and should have reached the user there was nowhere to say so quickly. **`v` on the Notifications and Train tabs** now goes through everything / held back only / let through only (tab bar says which, `v view` in the state line, Esc resets); in the held-back view `n` means it should have reached me (feedback `y`) and the footer says so. The banner script change needs the rebuilt binary and `shh worker restart`.
 
 ### 46 · Banner layout: stacks that follow Preview and Dismiss
 - [x] Done

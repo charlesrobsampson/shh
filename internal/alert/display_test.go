@@ -364,3 +364,30 @@ func TestALiveDisplayAsksForTheConfigurationOfEachAlert(t *testing.T) {
 		t.Errorf("requests = %+v", primary.requests)
 	}
 }
+
+func TestTheTrainButtonShowsOnlyForAlertsAboutAStoredNotificationAndOnlyWhenEnabled(t *testing.T) {
+	primary := &recordingBackend{}
+	on := alert.NewDisplay(loadConfig(t, `{"alert": {"buttons": [{"type": "goto"}, {"type": "train"}]}}`).Alert, primary, nil, nil)
+	_ = on.Show(alert.Alert{Kind: config.KindMessage, Source: "Teams", Title: "Ana", Body: "b", BundleID: "com.x", NotificationID: 7})
+	_ = on.Show(alert.Alert{Kind: config.KindMessage, Source: "Teams", Title: "no id", Body: "b", BundleID: "com.x"})
+	types := func(r alert.Request) string {
+		var out []string
+		for _, b := range r.Buttons {
+			out = append(out, b.Type+":"+b.Label)
+		}
+		return strings.Join(out, ",")
+	}
+	if got := types(primary.requests[0]); got != "goto:Go to,train:Not important" {
+		t.Errorf("an alert about a stored notification: %s", got)
+	}
+	if got := types(primary.requests[1]); got != "goto:Go to" {
+		t.Errorf("with nothing stored there is nothing to train: %s", got)
+	}
+	off := &recordingBackend{}
+	_ = alert.NewDisplay(loadConfig(t, `{}`).Alert, off, nil, nil).Show(alert.Alert{Kind: config.KindMessage, Title: "x", Body: "b", NotificationID: 7})
+	for _, b := range off.requests[0].Buttons {
+		if b.Type == "train" {
+			t.Error("the train button is off until it is asked for")
+		}
+	}
+}
