@@ -564,7 +564,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Manual check: `10j`, `3k`, `5G`; then `t` and type a score.
 
 ### 52 · Routines: saved sequences of focus sessions
-- [ ] Done
+- [x] Done
 - Session: `claude --resume 433ae5cd-acfb-43bf-a0ab-1a88ad3d57d4`
 - Branch: `task/52-routines` · Depends: 34, 36
 - Context: the user's idea (2026-11-10): let people save a list of focus sessions and run it, stepping through each one, like the `then` fall-back but with as many steps as they like and saved under a name. A pomodoro profile is the motivating case (work 25m at 75%, break 5m off, four times, then a long break). Steps can alert when they end, or move on by themselves. Routines are edited in the UI and saved with the rest of the configuration.
