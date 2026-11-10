@@ -280,6 +280,10 @@ func runTUI(cfg config.Config) error {
 		// The Routines tab starts and steers routines through the worker and reads the routines file itself.
 		Routines: client,
 		Saved:    func() ([]routine.Routine, error) { return routine.Load(routine.DefaultPath(cfg.Paths.Dir)) },
+		SaveRoutine: func(r routine.Routine, replace bool) error {
+			return routine.Save(routine.DefaultPath(cfg.Paths.Dir), r, replace)
+		},
+		RemoveRoutine: func(name string) error { return routine.Remove(routine.DefaultPath(cfg.Paths.Dir), name) },
 		// Training goes through the worker, which owns the model; start one if none is running.
 		Trainer: client,
 		Ensure: func() error {

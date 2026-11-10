@@ -261,8 +261,8 @@ func build(fr fileRoutine, name string) (Routine, error) {
 	}
 	r := Routine{Repeat: 1, Waiting: WaitStay, Summary: []Where{WhereBanner, WhereUI}}
 	// The name is the key it is filed under, and it is typed on the command line.
-	if name != strings.TrimSpace(name) || !validName.MatchString(name) {
-		return r, fmt.Errorf("%q: the routine name %q should start with a letter or digit and use only letters, digits, spaces, dots, dashes and underscores (it is typed on the command line)", key, name)
+	if err := ValidName(name); err != nil {
+		return r, fmt.Errorf("%q: %w", key, err)
 	}
 	r.Name = name
 	if fr.Description != nil {
@@ -464,4 +464,12 @@ func (r Routine) Outline() string {
 		line += " -> " + part(r.Finish)
 	}
 	return line
+}
+
+// ValidName says whether a routine can be called that.
+func ValidName(name string) error {
+	if name != strings.TrimSpace(name) || !validName.MatchString(name) {
+		return fmt.Errorf("the routine name %q should start with a letter or digit and use only letters, digits, spaces, dots, dashes and underscores (it is typed on the command line)", name)
+	}
+	return nil
 }

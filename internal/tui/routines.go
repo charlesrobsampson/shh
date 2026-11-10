@@ -49,6 +49,19 @@ func (m *Model) routineKey(key string) bool {
 		name := m.saved[m.routineCursor].Name
 		m.routineDo("shh routine run "+name, func(c RoutineControl) (session.RoutineInfo, error) { return c.RoutineRun(name) },
 			func(session.RoutineInfo) string { return "started " + name }, true)
+	case "a":
+		m.startEditor(nil)
+	case "e":
+		if m.routineCursor >= len(m.saved) {
+			m.notice = "no saved routine to edit: a makes a new one"
+			return true
+		}
+		r := m.saved[m.routineCursor]
+		m.startEditor(&r)
+	case "c":
+		m.copyRoutine()
+	case "d":
+		m.confirmDelete()
 	case "n":
 		m.routineDo("shh routine next", func(c RoutineControl) (session.RoutineInfo, error) { return c.RoutineNext() },
 			func(session.RoutineInfo) string { return "on to the next step" }, false)
@@ -139,6 +152,9 @@ func routineLine(r session.RoutineView) string {
 
 // routinesView is the Routines tab: the run in progress, if any, and the saved routines to start one from.
 func (m *Model) routinesView() string {
+	if m.editor != nil {
+		return m.editorView()
+	}
 	lines := []string{""}
 	switch {
 	case !m.haveStatus:

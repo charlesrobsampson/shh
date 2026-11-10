@@ -54,6 +54,10 @@ type Config struct {
 	// Saved lists the routines in the routines file; Routines runs them. Either nil turns the Routines tab's actions off.
 	Saved    func() ([]routine.Routine, error)
 	Routines RoutineControl
+	// SaveRoutine writes a routine to the routines file (replacing the one of that name when asked); RemoveRoutine deletes one.
+	// Either nil turns editing off.
+	SaveRoutine   func(r routine.Routine, replace bool) error
+	RemoveRoutine func(name string) error
 	// Trainer handles y, n, t and u. Nil turns training off.
 	Trainer Trainer
 	// Ensure makes sure a worker is running before a notification is trained or an undo is made (starting one if need be); nil means
@@ -116,6 +120,8 @@ type Model struct {
 	// saved is the routines last read from the file, and savedErr why they could not be.
 	saved    []routine.Routine
 	savedErr string
+	// editor is the routine being made or changed on the Routines tab; nil when none is.
+	editor *routineEditor
 	// afterRoutine is what to do once the user agrees to end the running routine, which was in the way of what they asked for.
 	afterRoutine func()
 	// count is the number typed before a motion (3 in 3k), vim style; 0 when none is pending.
@@ -270,6 +276,10 @@ func (m *Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.showHelp {
 		return m.helpKey(msg)
+	}
+	if m.editor != nil {
+		m.editorKey(msg.String())
+		return m, m.takeBlink()
 	}
 	// A number typed before a motion repeats it (6j, 3k) or says where to go (5G). Digits only build a count here; an exact label is
 	// typed after t, when the prompt is open and digits go into it.
@@ -459,6 +469,8 @@ const (
 	promptFilter                              // text to narrow the lists to
 	promptConfirmStopAll                      // y or n: turn everything off, baseline included
 	promptConfirmEndRoutine                   // y or n: end the running routine, which is in the way
+	promptConfirmDelete                       // y or n: delete the selected saved routine
+	promptEditField                           // a value in the routine editor
 )
 
 // prompt is a line being typed at the bottom of the screen.
@@ -467,12 +479,18 @@ type prompt struct {
 	text   string
 	err    string
 	target store.Notification // for a label: the notification it is for
+	// For an editor field: what is being asked, how to answer, and which row it is for.
+	label, help string
+	row         editorRow
 }
 
 // promptLimit is how much can be typed: a label is short, a focus line with a note is not.
 func promptLimit(kind promptKind) int {
-	if kind == promptLabel {
+	switch kind {
+	case promptLabel:
 		return 12
+	case promptEditField:
+		return 160
 	}
 	return 80
 }
@@ -524,14 +542,17 @@ func (m *Model) openAsk(kind promptKind, initial string) {
 func (m *Model) promptKey(msg tea.KeyMsg) {
 	p := m.prompt
 	m.cursorOn, m.restartBlink = true, true // the cursor stays solid while typing, then starts blinking again
-	if p.kind == promptConfirmStopAll || p.kind == promptConfirmEndRoutine {
+	if p.kind == promptConfirmStopAll || p.kind == promptConfirmEndRoutine || p.kind == promptConfirmDelete {
 		// A yes or no question: one key answers it.
 		switch msg.String() {
 		case "y", "Y":
 			m.prompt = nil
-			if p.kind == promptConfirmEndRoutine {
+			switch p.kind {
+			case promptConfirmEndRoutine:
 				m.endRoutineThen()
-			} else {
+			case promptConfirmDelete:
+				m.deleteSelected()
+			default:
 				m.stop(true)
 			}
 		case "n", "N", "esc", "ctrl+c":
@@ -553,7 +574,7 @@ func (m *Model) promptKey(msg tea.KeyMsg) {
 	case tea.KeyRunes, tea.KeySpace:
 		if len([]rune(p.text)) < promptLimit(p.kind) {
 			p.text += string(msg.Runes)
-			if msg.Type == tea.KeySpace {
+			if msg.Type == tea.KeySpace && len(msg.Runes) == 0 { // the terminal's space key carries the space itself
 				p.text += " "
 			}
 		}
@@ -583,6 +604,8 @@ func (m *Model) submitPrompt() {
 	case promptFilter:
 		m.prompt = nil
 		m.setFilter(strings.TrimSpace(p.text))
+	case promptEditField:
+		m.submitField(p)
 	}
 }
 
@@ -1179,7 +1202,9 @@ func (m *Model) messageLine() string {
 		if items := m.focusItems(); m.tab == TabFocus && m.focusCursor < len(items) {
 			right = commandText(items[m.focusCursor].cmd) // what the selected row is, as a command, so the menu teaches the command line
 		}
-		if m.tab == TabRoutines && m.routineCursor < len(m.saved) {
+		if m.editor != nil {
+			right = commandText(addCommand(m.editor.draft, m.editor.original != ""))
+		} else if m.tab == TabRoutines && m.routineCursor < len(m.saved) {
 			right = commandText("shh routine run " + m.saved[m.routineCursor].Name)
 		}
 	}
@@ -1208,7 +1233,10 @@ func (m *Model) keyHints() string {
 	case TabFocus:
 		return "j/k select · Enter run it · or its key: s b f p + - x X · Tab switch"
 	case TabRoutines:
-		return "j/k select · Enter start · n next step · b back · x stop it · Tab switch"
+		if m.editor != nil {
+			return "j/k move · Enter change · a add a step · d delete · J/K reorder · s save · Esc cancel"
+		}
+		return "j/k select · Enter start · n next · b back · x stop · a new · e edit · c copy · d delete"
 	case TabTrain:
 		return "j/k move · / filter · y/n right/wrong · t score · u undo · f flag · e read · o open · d dismiss"
 	}
@@ -1230,6 +1258,10 @@ func (p *prompt) question() string {
 		return " turn focus off completely, baseline included? "
 	case promptConfirmEndRoutine:
 		return " a routine is running. End it and do this? "
+	case promptConfirmDelete:
+		return " delete this routine? "
+	case promptEditField:
+		return " " + p.label + ": "
 	}
 	return fmt.Sprintf(" label for %s: ", oneLine(p.target.Sender))
 }
@@ -1249,6 +1281,10 @@ func (p *prompt) hint() string {
 		return "y turns it all off · n or Esc keeps it"
 	case promptConfirmEndRoutine:
 		return "y ends the routine and goes on · n or Esc leaves it running"
+	case promptConfirmDelete:
+		return "y deletes it from the routines file · n or Esc keeps it"
+	case promptEditField:
+		return p.help
 	}
 	return "Enter saves · Esc cancels · a score from 0 to 100, or light, medium, deep or lockdown"
 }
@@ -1344,6 +1380,8 @@ var helpSections = []struct {
 		{"n", "Go on: start the step that is waiting for you, or end the running step early and move to the next. Steps that only set the baseline are applied on the way."},
 		{"b", "Restart the step before this one (the step that just ended, while waiting)."},
 		{"x", "End the routine now. Whatever it had in force is stopped."},
+		{"a, e, c, d", "a makes a new routine, e edits the selected one, c edits a copy of it under a new name, d deletes it (asking first). The same things from a terminal: shh routine add and shh routine remove; the line under the page shows the command that would save what you are editing."},
+		{"the editor", "j and k move over the rows, Enter changes one: Name, Description and Repeat take typing; Waiting and Summary go to their next choice. Each step is one shh command, such as 75% 25m work --alert banner or baseline 30% (--ask makes it wait for you before the next). Enter on a step edits it, a adds one, d deletes one (a routine keeps at least one), J and K move it down or up. s saves; only that routine's text in routines.json changes, so your comments and the rest of the file stay as they were. Esc cancels; with unsaved changes it asks for a second Esc."},
 		{"on the Focus tab", "While a routine runs, starting or stopping a session by hand asks first: y ends the routine and does what you asked, n leaves everything as it was. The Focus tab also shows the routine's step under the level in force."},
 	}},
 	{"Reading", []helpTopic{

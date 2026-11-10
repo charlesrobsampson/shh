@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -263,4 +264,272 @@ func TestTheDollarKeyJumpsToRoutinesAndTheTabBarListsIt(t *testing.T) {
 		t.Error("the help should explain the Routines tab")
 	}
 	_ = time.Second
+}
+
+// ---- the editor ----
+
+// editorRig is a routines rig whose save and remove act on a file text, as the real ones act on the file.
+func editorRig(t *testing.T) (*rig, *string, *[]string) {
+	t.Helper()
+	r, _ := routinesRig(t)
+	text := tuiRoutines
+	var log []string
+	r.m.cfg.Saved = func() ([]routine.Routine, error) { return routine.Parse("routines.json", []byte(text)) }
+	dir := t.TempDir()
+	path := dir + "/routines.json"
+	_ = os.WriteFile(path, []byte(tuiRoutines), 0o600)
+	r.m.cfg.Saved = func() ([]routine.Routine, error) { return routine.Load(path) }
+	r.m.cfg.SaveRoutine = func(rt routine.Routine, replace bool) error {
+		log = append(log, fmt.Sprintf("save %s replace=%v", rt.Name, replace))
+		return routine.Save(path, rt, replace)
+	}
+	r.m.cfg.RemoveRoutine = func(name string) error {
+		log = append(log, "remove "+name)
+		return routine.Remove(path, name)
+	}
+	r.refresh()
+	return r, &path, &log
+}
+
+func (r *rig) typeInto(text string) {
+	r.t.Helper()
+	for i := 0; i < 200 && r.m.prompt != nil && r.m.prompt.text != ""; i++ {
+		r.press("backspace")
+	}
+	r.typeText(text)
+	r.press("enter")
+}
+
+func TestEditingARoutineChangesAStepAndSavesInPlace(t *testing.T) {
+	r, path, log := editorRig(t)
+	r.press("e")
+	if r.m.editor == nil || r.m.editor.original != "pomo" {
+		t.Fatalf("e should open the editor on pomo: %+v", r.m.editor)
+	}
+	v := r.view()
+	for _, want := range []string{"Editing pomo", "Name", "Description", "Repeat", "Waiting", "Summary", "75% 25m work --alert banner", "+", "add a step", "Finish", "off 15m long break"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("the editor should show %q:\n%s", want, v)
+		}
+	}
+	r.press("j", "j", "j", "j", "j", "enter") // the first step
+	if r.m.prompt == nil || r.m.prompt.text != "75% 25m work --alert banner" {
+		t.Fatalf("Enter on a step should open it for editing: %+v", r.m.prompt)
+	}
+	r.typeInto("90% 50m deep work --ask")
+	if r.m.editor.draft.Steps[0].Length != 50*time.Minute || !r.m.editor.dirty {
+		t.Errorf("draft = %+v", r.m.editor.draft.Steps[0])
+	}
+	r.press("s")
+	if r.m.editor != nil {
+		t.Fatalf("s should save and close: notice %q", r.m.notice)
+	}
+	if got := strings.Join(*log, ","); got != "save pomo replace=true" {
+		t.Errorf("log = %s", got)
+	}
+	saved, _ := os.ReadFile(*path)
+	if !strings.Contains(string(saved), "90% 50m deep work --ask") || !strings.Contains(string(saved), `"deep"`) {
+		t.Errorf("file:\n%s", saved)
+	}
+	if !strings.Contains(r.m.messageLine(), "saved pomo") {
+		t.Errorf("message = %q", r.m.messageLine())
+	}
+}
+
+func TestANewRoutineIsBuiltFromRowsAndSaved(t *testing.T) {
+	r, path, _ := editorRig(t)
+	r.press("a")
+	if r.m.editor == nil || r.m.editor.original != "" || !strings.Contains(r.view(), "New routine") {
+		t.Fatalf("a should open a new routine:\n%s", r.view())
+	}
+	r.press("s")
+	if r.m.editor == nil || !strings.Contains(r.m.notice, "name") {
+		t.Errorf("saving with no name should say so: %q", r.m.notice)
+	}
+	r.press("enter") // Name (the cursor was moved there)
+	r.typeInto("reading")
+	r.press("j", "enter")
+	r.typeInto("an evening")
+	r.press("j", "enter")
+	r.typeInto("3")
+	r.press("j", "enter") // waiting cycles
+	r.press("j", "enter") // summary cycles
+	r.press("j", "a")     // add a step after the first
+	r.typeInto("off 5m break --ask")
+	r.press("s")
+	if r.m.editor != nil {
+		t.Fatalf("not saved: %q", r.m.notice)
+	}
+	rs, err := routine.Load(*path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := routine.Find(rs, "reading")
+	if got.Description != "an evening" || got.Repeat != 3 || got.Waiting != routine.WaitNext || len(got.Steps) != 2 || got.Steps[1].Advance != routine.AdvanceAsk {
+		t.Errorf("saved = %+v", got)
+	}
+	if got.Summary[0] != routine.WhereBanner || len(got.Summary) != 1 {
+		t.Errorf("summary = %v", got.Summary)
+	}
+	if r.m.saved[r.m.routineCursor].Name != "reading" {
+		t.Error("the new routine should be selected afterwards")
+	}
+}
+
+func TestBadValuesStayInTheBoxWithTheReason(t *testing.T) {
+	r, _, _ := editorRig(t)
+	r.press("a", "enter") // name
+	r.typeInto("-bad")
+	if r.m.prompt == nil || r.m.prompt.err == "" {
+		t.Fatal("a bad name should keep the box open")
+	}
+	r.press("esc")
+	r.press("j", "j", "enter") // repeat
+	r.typeInto("500")
+	if r.m.prompt == nil || !strings.Contains(r.m.prompt.err, "1 to 99") {
+		t.Errorf("err = %v", r.m.prompt)
+	}
+	r.press("esc")
+	r.press("j", "j", "j", "enter") // the first step
+	r.typeInto("75% work")
+	if r.m.prompt == nil || !strings.Contains(r.m.prompt.err, "length") {
+		t.Errorf("err = %v", r.m.prompt)
+	}
+	if r.m.editor.draft.Steps[0].Length != 25*time.Minute {
+		t.Error("a refused value must not change the draft")
+	}
+}
+
+func TestStepsCanBeMovedAndDeletedButNotTheLastOne(t *testing.T) {
+	r, _, _ := editorRig(t)
+	r.press("e", "j", "j", "j", "j", "j") // first step
+	r.press("J")
+	if r.m.editor.draft.Steps[1].Name != "work" || r.m.editor.draft.Steps[0].Name != "break" {
+		t.Errorf("steps = %+v", r.m.editor.draft.Steps)
+	}
+	if row := r.m.editor.current(); row.kind != rowStep || row.index != 1 {
+		t.Errorf("the cursor should go with the step: %+v", row)
+	}
+	r.press("K", "K")
+	if r.m.editor.draft.Steps[0].Name != "work" {
+		t.Errorf("K puts it back, and at the top does nothing: %+v", r.m.editor.draft.Steps)
+	}
+	r.press("d")
+	if len(r.m.editor.draft.Steps) != 1 {
+		t.Errorf("steps = %+v", r.m.editor.draft.Steps)
+	}
+	r.press("d")
+	if len(r.m.editor.draft.Steps) != 1 || !strings.Contains(r.m.notice, "at least one step") {
+		t.Errorf("the last step stays: %q", r.m.notice)
+	}
+}
+
+func TestEscAsksTwiceWhenThereAreUnsavedChanges(t *testing.T) {
+	r, path, log := editorRig(t)
+	r.press("e")
+	r.press("esc")
+	if r.m.editor != nil {
+		t.Error("with nothing changed, Esc closes at once")
+	}
+	r.press("e", "j", "j", "enter")
+	r.typeInto("9")
+	r.press("esc")
+	if r.m.editor == nil || !strings.Contains(r.m.notice, "unsaved") {
+		t.Errorf("the first Esc should warn: %q", r.m.notice)
+	}
+	r.press("esc")
+	if r.m.editor != nil {
+		t.Error("the second Esc discards")
+	}
+	saved, _ := os.ReadFile(*path)
+	if string(saved) != tuiRoutines || len(*log) != 0 {
+		t.Error("nothing should have been written")
+	}
+}
+
+func TestRenamingSavesTheNewNameAndRemovesTheOld(t *testing.T) {
+	r, path, log := editorRig(t)
+	r.press("e", "enter")
+	r.typeInto("pomodoro")
+	r.press("s")
+	if got := strings.Join(*log, ","); got != "save pomodoro replace=false,remove pomo" {
+		t.Errorf("log = %s", got)
+	}
+	rs, _ := routine.Load(*path)
+	if _, ok := routine.Find(rs, "pomo"); ok {
+		t.Error("the old name should be gone")
+	}
+	if _, ok := routine.Find(rs, "pomodoro"); !ok {
+		t.Error("the new name should be there")
+	}
+}
+
+func TestChangingOnlyTheCaseOfANameReplacesInPlace(t *testing.T) {
+	r, _, log := editorRig(t)
+	r.press("e", "enter")
+	r.typeInto("POMO")
+	r.press("s")
+	if got := strings.Join(*log, ","); got != "save POMO replace=true" {
+		t.Errorf("log = %s", got)
+	}
+}
+
+func TestACopyIsANewRoutineUnderAnotherName(t *testing.T) {
+	r, path, _ := editorRig(t)
+	r.press("c")
+	if r.m.editor == nil || r.m.editor.original != "" || r.m.editor.draft.Name != "pomo copy" {
+		t.Fatalf("editor = %+v", r.m.editor)
+	}
+	r.press("s")
+	rs, _ := routine.Load(*path)
+	if len(rs) != 3 {
+		t.Errorf("rs = %d routines", len(rs))
+	}
+}
+
+func TestSavingOverAnExistingNameIsRefused(t *testing.T) {
+	r, _, _ := editorRig(t)
+	r.press("a", "enter")
+	r.typeInto("deep")
+	r.press("s")
+	if r.m.editor == nil || !strings.Contains(r.m.notice, "already exists") {
+		t.Errorf("notice = %q", r.m.notice)
+	}
+}
+
+func TestDeletingARoutineAsksFirst(t *testing.T) {
+	r, path, log := editorRig(t)
+	r.press("d")
+	if r.m.prompt == nil || r.m.prompt.kind != promptConfirmDelete {
+		t.Fatal("d should ask")
+	}
+	r.press("n")
+	if len(*log) != 0 {
+		t.Error("n keeps it")
+	}
+	r.press("d", "y")
+	rs, _ := routine.Load(*path)
+	if len(rs) != 1 || rs[0].Name != "deep" || !strings.Contains(r.m.messageLine(), "$ shh routine remove pomo") {
+		t.Errorf("rs = %+v, message %q", rs, r.m.messageLine())
+	}
+}
+
+func TestTheEditorFooterShowsTheCommandThatWouldSaveIt(t *testing.T) {
+	r, _, _ := editorRig(t)
+	r.press("e")
+	line := r.m.messageLine()
+	if !strings.Contains(line, "$ shh routine add pomo") {
+		t.Errorf("message = %q", line)
+	}
+	if got := addCommand(r.m.editor.draft, true); !strings.HasSuffix(got, "--replace") || !strings.Contains(got, "-r 2") || !strings.Contains(got, "-f 'off 15m long break'") {
+		t.Errorf("command = %s", got)
+	}
+}
+
+func TestEditingKeysAreOffWithoutSaveSupport(t *testing.T) {
+	r, _ := routinesRig(t)
+	r.press("a")
+	if r.m.editor != nil || !strings.Contains(r.m.notice, "not available") {
+		t.Errorf("editor %v notice %q", r.m.editor, r.m.notice)
+	}
 }
