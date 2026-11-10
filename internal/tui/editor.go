@@ -6,11 +6,9 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/charlesrobsampson/shh/internal/decide"
 	"github.com/charlesrobsampson/shh/internal/routine"
 )
 
@@ -23,10 +21,15 @@ const (
 	rowRepeat
 	rowWaiting
 	rowSummary
+	rowStyle     // the routine's banner style
+	rowLog       // where to say that notifications were flagged during a run
 	rowStep      // a step of the routine; index says which
 	rowAddStep   // "+ add a step"
 	rowFinish    // a step of the finish; index says which
 	rowAddFinish // "+ add a finish step"
+	rowTrigger   // a trigger of the routine; index says which
+	rowAddTrigger
+	rowTriggerField // a value of the trigger form, typed in a box; index says which row of it
 )
 
 type editorRow struct {
@@ -44,6 +47,18 @@ type routineEditor struct {
 	discard bool
 }
 
+// logChoices are the combinations of places to say that notifications were flagged during a run, in the order Enter goes through them.
+var logChoices = [][]routine.Where{
+	nil,
+	{routine.WhereBanner},
+	{routine.WhereMenu},
+	{routine.WhereUI},
+	{routine.WhereBanner, routine.WhereMenu},
+	{routine.WhereBanner, routine.WhereUI},
+	{routine.WhereMenu, routine.WhereUI},
+	{routine.WhereBanner, routine.WhereMenu, routine.WhereUI},
+}
+
 // summaryChoices are the combinations of places a summary can be shown, in the order Enter goes through them.
 var summaryChoices = [][]routine.Where{
 	{routine.WhereBanner, routine.WhereUI},
@@ -54,6 +69,14 @@ var summaryChoices = [][]routine.Where{
 	{routine.WhereMenu, routine.WhereUI},
 	{routine.WhereBanner, routine.WhereMenu, routine.WhereUI},
 	{},
+}
+
+// logText says where a run's flagged notifications are reported.
+func logText(w []routine.Where) string {
+	if len(w) == 0 {
+		return "nowhere (shh routine log and the history still show them)"
+	}
+	return summaryText(w)
 }
 
 func summaryText(w []routine.Where) string {
@@ -69,7 +92,7 @@ func summaryText(w []routine.Where) string {
 
 // rows lists what the editor shows, top to bottom.
 func (e *routineEditor) rows() []editorRow {
-	rows := []editorRow{{rowName, 0}, {rowDescription, 0}, {rowRepeat, 0}, {rowWaiting, 0}, {rowSummary, 0}}
+	rows := []editorRow{{rowName, 0}, {rowDescription, 0}, {rowRepeat, 0}, {rowWaiting, 0}, {rowSummary, 0}, {rowStyle, 0}, {rowLog, 0}}
 	for i := range e.draft.Steps {
 		rows = append(rows, editorRow{rowStep, i})
 	}
@@ -77,7 +100,11 @@ func (e *routineEditor) rows() []editorRow {
 	for i := range e.draft.Finish {
 		rows = append(rows, editorRow{rowFinish, i})
 	}
-	return append(rows, editorRow{rowAddFinish, 0})
+	rows = append(rows, editorRow{rowAddFinish, 0})
+	for i := range e.draft.Triggers {
+		rows = append(rows, editorRow{rowTrigger, i})
+	}
+	return append(rows, editorRow{rowAddTrigger, 0})
 }
 
 func (e *routineEditor) current() editorRow {
@@ -175,7 +202,11 @@ func (m *Model) editRow(row editorRow, _ bool) {
 	case rowDescription:
 		m.openField("description", e.draft.Description, "a line saying what it is for (may be empty) · Enter keeps it · Esc cancels", row)
 	case rowRepeat:
-		m.openField("repeat", strconv.Itoa(e.draft.Repeat), "how many times the steps run, 1 to 99; the finish steps run once after the last · Enter keeps it · Esc cancels", row)
+		initial := strconv.Itoa(e.draft.Repeat)
+		if e.draft.Repeat == routine.Forever {
+			initial = "forever"
+		}
+		m.openField("repeat", initial, "how many times the steps run, 1 to 99, or forever (until stopped; no finish steps); the finish steps run once after the last · Enter keeps it · Esc cancels", row)
 	case rowWaiting:
 		order := []routine.Waiting{routine.WaitStay, routine.WaitNext, routine.WaitBaseline}
 		i := slices.Index(order, e.draft.Waiting)
@@ -190,12 +221,23 @@ func (m *Model) editRow(row editorRow, _ bool) {
 		i := slices.IndexFunc(summaryChoices, func(c []routine.Where) bool { return slices.Equal(c, e.draft.Summary) })
 		e.draft.Summary = slices.Clone(summaryChoices[(i+1)%len(summaryChoices)])
 		e.dirty = true
+	case rowLog:
+		i := slices.IndexFunc(logChoices, func(c []routine.Where) bool { return slices.Equal(c, e.draft.Log) })
+		e.draft.Log = slices.Clone(logChoices[(i+1)%len(logChoices)])
+		e.dirty = true
+		m.notice = "log: " + logText(e.draft.Log)
+	case rowStyle:
+		m.openField("banner style", routine.StyleWords(e.draft.Style), "flags: --color 33 (background) --text-color 15 --button-color 238 --button-text-color 15 (0-255, shh alert colors shows the palette) --position top-left --size large --sound Hero --banner-for 10s · empty uses the config · Enter keeps it · Esc cancels", row)
 	case rowStep:
 		m.openField("step", e.draft.Steps[row.index].Command(), stepHint, row)
 	case rowFinish:
 		m.openField("finish step", e.draft.Finish[row.index].Command(), stepHint, row)
 	case rowAddStep, rowAddFinish:
 		m.openField("new step", "", stepHint, row)
+	case rowTrigger:
+		m.openTriggerForm(row.index)
+	case rowAddTrigger:
+		m.openTriggerForm(-1)
 	}
 }
 
@@ -221,12 +263,25 @@ func (m *Model) submitField(p *prompt) {
 	case rowDescription:
 		e.draft.Description = text
 	case rowRepeat:
-		n, err := strconv.Atoi(text)
-		if err != nil || n < 1 || n > 99 {
-			p.err = "a number from 1 to 99"
-			return
+		n := routine.Forever
+		if !strings.EqualFold(text, "forever") {
+			var err error
+			if n, err = strconv.Atoi(text); err != nil || n < 1 || n > 99 {
+				p.err = "a number from 1 to 99, or forever"
+				return
+			}
 		}
 		e.draft.Repeat = n
+	case rowStyle:
+		o, err := routine.ParseStyle(text)
+		if err != nil {
+			p.err = oneLine(err.Error())
+			return
+		}
+		e.draft.Style = o
+	case rowTriggerField:
+		m.submitTriggerField(p)
+		return // the form is the one that has changed, not the routine
 	case rowStep, rowFinish, rowAddStep, rowAddFinish:
 		step, err := routine.ParseCommand(text)
 		if err != nil {
@@ -265,6 +320,9 @@ func shortStepError(err error) string {
 // addStepAfter (a) inserts a step after the one under the cursor, as a blank to be typed in.
 func (m *Model) addStepAfter(row editorRow) {
 	switch row.kind {
+	case rowTrigger, rowAddTrigger:
+		m.openTriggerForm(-1)
+		return
 	case rowStep, rowAddStep:
 		m.openField("new step", "", stepHint, editorRow{rowAddStep, 0})
 	case rowFinish, rowAddFinish:
@@ -286,8 +344,10 @@ func (m *Model) deleteRow(row editorRow) {
 		e.draft.Steps = slices.Delete(e.draft.Steps, row.index, row.index+1)
 	case rowFinish:
 		e.draft.Finish = slices.Delete(e.draft.Finish, row.index, row.index+1)
+	case rowTrigger:
+		e.draft.Triggers = slices.Delete(e.draft.Triggers, row.index, row.index+1)
 	default:
-		m.notice = "d deletes a step: select one first"
+		m.notice = "d deletes a step or a trigger: select one first"
 		return
 	}
 	e.dirty = true
@@ -392,14 +452,30 @@ func addCommand(r routine.Routine, replace bool) string {
 	if r.Description != "" {
 		parts = append(parts, "-d", shellWord(r.Description))
 	}
-	if r.Repeat > 1 {
+	switch {
+	case r.Repeat == routine.Forever:
+		parts = append(parts, "-r", "forever")
+	case r.Repeat > 1:
 		parts = append(parts, "-r", strconv.Itoa(r.Repeat))
 	}
 	for _, s := range r.Finish {
 		parts = append(parts, "-f", shellWord(s.Command()))
 	}
+	for _, t := range r.Triggers {
+		parts = append(parts, "-t", shellWord(t.Command()))
+	}
 	if r.Waiting != "" && r.Waiting != routine.WaitStay {
 		parts = append(parts, "-w", string(r.Waiting))
+	}
+	if len(r.Log) > 0 {
+		var w []string
+		for _, x := range r.Log {
+			w = append(w, string(x))
+		}
+		parts = append(parts, "--log", strings.Join(w, ","))
+	}
+	if w := routine.StyleWords(r.Style); w != "" {
+		parts = append(parts, "--style", shellWord(w))
 	}
 	if !slices.Equal(r.Summary, summaryChoices[0]) {
 		var w []string
@@ -429,7 +505,7 @@ func (m *Model) editorView() string {
 	if e.original != "" {
 		title = "Editing " + e.original
 	}
-	lines := []string{"", "  " + bold.Render(title) + dim.Render(fmt.Sprintf("  ·  %s in all", decide.FormatRemaining(int(e.draft.Total()/time.Second))))}
+	lines := []string{"", "  " + bold.Render(title) + dim.Render("  ·  "+e.draft.Length(m.saved))}
 	if e.dirty {
 		lines[1] += dim.Render("  ·  unsaved")
 	}
@@ -445,6 +521,8 @@ func (m *Model) editorView() string {
 			add("  " + bold.Underline(true).Render("Steps") + dim.Render("  (run in order, repeated)"))
 		case row.kind == rowFinish && row.index == 0, row.kind == rowAddFinish && len(e.draft.Finish) == 0:
 			add("  " + bold.Underline(true).Render("Finish") + dim.Render("  (run once, after the last round)"))
+		case row.kind == rowTrigger && row.index == 0, row.kind == rowAddTrigger && len(e.draft.Triggers) == 0:
+			add("  " + bold.Underline(true).Render("Triggers") + dim.Render("  (ways it starts by itself)"))
 		}
 		if i == cursor {
 			at = len(body)
@@ -476,10 +554,20 @@ func (m *Model) editorRow(e *routineEditor, row editorRow, selected bool) string
 		}
 	case rowRepeat:
 		label, value = "Repeat", fmt.Sprintf("%d time%s", e.draft.Repeat, map[bool]string{true: "", false: "s"}[e.draft.Repeat == 1])
+		if e.draft.Repeat == routine.Forever {
+			value = "forever (until stopped)"
+		}
 	case rowWaiting:
 		label, value = "Waiting", string(e.draft.Waiting)+"  (Enter changes it: stay, next, baseline)"
 	case rowSummary:
 		label, value = "Summary", summaryText(e.draft.Summary)+"  (Enter changes it)"
+	case rowLog:
+		label, value = "Log", logText(e.draft.Log)+"  (Enter changes it)"
+	case rowStyle:
+		label, value = "Banner style", routine.StyleWords(e.draft.Style)
+		if value == "" {
+			value = "(as configured)  Enter sets this routine's banner color, position, size, sound"
+		}
 	case rowStep:
 		label, value = fmt.Sprintf("%d", row.index+1), e.draft.Steps[row.index].Command()
 	case rowFinish:
@@ -488,6 +576,10 @@ func (m *Model) editorRow(e *routineEditor, row editorRow, selected bool) string
 		label, value = "+", "add a step"
 	case rowAddFinish:
 		label, value = "+", "add a finish step"
+	case rowTrigger:
+		label, value = fmt.Sprintf("%d", row.index+1), e.draft.Triggers[row.index].Command()
+	case rowAddTrigger:
+		label, value = "+", "add a trigger"
 	}
 	cell := func(style lipgloss.Style, text string) string { return style.Reverse(selected).Render(text) }
 	cursor := " "
@@ -495,7 +587,7 @@ func (m *Model) editorRow(e *routineEditor, row editorRow, selected bool) string
 		cursor = ">"
 	}
 	valueStyle := lipgloss.NewStyle()
-	if row.kind == rowAddStep || row.kind == rowAddFinish {
+	if row.kind == rowAddStep || row.kind == rowAddFinish || row.kind == rowAddTrigger {
 		valueStyle = dim
 	}
 	indent := "  "

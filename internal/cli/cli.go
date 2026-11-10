@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/alecthomas/kong"
 
 	"github.com/charlesrobsampson/shh/internal/decide"
 	"github.com/charlesrobsampson/shh/internal/session"
+	"github.com/charlesrobsampson/shh/internal/store"
 )
 
 // Env is everything the commands need from the outside world, so tests can substitute all of it.
@@ -31,10 +33,20 @@ type Env struct {
 	IsTerminal bool
 	// Stdin is where questions are answered from; nil means they cannot be asked.
 	Stdin io.Reader
+	// Now is the clock, for showing when a routine starts next; time.Now when nil.
+	Now func() time.Time
 	// RoutinesPath is the saved routines file, which the list and example commands read without a worker.
 	RoutinesPath string
 	// TUI opens the terminal UI. Nil when it is not available.
 	TUI func() error
+	// UI opens the terminal UI on a tab (focus, notifications, train, routines). Nil when it is not available.
+	UI func(tab string) error
+	// WithStore opens the database for reading history (the runs of routines), calls do with it and closes it again. Nil when there is no
+	// database to read.
+	WithStore func(do func(*store.Store) error) error
+	// Guide opens the guide in the terminal UI, at a section (its slug, or empty) and with a search made (or empty). Nil when it is not
+	// available, and the guide is printed instead.
+	Guide func(section, search string) error
 	// Spawn starts a worker in the background when none is running. Nil when that is not possible.
 	Spawn func() error
 	// SpawnWait is how long to wait for a spawned worker to answer; 5 seconds when zero.
@@ -61,10 +73,12 @@ type cli struct {
 	Status   statusCmd   `cmd:"" help:"Show the focus levels in force and the time left."`
 	Pause    pauseCmd    `cmd:"" help:"Pause the countdown of the current timed session."`
 	Resume   resumeCmd   `cmd:"" help:"Resume a paused countdown."`
-	Routine  routineCmd  `cmd:"" help:"Saved sequences of focus sessions, such as a pomodoro."`
+	Routine  routineCmd  `cmd:"" help:"Saved sequences of focus sessions, such as a pomodoro (shh guide routine-commands explains them)."`
+	Worker   workerCmd   `cmd:"" help:"Start, stop and check the background worker (shh daemon runs it in the foreground)."`
+	Guide    guideCmd    `cmd:"" help:"The guide to the terminal UI, routines and commands: open it, jump to a section, or search it."`
 	Alert    alertCmd    `cmd:"" help:"Alert tools."`
 	Replay   replayCmd   `cmd:"" help:"Run the classifier over a file of notifications and print each decision."`
-	Daemon   daemonCmd   `cmd:"" hidden:"" help:"Run the background worker (started by shh itself)."`
+	Daemon   daemonCmd   `cmd:"" help:"Run the worker in the foreground. shh starts it by itself when it is needed; run this (or shh worker start) at login to keep routines' triggers firing (shh guide triggers)."`
 	Menubar  menubarCmd  `cmd:"" hidden:"" help:"Run the menu bar item (started by the worker)."`
 }
 
@@ -110,7 +124,9 @@ func Run(args []string, env Env) (code int) {
 		fmt.Fprintln(env.Stderr, "shh: error:", err)
 		return 2
 	}
-	if name := ctx.Command(); name != "daemon" && name != "menubar" && name != "replay <file>" && name != "alert test" {
+	// A saved focus session is picked up again by the next command, by starting a worker. Not for the commands that are about the worker
+	// itself: a stop would be undone by the very next one, and start and restart start one anyway.
+	if name := ctx.Command(); name != "daemon" && name != "menubar" && name != "replay <file>" && name != "alert test" && !strings.HasPrefix(name, "worker") {
 		env.rearmPersistedFocus()
 	}
 	if err := ctx.Run(); err != nil {
@@ -170,7 +186,7 @@ func (e *Env) warnIfStale(view session.StatusView) {
 	}
 	e.staleWarned = true
 	fmt.Fprintln(e.Stderr, "shh: note: the running worker is from a different build than this command, so it is still running the old code.\n"+
-		"     Turn focus off (shh stop --all), dismiss any alerts on screen and wait a few seconds for it to exit; the next command starts a fresh one.")
+		"     Pick up the new build with: shh worker restart")
 }
 
 // ensureWorker makes sure a worker is answering, starting one if none is running and a spawner is available.

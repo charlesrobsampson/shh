@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,7 +25,9 @@ type routineCmd struct {
 	Back    routineBackCmd    `cmd:"" help:"Restart the step before the one in focus."`
 	Stop    routineStopCmd    `cmd:"" help:"End the routine that is running."`
 	Unqueue routineUnqueueCmd `cmd:"" help:"Drop the session that was queued to start when the routine ends."`
+	Skip    routineSkipCmd    `cmd:"" help:"Leave out a routine's next scheduled start (--undo takes that back)."`
 	Status  routineStatusCmd  `cmd:"" help:"Show the routine that is running, or the last one that ran."`
+	Log     routineLogCmd     `cmd:"" help:"List the runs of routines, newest first, with what was held back and what was flagged to review."`
 }
 
 // ---- reading the file ----
@@ -44,20 +47,61 @@ func (c *routineListCmd) Run(env *Env) error {
 		if i > 0 {
 			fmt.Fprintln(env.Stdout)
 		}
-		fmt.Fprint(env.Stdout, describeRoutine(r))
+		fmt.Fprint(env.Stdout, describeRoutine(r, routines, env.now()))
 	}
+	env.warnIfTriggersCannotFire(routines)
 	return nil
 }
 
+// warnIfTriggersCannotFire says so when routines have triggers switched on and no worker is running to start them.
+func (e *Env) warnIfTriggersCannotFire(routines []routine.Routine) {
+	has := false
+	for _, r := range routines {
+		for _, t := range r.Triggers {
+			has = has || !t.Disabled
+		}
+	}
+	if !has {
+		return
+	}
+	if _, err := e.client().Status(); errors.Is(err, session.ErrNotRunning) {
+		fmt.Fprintln(e.Stdout, "\nNote: the shh worker is not running, so triggers will not start anything yet. Start it with: shh worker start  (see: shh guide triggers)")
+	}
+}
+
 // describeRoutine writes a routine for people: its name and description, then its plan on one line.
-func describeRoutine(r routine.Routine) string {
+func describeRoutine(r routine.Routine, all []routine.Routine, now time.Time) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s", r.Name)
 	if r.Description != "" {
 		fmt.Fprintf(&b, "  %s", r.Description)
 	}
-	fmt.Fprintf(&b, "\n  %s  (%s in all)\n", stepsLine(r), decide.FormatRemaining(int(r.Total()/time.Second)))
+	fmt.Fprintf(&b, "\n  %s  (%s)\n", stepsLine(r), r.Length(all))
+	if words := routine.StyleWords(r.Style); words != "" {
+		fmt.Fprintf(&b, "  banners: %s\n", words)
+	}
+	if len(r.Triggers) > 0 {
+		fmt.Fprintln(&b, "  starts by itself:")
+		for _, t := range r.Triggers {
+			fmt.Fprintf(&b, "    %s\n", t.Command())
+		}
+		if start, _, ok := r.NextStart(now); ok {
+			fmt.Fprintf(&b, "  next start: %s\n", startWhen(start, now))
+		} else {
+			fmt.Fprintln(&b, "  next start: none (every trigger is disabled)")
+		}
+	}
 	return b.String()
+}
+
+// startWhen says when a start is, in words that need no calendar.
+func startWhen(start, now time.Time) string { return routine.StartWhen(start, now) }
+
+func (e *Env) now() time.Time {
+	if e.Now != nil {
+		return e.Now()
+	}
+	return time.Now()
 }
 
 func stepsLine(r routine.Routine) string { return r.Outline() }
@@ -82,7 +126,10 @@ type routineAddCmd struct {
 	Name        string   `arg:"" help:"The routine's name (quote it if it has spaces)."`
 	Steps       []string `arg:"" optional:"" help:"Each step as a shh command in quotes: \"75% 25m work --alert banner\", \"off 5m break\", \"baseline 30%\". Add --ask to a step to wait for approval before the next."`
 	Description string   `short:"d" help:"A line saying what the routine is for."`
-	Repeat      int      `short:"r" default:"1" help:"How many times the steps run."`
+	Repeat      string   `short:"r" default:"1" help:"How many times the steps run: a number, or forever to go round until stopped."`
+	Log         []string `default:"" enum:",banner,menu,ui" help:"Where to say that notifications were flagged during a run, so they can be reviewed: banner, menu, ui (comma-separated). Nothing by default; shh routine log always shows them."`
+	Style       string   `help:"How this routine's banners look, over the configuration's: \"--color 33 --size large --position bottom-left --sound Hero --banner-for 10s\" (shh alert colors shows the colors). Give it with an equals sign: --style=\"--color 33\"."`
+	Trigger     []string `short:"t" sep:"none" help:"A way to start it by itself, in words: \"weekdays except fri at 09:00 until 12:00 --reminder 5m\" (repeat the flag for more than one)."`
 	Finish      []string `short:"f" sep:"none" help:"A step to run once after the last round (repeat the flag for more than one)."`
 	Waiting     string   `short:"w" default:"stay" enum:"stay,next,baseline" help:"What focus does while the routine waits for you: stay (keep the level), next (the next step's level, timer held) or baseline."`
 	Summary     []string `default:"banner,ui" enum:"banner,menu,ui" help:"Where to show the summary of a finished run."`
@@ -90,9 +137,22 @@ type routineAddCmd struct {
 }
 
 func (c *routineAddCmd) Run(env *Env) error {
-	r := routine.Routine{Name: c.Name, Description: c.Description, Repeat: c.Repeat, Waiting: routine.Waiting(c.Waiting)}
+	repeat := routine.Forever
+	if !strings.EqualFold(c.Repeat, "forever") {
+		n, err := strconv.Atoi(c.Repeat)
+		if err != nil {
+			return usagef("--repeat %q is not a number or forever", c.Repeat)
+		}
+		repeat = n
+	}
+	r := routine.Routine{Name: c.Name, Description: c.Description, Repeat: repeat, Waiting: routine.Waiting(c.Waiting)}
 	for _, w := range c.Summary {
 		r.Summary = append(r.Summary, routine.Where(w))
+	}
+	for _, w := range c.Log {
+		if w != "" {
+			r.Log = append(r.Log, routine.Where(w))
+		}
 	}
 	for i, text := range c.Steps {
 		step, err := routine.ParseCommand(text)
@@ -100,6 +160,20 @@ func (c *routineAddCmd) Run(env *Env) error {
 			return fmt.Errorf("step %d (%q): %w", i+1, text, err)
 		}
 		r.Steps = append(r.Steps, step)
+	}
+	if c.Style != "" {
+		style, err := routine.ParseStyle(c.Style)
+		if err != nil {
+			return fmt.Errorf("--style: %w", err)
+		}
+		r.Style = style
+	}
+	for i, text := range c.Trigger {
+		trigger, err := routine.ParseTrigger(text)
+		if err != nil {
+			return fmt.Errorf("--trigger %d (%q): %w", i+1, text, err)
+		}
+		r.Triggers = append(r.Triggers, trigger)
 	}
 	for i, text := range c.Finish {
 		step, err := routine.ParseCommand(text)
@@ -122,7 +196,8 @@ func (c *routineAddCmd) Run(env *Env) error {
 	}
 	saved, _ := routine.Check(r)
 	fmt.Fprintf(env.Stdout, "Saved %s in %s\n", saved.Name, env.RoutinesPath)
-	fmt.Fprint(env.Stdout, describeRoutine(saved))
+	all, _ := routine.Load(env.RoutinesPath)
+	fmt.Fprint(env.Stdout, describeRoutine(saved, all, env.now()))
 	fmt.Fprintf(env.Stdout, "Start it with: shh routine run %s\n", saved.Name)
 	return nil
 }
@@ -194,7 +269,7 @@ func unknownRoutine(env *Env, name string, err error) error {
 	}
 	if found, ok := routine.Find(routines, name); ok {
 		return fmt.Errorf("%q is in %s, but the running worker does not know it: it is probably an older build that was started before routines existed. "+
-			"Turn focus off (shh stop --all), dismiss any alerts, wait a few seconds for it to exit, and run this again", found.Name, env.RoutinesPath)
+			"Replace it with: shh worker restart, and run this again", found.Name, env.RoutinesPath)
 	}
 	var names []string
 	for _, r := range routines {
@@ -280,7 +355,69 @@ func (c *routineStatusCmd) Run(env *Env) error {
 		fmt.Fprintln(env.Stdout, "No routine is running.")
 	}
 	if info.Last != nil {
-		fmt.Fprintf(env.Stdout, "Last run: %s %s at %s. %s\n", info.Last.Name, info.Last.Reason, info.Last.Ended.Local().Format("Mon 15:04"), summaryText(*info.Last))
+		fmt.Fprintf(env.Stdout, "Last run: %s %s at %s. %s\n", info.Last.Name, session.ReasonText(info.Last.Reason), info.Last.Ended.Local().Format("Mon 15:04"), summaryText(*info.Last))
+	}
+	if len(info.Upcoming) > 0 {
+		fmt.Fprintln(env.Stdout, "Starts by itself:")
+		for _, u := range info.Upcoming {
+			fmt.Fprintln(env.Stdout, "  "+describeUpcoming(u, env.now()))
+		}
+	}
+	return nil
+}
+
+// describeUpcoming says when a routine starts next: "morning  Mon 09:00  (weekdays at 09:00)", with the skip noted.
+func describeUpcoming(u session.UpcomingStart, now time.Time) string {
+	line := fmt.Sprintf("%s  %s  (%s)", u.Routine, startWhen(u.Start, now), u.Trigger)
+	if u.Skipped {
+		line = fmt.Sprintf("%s  %s  (%s)  SKIPPED", u.Routine, startWhen(u.Start, now), u.Trigger)
+		if u.Then != nil {
+			line += ", then " + startWhen(*u.Then, now)
+		}
+	}
+	return line
+}
+
+type routineSkipCmd struct {
+	Name []string `arg:"" name:"name" help:"The routine; a name with spaces needs no quotes."`
+	Undo bool     `help:"Take back a skip: the next start happens after all."`
+}
+
+func (c *routineSkipCmd) Run(env *Env) error {
+	name := strings.Join(c.Name, " ")
+	if err := env.ensureWorker(); err != nil { // the worker is what starts routines, and it keeps what was skipped
+		return err
+	}
+	var info session.RoutineInfo
+	var err error
+	if c.Undo {
+		info, err = env.client().RoutineUnskip(name)
+	} else {
+		info, err = env.client().RoutineSkip(name)
+	}
+	switch {
+	case errors.Is(err, session.ErrUnknownRoutine):
+		return unknownRoutine(env, name, err)
+	case errors.Is(err, session.ErrNoTrigger):
+		return fmt.Errorf("%q has no trigger that is switched on, so it does not start by itself (shh routine list shows its triggers)", name)
+	case errors.Is(err, session.ErrNotSkipped):
+		return fmt.Errorf("the next start of %q is not skipped", name)
+	case err != nil:
+		return err
+	}
+	for _, u := range info.Upcoming {
+		if !strings.EqualFold(u.Routine, name) {
+			continue
+		}
+		if c.Undo {
+			fmt.Fprintf(env.Stdout, "The next start of %s is back on: %s\n", u.Routine, startWhen(u.Start, env.now()))
+		} else {
+			fmt.Fprintf(env.Stdout, "Skipped the next start of %s (%s).", u.Routine, startWhen(u.Start, env.now()))
+			if u.Then != nil {
+				fmt.Fprintf(env.Stdout, " The one after is %s.", startWhen(*u.Then, env.now()))
+			}
+			fmt.Fprintf(env.Stdout, " Take it back with: shh routine skip --undo %s\n", u.Routine)
+		}
 	}
 	return nil
 }

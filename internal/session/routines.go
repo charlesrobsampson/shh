@@ -43,7 +43,14 @@ type routineRunner struct {
 func newRoutineRunner(w *Worker) *routineRunner { return &routineRunner{w: w} }
 
 // Start begins a saved routine at its first step.
-func (r *routineRunner) Start(name string) error {
+func (r *routineRunner) Start(name string) error { return r.start(name, nil, "") }
+
+// StartScheduled begins a routine that a trigger started: it is cut off at ends, and the cut-off is announced as the trigger says.
+func (r *routineRunner) StartScheduled(name string, ends time.Time, alert routine.Alert) error {
+	return r.start(name, &ends, alert)
+}
+
+func (r *routineRunner) start(name string, ends *time.Time, endAlert routine.Alert) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rt, err := r.find(name)
@@ -69,6 +76,11 @@ func (r *routineRunner) Start(name string) error {
 		return err
 	}
 	_ = id // the run row is read back so the step starts from what was stored
+	if ends != nil {
+		if err := r.w.cfg.Store.SetRoutineRunEnds(run.ID, *ends, string(endAlert)); err != nil {
+			return err
+		}
+	}
 	return r.beginStep(run, rt, plan, 0)
 }
 
@@ -171,6 +183,9 @@ func (r *routineRunner) Tick() error {
 			r.w.cfg.OnError(fmt.Errorf("routine %q: %w; ending the run", run.Routine, err))
 		}
 		return r.finish(run, nil, "missing")
+	}
+	if run.EndsAt != nil && !r.w.cfg.Clock.Now().Before(*run.EndsAt) { // the trigger's until time: a hard stop, whatever is going on
+		return r.finish(run, &rt, "until")
 	}
 	if run.Interrupted {
 		if still, err := r.resumeAfterInterruption(run); err != nil || still {
@@ -360,6 +375,9 @@ func (r *routineRunner) View() *RoutineView {
 		Name: rt.Name, Position: run.Position, Total: len(plan), Step: current.Label(), Waiting: run.State == store.RoutineWaiting, Interrupted: run.Interrupted, Queued: describeQueued(run.Queued),
 		Level: current.Level, LengthSecs: int(current.Length / time.Second), Started: run.StartedAt,
 	}
+	if d, ok := r.lengthOf(current); ok {
+		v.LengthSecs = int(d / time.Second) // a step that ends at a time of day: what is left of it if it started now
+	}
 	if v.Waiting && run.Position > 0 {
 		v.Previous = plan[run.Position-1].Label()
 	}
@@ -371,7 +389,7 @@ func (r *routineRunner) View() *RoutineView {
 
 // Info is the answer to "routine status": the run in progress and the last one that ended.
 func (r *routineRunner) Info() (RoutineInfo, error) {
-	info := RoutineInfo{Active: r.View()}
+	info := RoutineInfo{Active: r.View(), Upcoming: r.w.Upcoming()}
 	runs, err := r.w.cfg.Store.RoutineRuns(5)
 	if err != nil {
 		return info, err
@@ -393,6 +411,9 @@ func (r *routineRunner) Info() (RoutineInfo, error) {
 func (r *routineRunner) advance(run store.RoutineRun, rt routine.Routine, plan []routine.Planned, pos int, natural bool) error {
 	step := plan[pos]
 	next := nextSession(plan, pos+1)
+	if next >= len(plan) && rt.Repeat == routine.Forever { // the end of a round: go round again
+		next = nextSession(plan, 0)
+	}
 	last := next >= len(plan)
 	if natural {
 		r.announce(run, rt, plan, pos, next, last)
@@ -436,12 +457,27 @@ func (r *routineRunner) applyBaselines(plan []routine.Planned, from int) (int, e
 
 // beginStep puts the step at pos in force as a timed session, ending whatever level the run had.
 func (r *routineRunner) beginStep(run store.RoutineRun, rt routine.Routine, plan []routine.Planned, pos int) error {
-	pos, err := r.applyBaselines(plan, pos)
-	if err != nil {
-		return err
-	}
-	if pos >= len(plan) { // nothing but baseline steps were left
-		return r.finish(run, &rt, "finished")
+	var length time.Duration
+	wrapped := false
+	for {
+		var err error
+		if pos, err = r.applyBaselines(plan, pos); err != nil {
+			return err
+		}
+		if pos >= len(plan) {
+			if rt.Repeat == routine.Forever && !wrapped { // the end of a round: go round again, once, so a round with nothing to start ends the run
+				pos, wrapped = 0, true
+				continue
+			}
+			return r.finish(run, &rt, "finished") // nothing but baseline steps, or nothing with time left in it
+		}
+		d, ok := r.lengthOf(plan[pos])
+		if !ok { // its end time has gone by: join in where the clock is
+			pos++
+			continue
+		}
+		length = d
+		break
 	}
 	if run.LevelID != 0 {
 		if err := r.w.stack.CloseLayer(run.LevelID); err != nil {
@@ -449,7 +485,7 @@ func (r *routineRunner) beginStep(run store.RoutineRun, rt routine.Routine, plan
 		}
 	}
 	step := plan[pos]
-	level, err := r.w.stack.Escalate(Escalation{Level: step.Level, Duration: step.Length, Note: stepNote(rt, step)})
+	level, err := r.w.stack.Escalate(Escalation{Level: step.Level, Duration: length, Note: stepNote(rt, step)})
 	if err != nil {
 		return err
 	}
@@ -467,7 +503,11 @@ func (r *routineRunner) beginStep(run store.RoutineRun, rt routine.Routine, plan
 func (r *routineRunner) wait(run store.RoutineRun, rt routine.Routine, plan []routine.Planned, pos, nextPos int) error {
 	finished, next := plan[pos], plan[nextPos]
 	var level int64
-	switch rt.Waiting {
+	mode := rt.Waiting
+	if mode == routine.WaitNext && next.Until != "" {
+		mode = routine.WaitStay // a step that ends at a time of day has no countdown to hold: it is worked out when it starts
+	}
+	switch mode {
 	case routine.WaitStay:
 		// Hold the level of the step that ended, with no timer, so walking away does not let notifications through.
 		id, err := r.w.stack.Escalate(Escalation{Level: finished.Level, Note: fmt.Sprintf("%s · waiting to start %s", rt.Name, next.Label())})
@@ -497,7 +537,7 @@ func (r *routineRunner) wait(run store.RoutineRun, rt routine.Routine, plan []ro
 
 // startWaiting starts the step a run is waiting on.
 func (r *routineRunner) startWaiting(run store.RoutineRun, rt routine.Routine, plan []routine.Planned) error {
-	if rt.Waiting == routine.WaitNext && run.LevelID != 0 {
+	if rt.Waiting == routine.WaitNext && run.LevelID != 0 && plan[run.Position].Until == "" {
 		if err := r.w.stack.ResumeLayer(run.LevelID); err != nil {
 			return err
 		}
@@ -530,6 +570,14 @@ func (r *routineRunner) finish(run store.RoutineRun, rt *routine.Routine, reason
 	if err := r.w.cfg.Store.EndRoutineRun(run.ID, now, reason, held, let, elapsed); err != nil {
 		return err
 	}
+	// What was flagged for review while it ran, counted now: reviewing a notification takes its flag away.
+	flagged := 0
+	if items, err := r.w.cfg.Store.FlaggedBetween(run.StartedAt, now); err == nil {
+		flagged = len(items)
+		if err := r.w.cfg.Store.SetRoutineRunFlagged(run.ID, flagged); err != nil {
+			return err
+		}
+	}
 	if run.Queued != "" { // the session the user queued for when this ends, whichever way it ended
 		var q queuedSession
 		if err := json.Unmarshal([]byte(run.Queued), &q); err == nil {
@@ -541,27 +589,67 @@ func (r *routineRunner) finish(run store.RoutineRun, rt *routine.Routine, reason
 	if err := r.w.syncSuppressor(); err != nil {
 		return err
 	}
+	if reason == "until" {
+		r.announceCutoff(run, rt)
+	}
+	if rt != nil && flagged > 0 && containsWhere(rt.Log, routine.WhereBanner) {
+		plural := "s"
+		if flagged == 1 {
+			plural = ""
+		}
+		r.show(alert.Alert{Kind: config.KindMessage, Source: "Routine", Title: fmt.Sprintf("%s: %d flagged notification%s to review", rt.Name, flagged, plural),
+			Body: "They are at the top of the Train tab.", ActionToken: fmt.Sprintf("log:%d", run.ID), Actions: []alert.Action{{ID: "review", Label: "Review"}},
+			Overrides: []config.StyleOverride{rt.Style}})
+	}
 	if rt != nil && reason == "finished" && containsWhere(rt.Summary, routine.WhereBanner) {
 		runs, err := r.w.cfg.Store.RoutineRuns(1)
 		if err == nil && len(runs) == 1 {
-			r.show(alert.Alert{Kind: config.KindMessage, Source: "Routine", Title: rt.Name + " finished", Body: describeSummary(r.summary(runs[0]))})
+			r.show(alert.Alert{Kind: config.KindMessage, Source: "Routine", Title: rt.Name + " finished", Body: describeSummary(r.summary(runs[0])),
+				Overrides: []config.StyleOverride{rt.Style}})
 		}
 	}
 	return nil
 }
 
+// announceCutoff says that the run was stopped at its until time, if the trigger asked for that.
+func (r *routineRunner) announceCutoff(run store.RoutineRun, rt *routine.Routine) {
+	var look []config.StyleOverride
+	if rt != nil {
+		look = []config.StyleOverride{rt.Style}
+	}
+	switch routine.Alert(run.EndsAlert) {
+	case routine.AlertSound:
+		r.w.playSound(look...)
+	case routine.AlertBanner:
+		name := run.Routine
+		if rt != nil {
+			name = rt.Name
+		}
+		at := ""
+		if run.EndsAt != nil {
+			at = " at " + run.EndsAt.In(r.location()).Format("15:04")
+		}
+		body := ""
+		if runs, err := r.w.cfg.Store.RoutineRuns(1); err == nil && len(runs) == 1 {
+			body = describeSummary(r.summary(runs[0]))
+		}
+		r.show(alert.Alert{Kind: config.KindMessage, Source: "Routine", Title: name + " stopped" + at, Body: body, Overrides: look})
+	}
+}
+
 // announce says that the step at pos is over, if its alert asks for that. A banner says what comes next and how to carry on.
 func (r *routineRunner) announce(run store.RoutineRun, rt routine.Routine, plan []routine.Planned, pos, nextPos int, last bool) {
 	step := plan[pos]
+	look := []config.StyleOverride{rt.Style, step.Style} // the routine's look, then the step's over it
 	if step.Alert == routine.AlertSound && !last {
-		r.w.playSound()
+		r.w.playSound(look...)
 		return
 	}
 	if step.Alert != routine.AlertBanner || last { // the end of the routine has its summary instead
 		return
 	}
 	next := plan[nextPos]
-	body := fmt.Sprintf("Next: %s, %s at %s", next.Label(), formatLength(next.Length), levelText(next.Level))
+	body := fmt.Sprintf("Next: %s, %s at %s", next.Label(), lengthText(next), levelText(next.Level))
 	if step.Advance == routine.AdvanceAsk {
 		body += ". Start it with: shh routine next"
 	}
@@ -572,7 +660,7 @@ func (r *routineRunner) announce(run store.RoutineRun, rt routine.Routine, plan 
 		act = alert.Action{ID: "next", Label: "Start next"}
 	}
 	r.show(alert.Alert{Kind: config.KindMessage, Source: "Routine", Title: step.Name + " is over", Body: body,
-		ActionToken: fmt.Sprintf("%d:%d", run.ID, nextPos), Actions: []alert.Action{act}})
+		ActionToken: fmt.Sprintf("%d:%d", run.ID, nextPos), Actions: []alert.Action{act}, Overrides: look})
 }
 
 func (r *routineRunner) show(a alert.Alert) { r.w.say(a) }
@@ -591,7 +679,40 @@ func (r *routineRunner) find(name string) (routine.Routine, error) {
 	if !ok {
 		return routine.Routine{}, fmt.Errorf("%w: %q", ErrUnknownRoutine, name)
 	}
-	return rt, nil
+	// The routine as it will run: the routines it calls are replaced by their steps.
+	return routine.Expand(all, rt)
+}
+
+// location is the time zone a step's "until" time of day is read in.
+func (r *routineRunner) location() *time.Location {
+	if r.w.cfg.Location != nil {
+		return r.w.cfg.Location
+	}
+	return time.Local
+}
+
+// lengthOf is how long a step lasts if it starts now: its length, or the time left until its end time today. ok is false for a step
+// whose end time has gone by, which is skipped.
+func (r *routineRunner) lengthOf(p routine.Planned) (d time.Duration, ok bool) {
+	if p.Until == "" {
+		return p.Length, true
+	}
+	now := r.w.cfg.Clock.Now().In(r.location())
+	var hour, minute int
+	fmt.Sscanf(p.Until, "%d:%d", &hour, &minute)
+	end := time.Date(now.Year(), now.Month(), now.Day(), hour, minute, 0, 0, r.location())
+	if d = end.Sub(now); d <= 0 {
+		return 0, false
+	}
+	return d, true
+}
+
+// lengthText says how long a step lasts, for a banner: "25m", or "until 11:00".
+func lengthText(p routine.Planned) string {
+	if p.Until != "" {
+		return "until " + p.Until
+	}
+	return formatLength(p.Length)
 }
 
 // load finds the routine of a run and its current plan. A routine that has been edited since the run started is followed as edited:
@@ -664,7 +785,12 @@ func (r *routineRunner) summary(run store.RoutineRun) RoutineSummary {
 		for _, w := range rt.Summary {
 			s.Where = append(s.Where, string(w))
 		}
+		for _, w := range rt.Log {
+			s.LogWhere = append(s.LogWhere, string(w))
+		}
 	}
+	s.RunID, s.Flagged = run.ID, run.Flagged
+	s.ToReview = r.toReview(run)
 	if steps, err := r.w.cfg.Store.RoutineRunSteps(run.ID); err == nil {
 		started := map[int]bool{}
 		for _, st := range steps {
@@ -680,6 +806,19 @@ func describeSummary(s RoutineSummary) string { return s.Sentence() }
 
 // Last is the summary of the run that ended most recently, or nil if none has. It is worked out once per run, since clients ask for it
 // with every status poll.
+// toReview is how many of the notifications flagged during a run are still flagged: a flag goes when the notification is trained.
+func (r *routineRunner) toReview(run store.RoutineRun) int {
+	end := r.w.cfg.Clock.Now()
+	if run.EndedAt != nil {
+		end = *run.EndedAt
+	}
+	items, err := r.w.cfg.Store.FlaggedBetween(run.StartedAt, end)
+	if err != nil {
+		return 0
+	}
+	return len(items)
+}
+
 func (r *routineRunner) Last() *RoutineSummary {
 	runs, err := r.w.cfg.Store.RoutineRuns(2) // the newest may be the one in progress
 	if err != nil {
@@ -702,5 +841,6 @@ func (r *routineRunner) Last() *RoutineSummary {
 		r.last, r.lastID = &s, ended.ID
 	}
 	s := *r.last
+	s.ToReview = r.toReview(*ended) // what is still waiting changes as notifications are trained, so it is asked each time
 	return &s
 }

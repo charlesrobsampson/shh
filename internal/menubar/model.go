@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/charlesrobsampson/shh/internal/decide"
+	"github.com/charlesrobsampson/shh/internal/routine"
 	"github.com/charlesrobsampson/shh/internal/session"
 )
 
@@ -21,6 +22,8 @@ const (
 	IDStop   = "stop"
 	IDOff    = "off"
 	IDOpen   = "open"
+	// IDReview opens the UI on the Train tab, where notifications flagged during a routine's run wait.
+	IDReview = "review"
 	// A routine run has its own items: while one runs, the worker refuses to stop the session it has in force by hand.
 	IDRoutineNext = "routine_next"
 	IDRoutineBack = "routine_back"
@@ -112,6 +115,17 @@ func items(v session.StatusView) []Item {
 	}
 	if l := v.LastRoutine; l != nil && v.Routine == nil && l.Shows("menu") && !v.Now.IsZero() && v.Now.Sub(l.Ended) < lastRoutineFor {
 		out = append(out, Item{Title: "Last routine: " + l.Line()}, Item{Separator: true})
+	}
+	if l := v.LastRoutine; l != nil && v.Routine == nil && l.ToReview > 0 && l.ShowsLog("menu") && !v.Now.IsZero() && v.Now.Sub(l.Ended) < lastRoutineFor {
+		out = append(out, Item{ID: IDReview, Title: fmt.Sprintf("Review: %d flagged during %s", l.ToReview, l.Name)}, Item{Separator: true})
+	}
+	if len(v.Upcoming) > 0 && v.Routine == nil && !v.Now.IsZero() {
+		u := v.Upcoming[0] // soonest first
+		title := fmt.Sprintf("Next: %s %s", u.Routine, routine.StartWhen(u.Start, v.Now))
+		if u.Skipped {
+			title += " (skipped)"
+		}
+		out = append(out, Item{Title: title}, Item{Separator: true})
 	}
 	if top == nil {
 		out = append(out, Item{Title: "Focus is off"})

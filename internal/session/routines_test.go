@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"errors"
+	"github.com/charlesrobsampson/shh/internal/config"
 	"strings"
 	"testing"
 	"time"
@@ -24,13 +25,16 @@ const pomodoroLite = `{"routines": {"pomo": {
 // routineRig is a worker rig whose routines come from a text that tests can change.
 type routineRig struct {
 	*workerRig
-	text *string
+	text  *string
+	plays int // sounds played
 }
 
 func newRoutineRig(t *testing.T, text string) *routineRig {
 	t.Helper()
 	rr := &routineRig{text: &text}
 	rr.workerRig = newWorkerRig(t, func(c *session.Config) {
+		c.PlaySound = func(string) error { rr.plays++; return nil }
+		c.Location = time.UTC
 		c.Routines = func() ([]routine.Routine, error) { return routine.Parse("routines.json", []byte(*rr.text)) }
 	})
 	return rr
@@ -40,6 +44,8 @@ func newRoutineRig(t *testing.T, text string) *routineRig {
 func (r *routineRig) restart() {
 	r.t.Helper()
 	r.worker = r.build(func(c *session.Config) {
+		c.PlaySound = func(string) error { r.plays++; return nil }
+		c.Location = time.UTC
 		c.Routines = func() ([]routine.Routine, error) { return routine.Parse("routines.json", []byte(*r.text)) }
 	})
 }
@@ -1068,5 +1074,402 @@ func TestQueueingWithNoRoutineRunningStartsTheSessionAsUsual(t *testing.T) {
 	}
 	if r.top().Percent != 90 {
 		t.Error("with no routine there is nothing to wait for")
+	}
+}
+
+// ---- steps that end at a time of day, calls, and going round forever (the rig's clock starts at 09:00 UTC) ----
+
+func TestAnUntilStepLastsUntilThatTimeAndTheNextStepFollowsOnTime(t *testing.T) {
+	r := newRoutineRig(t, `{"routines": {"day": {"steps": ["90% until 10:30 deep", "off until 10:45 break", "50% until 12:00 email"]}}}`)
+	r.start("day")
+	if top := r.top(); top.Percent != 90 || top.Remaining != 90*time.Minute {
+		t.Fatalf("top = %+v, want 90 minutes (09:00 to 10:30)", top)
+	}
+	if v := r.info().Active; v.LengthSecs != 90*60 {
+		t.Errorf("view length = %d", v.LengthSecs)
+	}
+	r.pass(90 * time.Minute)
+	if top := r.top(); top.Percent != 0 || top.Remaining != 15*time.Minute {
+		t.Errorf("top = %+v, want the 15 minute break", top)
+	}
+	r.pass(15 * time.Minute)
+	if top := r.top(); top.Percent != 50 || top.Remaining != 75*time.Minute {
+		t.Errorf("top = %+v", top)
+	}
+}
+
+func TestAStepWhoseTimeHasGoneByIsSkippedSoARunStartedLateJoinsInProgress(t *testing.T) {
+	r := newRoutineRig(t, `{"routines": {"day": {"steps": ["90% until 09:30 deep", "off until 09:45 break", "50% until 12:00 email"]}}}`)
+	r.clock.Advance(40 * time.Minute) // 09:40
+	r.start("day")
+	if v := r.info().Active; v == nil || v.Step != "break" || r.top().Remaining != 5*time.Minute {
+		t.Errorf("view %+v, top %+v: it should join in the break", v, r.top())
+	}
+}
+
+func TestARoutineWhoseStepsHaveAllGoneByEndsAtOnce(t *testing.T) {
+	r := newRoutineRig(t, `{"routines": {"early": {"steps": ["90% until 08:00 deep", "baseline 30%"]}}}`)
+	r.start("early")
+	if r.info().Active != nil {
+		t.Error("nothing is left to do: the run is over")
+	}
+	if got := r.baseline(); got != 30 {
+		t.Errorf("baseline = %d: the baseline step after the skipped one still applies", got)
+	}
+}
+
+func TestAnUntilStepReadsTheClockInTheWorkersTimeZone(t *testing.T) {
+	r := newRoutineRig(t, `{"routines": {"x": {"steps": ["75% until 09:30 a"]}}}`)
+	r.start("x")
+	if r.top().Remaining != 30*time.Minute {
+		t.Errorf("remaining = %v", r.top().Remaining)
+	}
+}
+
+func TestWaitingNextHoldsNothingForAnUntilStepAndWorksItOutWhenItStarts(t *testing.T) {
+	r := newRoutineRig(t, `{"routines": {"w": {"waiting": "next", "steps": ["75% 10m a --ask", "50% until 12:00 b"]}}}`)
+	r.start("w")
+	r.pass(10 * time.Minute) // 09:10, waiting
+	v := r.info().Active
+	if v == nil || !v.Waiting || r.top().Percent != 75 || r.top().Timed {
+		t.Fatalf("view %+v top %+v: an until step cannot hold a countdown, so the hold stays at the level that ended", v, r.top())
+	}
+	r.pass(20 * time.Minute) // 09:30
+	if err := r.worker.RoutineNext(); err != nil {
+		t.Fatal(err)
+	}
+	if top := r.top(); top.Percent != 50 || top.Remaining != 150*time.Minute {
+		t.Errorf("top = %+v, want 09:30 to 12:00", top)
+	}
+}
+
+func TestACallRunsTheCalledRoutinesStepsInPlace(t *testing.T) {
+	r := newRoutineRig(t, `{"routines": {
+	  "inner": {"repeat": 2, "steps": ["75% 10m a", "off 5m b"]},
+	  "outer": {"steps": ["run inner", "50% 20m c"]}}}`)
+	r.start("outer")
+	var steps []string
+	for i := 0; i < 5; i++ {
+		v := r.info().Active
+		if v == nil {
+			t.Fatalf("the run ended early after %v", steps)
+		}
+		steps = append(steps, v.Step)
+		r.pass(time.Duration(r.top().Remaining))
+	}
+	want := "inner › a (1/2),inner › b (1/2),inner › a (2/2),inner › b (2/2),c"
+	if got := strings.Join(steps, ","); got != want {
+		t.Errorf("steps = %s\nwant    %s", got, want)
+	}
+	if r.info().Active != nil {
+		t.Error("the run should be over")
+	}
+}
+
+func TestARoutineThatRepeatsForeverGoesRoundAgainUntilStopped(t *testing.T) {
+	r := newRoutineRig(t, `{"routines": {"loop": {"repeat": "forever", "steps": ["75% 10m work", "off 5m break"]}}}`)
+	r.start("loop")
+	var seen []string
+	for i := 0; i < 7; i++ {
+		v := r.info().Active
+		if v == nil {
+			t.Fatalf("a routine that repeats forever ended after %v", seen)
+		}
+		seen = append(seen, v.Step)
+		r.pass(r.top().Remaining)
+	}
+	if got := strings.Join(seen, ","); got != "work,break,work,break,work,break,work" {
+		t.Errorf("seen = %s", got)
+	}
+	if v := r.info().Active; v == nil || v.Position != 1 || v.Total != 2 {
+		t.Errorf("view = %+v: the position stays inside one round", v)
+	}
+	if err := r.worker.RoutineStop(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestForeverWithAskWaitsAtTheEndOfEachRound(t *testing.T) {
+	r := newRoutineRig(t, `{"routines": {"loop": {"repeat": "forever", "steps": ["75% 10m work", "off 5m break --ask"]}}}`)
+	r.start("loop")
+	r.pass(10 * time.Minute)
+	r.pass(5 * time.Minute) // the break ends and asks
+	v := r.info().Active
+	if v == nil || !v.Waiting || v.Step != "work" || v.Position != 0 {
+		t.Fatalf("view = %+v: it should wait to start the next round", v)
+	}
+	if err := r.worker.RoutineNext(); err != nil {
+		t.Fatal(err)
+	}
+	if v := r.info().Active; v.Waiting || v.Step != "work" {
+		t.Errorf("view = %+v", v)
+	}
+}
+
+func TestForeverWithEveryStepGoneByEndsInsteadOfSpinning(t *testing.T) {
+	r := newRoutineRig(t, `{"routines": {"loop": {"repeat": "forever", "steps": ["75% until 08:00 work"]}}}`)
+	r.start("loop")
+	if r.info().Active != nil {
+		t.Error("a round with nothing that can start ends the run")
+	}
+}
+
+func TestACalledRoutineEditedMidRunIsFollowedAsEdited(t *testing.T) {
+	r := newRoutineRig(t, `{"routines": {"inner": {"steps": ["75% 10m a"]}, "outer": {"steps": ["run inner", "50% 20m c"]}}}`)
+	r.start("outer")
+	*r.text = `{"routines": {"inner": {"steps": ["75% 10m a", "off 5m extra"]}, "outer": {"steps": ["run inner", "50% 20m c"]}}}`
+	r.pass(10 * time.Minute)
+	if v := r.info().Active; v == nil || v.Step != "inner › extra" {
+		t.Errorf("view = %+v", v)
+	}
+}
+
+// ---- banner styles: the configuration, then the routine, then the step ----
+
+func TestARoutinesStyleReachesItsBannersAndAStepsStyleWinsForItsOwn(t *testing.T) {
+	r := newRoutineRig(t, `{"routines": {"r": {
+	  "style": {"color": 33, "size": "large"},
+	  "steps": ["75% 10m work --alert banner --color 196", "off 5m break --alert banner", "50% 5m last"]}}}`)
+	r.start("r")
+	r.pass(10 * time.Minute) // work ends: its banner
+	r.pass(5 * time.Minute)  // break ends: its banner
+	shown := r.alerter.Shown()
+	if len(shown) != 2 {
+		t.Fatalf("shown = %v", r.shown())
+	}
+	work, brk := shown[0], shown[1]
+	if len(work.Overrides) != 2 || *work.Overrides[0].Color != 33 || *work.Overrides[1].Color != 196 {
+		t.Errorf("work: the routine's look then the step's: %+v", work.Overrides)
+	}
+	if len(brk.Overrides) != 2 || *brk.Overrides[0].Size != "large" || !brk.Overrides[1].IsZero() {
+		t.Errorf("break has only the routine's: %+v", brk.Overrides)
+	}
+}
+
+func TestTheSummaryBannerAndTheCutOffBannerUseTheRoutinesStyle(t *testing.T) {
+	r := newRoutineRig(t, `{"routines": {"r": {"style": {"color": 41}, "steps": ["75% 10m work"]}}}`)
+	r.start("r")
+	r.pass(10 * time.Minute)
+	shown := r.alerter.Shown()
+	if len(shown) != 1 || shown[0].Title != "r finished" || len(shown[0].Overrides) != 1 || *shown[0].Overrides[0].Color != 41 {
+		t.Fatalf("shown = %+v", shown)
+	}
+	c := newRoutineRig(t, `{"routines": {"c": {"style": {"color": 41}, "repeat": "forever", "steps": ["75% 25m work"], "triggers": ["daily at 09:30 until 10:00 --until-alert banner"]}}}`)
+	c.pass(30 * time.Minute)
+	c.pass(30 * time.Minute)
+	var stopped *alertSeen
+	for _, a := range c.alerter.Shown() {
+		if strings.HasPrefix(a.Title, "c stopped at") {
+			stopped = &alertSeen{len(a.Overrides), a.Overrides}
+		}
+	}
+	if stopped == nil || stopped.n != 1 || *stopped.o[0].Color != 41 {
+		t.Errorf("the cut-off banner should carry the routine's style: %+v", stopped)
+	}
+}
+
+type alertSeen struct {
+	n int
+	o []config.StyleOverride
+}
+
+func TestTheScheduledBannersUseTheRoutinesStyle(t *testing.T) {
+	r := newRoutineRig(t, `{"routines": {"m": {"style": {"position": "bottom-left"}, "steps": ["75% 25m work"], "triggers": ["daily at 09:30 --reminder 5m --ask"]}}}`)
+	r.pass(25 * time.Minute)
+	r.pass(5 * time.Minute)
+	shown := r.alerter.Shown()
+	if len(shown) != 2 {
+		t.Fatalf("shown = %v", r.shown())
+	}
+	for _, a := range shown {
+		if len(a.Overrides) != 1 || *a.Overrides[0].Position != "bottom-left" {
+			t.Errorf("%q: overrides = %+v", a.Title, a.Overrides)
+		}
+	}
+}
+
+func TestASoundAlertPlaysTheSoundTheStyleSays(t *testing.T) {
+	var played []string
+	r := &routineRig{text: new(string)}
+	*r.text = `{"routines": {"r": {"style": {"sound": "Hero"}, "steps": ["75% 10m a --alert sound", "off 5m b --alert sound --sound Basso", "50% 5m c"]}}}`
+	base := config.Alert{Base: config.Style{Position: "top-right", Size: "medium", Color: 208, Sound: "Glass"}}
+	build := func(c *session.Config) {
+		c.PlaySound = func(name string) error { played = append(played, name); return nil }
+		c.AlertConfig = func() config.Alert { return base }
+		c.Location = time.UTC
+		c.Routines = func() ([]routine.Routine, error) { return routine.Parse("routines.json", []byte(*r.text)) }
+	}
+	r.workerRig = newWorkerRig(t, build)
+	r.start("r")
+	r.pass(10 * time.Minute)
+	r.pass(5 * time.Minute)
+	if strings.Join(played, ",") != "Hero,Basso" {
+		t.Errorf("played = %v: the routine's sound, then the step's over it", played)
+	}
+	// without any style the configured sound plays
+	played = nil
+	*r.text = `{"routines": {"plain": {"steps": ["75% 10m a --alert sound", "off 5m b"]}}}`
+	r.pass(time.Hour) // let the file be read again
+	r.start("plain")
+	r.pass(10 * time.Minute)
+	if strings.Join(played, ",") != "Glass" {
+		t.Errorf("played = %v", played)
+	}
+}
+
+// ---- the run log: what was flagged for review during a run ----
+
+func (r *routineRig) flagAll() int {
+	r.t.Helper()
+	n := 0
+	for _, nt := range r.notifications() {
+		if err := r.store.SetFlagged(nt.ID, true); err != nil {
+			r.t.Fatal(err)
+		}
+		n++
+	}
+	return n
+}
+
+const loggedRoutine = `{"routines": {"r": {"log": ["banner", "menu"], "steps": ["75% 10m work"]}, "quiet": {"steps": ["75% 10m work"]}}}`
+
+func TestARunCountsTheNotificationsFlaggedDuringItWhenItEnds(t *testing.T) {
+	r := newRoutineRig(t, loggedRoutine)
+	r.postAndTick(teams, "Ana", "lunch menu for friday") // before the run: not part of it
+	r.pass(time.Minute)
+	r.start("quiet")
+	r.pass(time.Minute) // a notification is stamped a second before it is seen, so let the run be a little older first
+	r.postAndTick(teams, "Bo", "lunch menu for friday")
+	r.postAndTick(teams, "Cy", "standup notes")
+	r.flagAll() // all three are flagged, but only two arrived during the run
+	r.pass(10 * time.Minute)
+	last := r.worker.RoutineLast()
+	if last == nil || last.Flagged != 2 || last.ToReview != 2 || last.RunID == 0 {
+		t.Fatalf("last = %+v: two of the three arrived while it ran", last)
+	}
+	if !strings.HasSuffix(last.Sentence(), "2 flagged for review.") {
+		t.Errorf("sentence = %q", last.Sentence())
+	}
+	// reviewing one takes its flag away: the count made at the end stays, what is left to do goes down
+	for _, n := range r.notifications() {
+		if n.Sender == "Bo" {
+			if err := r.store.Train(n.ID, store.Training{Feedback: "y"}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	last = r.worker.RoutineLast()
+	if last.Flagged != 2 || last.ToReview != 1 || !strings.HasSuffix(last.Sentence(), "2 flagged for review, 1 still to review.") {
+		t.Errorf("last = %+v: %q", last, last.Sentence())
+	}
+}
+
+func TestNothingFlaggedMeansNothingAddedToTheSentence(t *testing.T) {
+	r := newRoutineRig(t, loggedRoutine)
+	r.start("quiet")
+	r.pass(time.Minute)
+	r.postAndTick(teams, "Bo", "lunch menu for friday")
+	r.pass(10 * time.Minute)
+	last := r.worker.RoutineLast()
+	if last.Flagged != 0 || strings.Contains(last.Sentence(), "flagged") {
+		t.Errorf("sentence = %q", last.Sentence())
+	}
+}
+
+func TestTheReviewBannerComesOnlyForARoutineThatAsksForItAndOnlyWhenSomethingWasFlagged(t *testing.T) {
+	r := newRoutineRig(t, loggedRoutine)
+	var opened []string
+	r.worker = r.build(func(c *session.Config) {
+		c.Location = time.UTC
+		c.OpenUI = func(tab string) error { opened = append(opened, tab); return nil }
+		c.Routines = func() ([]routine.Routine, error) { return routine.Parse("routines.json", []byte(*r.text)) }
+	})
+	r.start("r")
+	r.pass(time.Minute)
+	r.postAndTick(teams, "Bo", "lunch menu for friday")
+	r.flagAll()
+	r.pass(10 * time.Minute)
+	var review *struct{ title, token string }
+	for _, a := range r.alerter.Shown() {
+		if strings.Contains(a.Title, "flagged notification") {
+			review = &struct{ title, token string }{a.Title, a.ActionToken}
+			if len(a.Actions) != 1 || a.Actions[0].ID != "review" || a.Actions[0].Label != "Review" {
+				t.Errorf("actions = %+v", a.Actions)
+			}
+		}
+	}
+	if review == nil || review.title != "r: 1 flagged notification to review" {
+		t.Fatalf("shown = %v", r.shown())
+	}
+	if err := r.worker.RoutineAction(review.token, "review"); err != nil || len(opened) != 1 || opened[0] != "train" {
+		t.Errorf("Review should open the UI at the Train tab: %v %v", opened, err)
+	}
+	// a routine that did not ask, and a run with nothing flagged, stay quiet
+	before := len(r.alerter.Shown())
+	r.start("quiet")
+	r.pass(time.Minute)
+	r.postAndTick(teams, "Cy", "standup notes")
+	r.flagAll()
+	r.pass(10 * time.Minute)
+	for _, a := range r.alerter.Shown()[before:] {
+		if strings.Contains(a.Title, "flagged notification") {
+			t.Errorf("quiet did not ask for it: %q", a.Title)
+		}
+	}
+	r.start("r")
+	r.pass(10 * time.Minute)
+	for _, a := range r.alerter.Shown()[before:] {
+		if strings.Contains(a.Title, "flagged notification") {
+			t.Errorf("nothing was flagged during this run: %q", a.Title)
+		}
+	}
+}
+
+func TestTheLogSettingIsReadAndCarriesIntoTheSummary(t *testing.T) {
+	r := newRoutineRig(t, loggedRoutine)
+	r.start("r")
+	r.pass(10 * time.Minute)
+	last := r.worker.RoutineLast()
+	if !last.ShowsLog("banner") || !last.ShowsLog("menu") || last.ShowsLog("ui") {
+		t.Errorf("log where = %v", last.LogWhere)
+	}
+}
+
+func TestRunLogsListsRunsNewestFirstWithWhatTheyDidAndWhatIsLeftToReview(t *testing.T) {
+	r := newRoutineRig(t, loggedRoutine)
+	r.start("r")
+	r.pass(time.Minute)
+	r.postAndTick(teams, "Bo", "lunch menu for friday")
+	r.flagAll()
+	r.pass(10 * time.Minute)
+	r.start("quiet")
+	r.pass(4 * time.Minute)
+	logs, err := session.RunLogs(r.store, "", 0, r.clock.Now())
+	if err != nil || len(logs) != 2 {
+		t.Fatalf("%v %v", logs, err)
+	}
+	quiet, first := logs[0], logs[1]
+	if quiet.Routine != "quiet" || quiet.Ended != nil || quiet.Elapsed != 4*time.Minute {
+		t.Errorf("the run in progress comes first and has no end yet: %+v", quiet)
+	}
+	if first.Routine != "r" || first.Ended == nil || first.Reason != "finished" || first.Steps != 1 || first.Total != 1 || first.Flagged != 1 || first.ToReview != 1 || first.Held != 1 {
+		t.Errorf("first = %+v", first)
+	}
+	if only, _ := session.RunLogs(r.store, "R", 0, r.clock.Now()); len(only) != 1 || only[0].Routine != "r" {
+		t.Errorf("one routine, ignoring case: %+v", only)
+	}
+	if one, _ := session.RunLogs(r.store, "", 1, r.clock.Now()); len(one) != 1 {
+		t.Errorf("a limit: %+v", one)
+	}
+	got, ok, err := session.RunLogOf(r.store, first.ID, r.clock.Now())
+	if err != nil || !ok || got.Routine != "r" {
+		t.Errorf("by id: %+v %v %v", got, ok, err)
+	}
+	if _, ok, _ := session.RunLogOf(r.store, 9999, r.clock.Now()); ok {
+		t.Error("no such run")
+	}
+	items, err := session.RunFlagged(r.store, first.ID, r.clock.Now())
+	if err != nil || len(items) != 1 || items[0].Sender != "Bo" || items[0].Source != "Teams" {
+		t.Errorf("items = %+v %v", items, err)
 	}
 }

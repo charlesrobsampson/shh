@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net"
+	"os"
 	"syscall"
 	"time"
 
@@ -150,6 +151,59 @@ func (c *Client) RoutineBack() (RoutineInfo, error) { return c.routine(Request{C
 // RoutineUnqueue drops the session that was to start when the routine ends.
 func (c *Client) RoutineUnqueue() (RoutineInfo, error) {
 	return c.routine(Request{Cmd: "routine_unqueue"})
+}
+
+// WorkerInfo asks the worker about itself.
+func (c *Client) WorkerInfo() (WorkerInfo, error) {
+	resp, err := c.call(Request{Cmd: "worker_info"})
+	if err != nil || resp.Worker == nil {
+		return WorkerInfo{}, err
+	}
+	return *resp.Worker, nil
+}
+
+// WorkerQuit asks the worker to shut down. It returns once the worker has heard; it may take a moment to go.
+func (c *Client) WorkerQuit() error {
+	_, err := c.call(Request{Cmd: "worker_quit"})
+	return err
+}
+
+// WaitGone waits until the worker with this process id has gone, up to wait (five seconds when zero). Not answering on the socket is
+// not enough: the worker is still letting go of its lock and its files for a moment after that, and a new one started then would fail.
+func (c *Client) WaitGone(pid int, wait time.Duration) error {
+	if wait == 0 {
+		wait = 5 * time.Second
+	}
+	deadline := time.Now().Add(wait)
+	for {
+		if _, err := c.Status(); errors.Is(err, ErrNotRunning) && !processAlive(pid) {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("the worker did not stop within %v", wait)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+// processAlive says whether a process with that id exists.
+func processAlive(pid int) bool {
+	if pid <= 0 || pid == os.Getpid() { // a worker running inside this process (in tests) has no process of its own to wait for
+		return false
+	}
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	return p.Signal(syscall.Signal(0)) == nil
+}
+
+// RoutineSkip leaves out a routine's next scheduled start; RoutineUnskip takes that back.
+func (c *Client) RoutineSkip(name string) (RoutineInfo, error) {
+	return c.routine(Request{Cmd: "routine_skip", Name: name})
+}
+func (c *Client) RoutineUnskip(name string) (RoutineInfo, error) {
+	return c.routine(Request{Cmd: "routine_unskip", Name: name})
 }
 
 // RoutineStop ends the routine run.

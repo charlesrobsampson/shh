@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -318,5 +319,56 @@ func TestRoutineItemsSteerTheRoutine(t *testing.T) {
 	r.eventually("every click to be handled", func() bool { return strings.Count(r.ctl.called(), ",") == 2 })
 	if got, want := r.ctl.called(), "routine next,routine back,routine stop"; got != want {
 		t.Errorf("worker calls = %s, want %s", got, want)
+	}
+}
+
+func TestTheItemLeavesWhenItsWorkerHasGoneEvenIfAnotherAnswersTheSocket(t *testing.T) {
+	r := newRig(t)
+	r.ctl.set(session.StatusView{Level: 30, Layers: []session.LayerView{baseline}}, nil) // a worker answers
+	var gone atomic.Bool
+	r.start(func(c *menubar.Config) {
+		c.Interval = 10 * time.Millisecond
+		c.Gone = gone.Load
+	})
+	h := r.helper(0)
+	r.eventually("the first title", func() bool { return len(h.titles()) == 1 })
+	select {
+	case err := <-r.done:
+		t.Fatalf("Run returned while its worker was still there: %v", err)
+	default:
+	}
+	gone.Store(true)
+	select {
+	case err := <-r.done:
+		if err != nil {
+			t.Errorf("err = %v, want a clean end", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the item stayed although the worker that started it had gone: a restarted worker would be left with two items")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !h.stopped {
+		t.Error("the status item itself should be taken down")
+	}
+}
+
+func TestTheReviewItemOpensTheReviewAndFallsBackToOpen(t *testing.T) {
+	r := newRig(t)
+	r.ctl.set(session.StatusView{Level: 30, Layers: []session.LayerView{baseline}}, nil)
+	var reviewed atomic.Int32
+	r.start(func(c *menubar.Config) {
+		c.Interval = time.Hour
+		c.Review = func() error { reviewed.Add(1); return nil }
+	})
+	h := r.helper(0)
+	r.eventually("the first title", func() bool { return len(h.titles()) == 1 })
+	h.clicks <- menubar.IDReview
+	r.eventually("the review", func() bool { return reviewed.Load() == 1 })
+	r.mu.Lock()
+	opened := r.opened
+	r.mu.Unlock()
+	if opened != 0 {
+		t.Errorf("with a Review handler Open is not used: %d", opened)
 	}
 }

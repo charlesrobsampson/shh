@@ -172,4 +172,23 @@ ALTER TABLE focus_sessions ADD COLUMN alert_done BOOLEAN NOT NULL DEFAULT 0;
 
 	// A session of the user's that is to start when the routine ends (task 52), kept as JSON: the worker knows its shape.
 	`ALTER TABLE routine_runs ADD COLUMN queued TEXT;`,
+
+	// Routines that start by themselves (task 52): a run started by a trigger with an until time ends then (ends_at, and how that is
+	// announced), and what was done about each start the triggers came to, so a restart does not start one twice and a skip holds.
+	`
+ALTER TABLE routine_runs ADD COLUMN ends_at DATETIME;
+ALTER TABLE routine_runs ADD COLUMN ends_alert TEXT;
+CREATE TABLE schedule_events (
+	routine TEXT NOT NULL,
+	start_at DATETIME NOT NULL,
+	kind TEXT NOT NULL,
+	outcome TEXT NOT NULL,
+	at DATETIME NOT NULL,
+	PRIMARY KEY (routine, start_at, kind)
+);
+`,
+
+	// How many notifications were flagged for review during a run, counted when it ended (task 52): a flag is cleared by training the
+	// notification, so counting later would lose the ones that have been reviewed since.
+	`ALTER TABLE routine_runs ADD COLUMN flagged INTEGER NOT NULL DEFAULT 0;`,
 }

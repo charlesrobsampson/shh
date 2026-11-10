@@ -19,14 +19,14 @@ func newSoundRig(t *testing.T) *soundRig {
 	t.Helper()
 	sr := &soundRig{}
 	sr.workerRig = newWorkerRig(t, func(c *session.Config) {
-		c.PlaySound = func() error { sr.plays++; return nil }
+		c.PlaySound = func(string) error { sr.plays++; return nil }
 	})
 	return sr
 }
 
 // restart builds a second worker over the same store and clock, as a worker restarting would.
 func (r *soundRig) restart() {
-	r.worker = r.build(func(c *session.Config) { c.PlaySound = func() error { r.plays++; return nil } })
+	r.worker = r.build(func(c *session.Config) { c.PlaySound = func(string) error { r.plays++; return nil } })
 }
 
 func (r *workerRig) escalate(e session.Escalation) {

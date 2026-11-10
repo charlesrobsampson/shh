@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -44,7 +45,14 @@ type Config struct {
 	// Routines loads the saved routines (routines.json). Nil means there are none.
 	Routines RoutineLoader
 	// PlaySound plays the alert sound, for sessions and routine steps whose alert is "sound". Nil means it is silent.
-	PlaySound func() error
+	// It is given the name of the sound the style says (see AlertConfig), which is "none" for none.
+	PlaySound func(name string) error
+	// OpenUI opens the terminal UI on a tab (focus, notifications, train or routines): what the Review button of a routine's banner does.
+	// Nil means it cannot.
+	OpenUI func(tab string) error
+	// AlertConfig is the configured look of alerts, for the sound a "sound" alert plays: the base, then the routine's and the step's own.
+	// It is a function so that an edit to config.json applies to the next alert; nil means no configuration (a sound named "").
+	AlertConfig func() config.Alert
 }
 
 // Decision is the outcome for one notification.
@@ -63,6 +71,8 @@ type Worker struct {
 	classifier *classify.Classifier
 	parser     *calendar.Parser
 	routines   *routineRunner
+	schedule   *scheduler
+	started    time.Time
 	scheduler  *calendar.Scheduler
 	tailer     *ingest.Tailer
 
@@ -89,6 +99,8 @@ func NewWorker(cfg Config) (*Worker, error) {
 		}),
 	}
 	w.routines = newRoutineRunner(w)
+	w.schedule = newScheduler(w)
+	w.started = cfg.Clock.Now()
 	w.tailer = ingest.NewTailer(ingest.Config{
 		Source: cfg.Source, Store: cfg.Store, Clock: cfg.Clock, Sources: cfg.Rules.Sources, OwnBundles: cfg.OwnBundles,
 		Interval: cfg.Interval, Handle: w.handle, OnError: cfg.OnError,
@@ -191,6 +203,7 @@ func (w *Worker) Tick() error {
 	if err := w.routines.Tick(); err != nil && w.cfg.OnError != nil {
 		w.cfg.OnError(fmt.Errorf("routine: %w", err))
 	}
+	w.schedule.Tick()
 	if err := w.announceEnded(); err != nil && w.cfg.OnError != nil {
 		w.cfg.OnError(fmt.Errorf("session alerts: %w", err))
 	}
@@ -386,7 +399,40 @@ func (w *Worker) RoutineNext() error { return w.routines.Next() }
 func (w *Worker) RoutineUnqueue() error { return w.routines.Unqueue() }
 
 // RoutineAction is a button on a routine's banner being pressed (see alert.Action).
-func (w *Worker) RoutineAction(token, id string) error { return w.routines.Action(token, id) }
+func (w *Worker) RoutineAction(token, id string) error {
+	if strings.HasPrefix(token, "sched:") { // a banner of a scheduled start
+		return w.schedule.Action(token, id)
+	}
+	if strings.HasPrefix(token, "log:") { // the banner that says notifications were flagged during a run
+		if id == "review" && w.cfg.OpenUI != nil {
+			return w.cfg.OpenUI("train")
+		}
+		return nil
+	}
+	return w.routines.Action(token, id)
+}
+
+// RoutineSkip leaves out a routine's next scheduled start; RoutineUnskip takes that back.
+func (w *Worker) RoutineSkip(name string) error   { return w.schedule.Skip(name) }
+func (w *Worker) RoutineUnskip(name string) error { return w.schedule.Unskip(name) }
+
+// Upcoming is the next scheduled start of each routine that has a trigger switched on.
+func (w *Worker) Upcoming() []UpcomingStart { return w.schedule.Upcoming() }
+
+// Info is what the worker says about itself for shh worker status.
+func (w *Worker) Info() WorkerInfo {
+	info := WorkerInfo{PID: os.Getpid(), Started: w.started, Now: w.cfg.Clock.Now(), Build: BuildID, Triggers: w.schedule.TriggerCount()}
+	if st, err := w.stack.Status(); err == nil {
+		info.Level = st.Level
+	}
+	if v := w.routines.View(); v != nil {
+		info.Routine = v.Name
+	}
+	return info
+}
+
+// HasTriggers says whether any routine has a trigger switched on. The worker must stay up while one does, since it starts them.
+func (w *Worker) HasTriggers() bool { return w.schedule.HasTriggers() }
 
 // RoutineBack restarts the step before the one in focus.
 func (w *Worker) RoutineBack() error { return w.routines.Back() }
@@ -451,11 +497,17 @@ func (w *Worker) say(a alert.Alert) {
 	}
 }
 
-func (w *Worker) playSound() {
+// playSound plays the sound the style says: the configured one, then each override laid over it (a routine's, then its step's).
+func (w *Worker) playSound(overrides ...config.StyleOverride) {
 	if w.cfg.PlaySound == nil {
 		return
 	}
-	if err := w.cfg.PlaySound(); err != nil && w.cfg.OnError != nil {
+	var acfg config.Alert
+	if w.cfg.AlertConfig != nil {
+		acfg = w.cfg.AlertConfig()
+	}
+	name := acfg.ResolveWith(config.KindMessage, "Routine", overrides...).Sound
+	if err := w.cfg.PlaySound(name); err != nil && w.cfg.OnError != nil {
 		w.cfg.OnError(fmt.Errorf("playing the alert sound: %w", err))
 	}
 }

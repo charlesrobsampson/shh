@@ -187,7 +187,10 @@ Pure function, easily tested. Keyword list (`now`, `ASAP`, `urgent`, `prod`, `do
     "alert": {
       "position": "top-right",   // top-left|top-center|top-right|bottom-*
       "size": "medium",          // small|medium|large
-      "color": "#ff9f0a",
+      "color": 208,              // a code from the 8-bit ANSI palette, 0-255 (shh alert colors shows it; https://en.wikipedia.org/wiki/ANSI_escape_code#8-bit)
+      "text_color": 15,          // the text on the banner, same palette (15 = white, the default)
+      "button_color": 238,       // the buttons' background and text (left out = the system's look)
+      "button_text_color": 15,
       "duration_secs": 0,        // 0 (default) = stays until dismissed or opened; N = disappears after N seconds
       "sound": "Glass",          // system sound name | "none"
       "buttons": [               // left to right; every known type is always present, one left out is disabled
@@ -196,7 +199,7 @@ Pure function, easily tested. Keyword list (`now`, `ASAP`, `urgent`, `prod`, `do
         { "type": "dismiss", "label": "Dismiss", "enabled": true },
         { "type": "train",   "label": "Train",   "enabled": false }   // reserved, task 45
       ],
-      "calendar": { "color": "#0a84ff", "sound": "Hero" },   // per-kind override
+      "calendar": { "color": 39, "sound": "Hero" },   // per-kind override
       "source": { "Slack": { "sound": "none", "buttons": [{ "type": "dismiss" }] } }   // per-app override; a buttons list replaces the whole list
     },
     "menubar": { "label": "shh" }

@@ -147,7 +147,7 @@ func decode(t *testing.T, p *fakeProcess) banner {
 func request(title, position string) alert.Request {
 	return alert.Request{
 		Title: title, Body: "body of " + title, BundleID: "com.microsoft.teams2", Kind: config.KindMessage,
-		Style: config.Style{Position: position, Size: "medium", Color: "#ff9f0a", DurationSecs: 8, Sound: "Glass"}, Width: 360, Height: 64,
+		Style: config.Style{Position: position, Size: "medium", Color: 208, DurationSecs: 8, Sound: "Glass"}, Width: 360, Height: 64,
 	}
 }
 
@@ -155,7 +155,7 @@ func TestTheBannerIsDescribedToTheHelperAsJSON(t *testing.T) {
 	r := newOverlayRig(t)
 	r.show(request("Ana", "top-right"))
 	got := decode(t, r.process(0))
-	want := banner{Title: "Ana", Body: "body of Ana", Bundle: "com.microsoft.teams2", Color: "#ff9f0a", Width: 360, Height: 64, Position: "top-right", Offset: 0, Duration: 8, Sound: "Glass"}
+	want := banner{Title: "Ana", Body: "body of Ana", Bundle: "com.microsoft.teams2", Color: "#ff8700", Width: 360, Height: 64, Position: "top-right", Offset: 0, Duration: 8, Sound: "Glass"}
 	if got != want {
 		t.Errorf("banner = %+v, want %+v", got, want)
 	}
@@ -819,4 +819,82 @@ func TestAnActionEventWithNoHookIsHarmless(t *testing.T) {
 	r := newOverlayRig(t)
 	r.show(request("a", "top-right"))
 	r.process(0).emit("action next")
+}
+
+func TestTheTextColorTravelsWithTheBannerAndTheScriptDrawsWithIt(t *testing.T) {
+	r := newOverlayRig(t)
+	req := request("Ana", "top-right")
+	req.Style.TextColor = 0
+	r.show(req)
+	var spec struct {
+		Color     string `json:"color"`
+		TextColor string `json:"textColor"`
+	}
+	for _, kv := range r.process(0).env {
+		if v, ok := strings.CutPrefix(kv, "SHH_BANNER="); ok {
+			if err := json.Unmarshal([]byte(v), &spec); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if spec.Color != "#ff8700" || spec.TextColor != "#000000" {
+		t.Errorf("colors = %+v: the background and the text are separate", spec)
+	}
+	script := strings.Join(alert.OverlayCommand(req).Args, " ")
+	if !strings.Contains(script, "cfg.textColor") || strings.Contains(script, "NSColor.whiteColor") || !strings.Contains(script, "colorWithAlphaComponent(0.75)") {
+		t.Error("the text, and the fainter app name above it, must be drawn in the configured text color, not always white")
+	}
+}
+
+func TestButtonColorsTravelWithTheBannerOnlyWhenSetAndTheScriptPaintsWithThem(t *testing.T) {
+	r := newOverlayRig(t)
+	plain := request("Ana", "top-right")
+	plain.Style.ButtonColor, plain.Style.ButtonTextColor = -1, -1
+	styled := request("Bo", "top-right")
+	styled.Style.ButtonColor, styled.Style.ButtonTextColor = 238, 15
+	r.show(plain)
+	r.show(styled)
+	read := func(i int) map[string]any {
+		for _, kv := range r.process(i).env {
+			if v, ok := strings.CutPrefix(kv, "SHH_BANNER="); ok {
+				var m map[string]any
+				if err := json.Unmarshal([]byte(v), &m); err != nil {
+					t.Fatal(err)
+				}
+				return m
+			}
+		}
+		return nil
+	}
+	if m := read(0); m["buttonColor"] != nil || m["buttonTextColor"] != nil {
+		t.Errorf("the system look sends no colors: %v", m)
+	}
+	if m := read(1); m["buttonColor"] != "#444444" || m["buttonTextColor"] != "#ffffff" {
+		t.Errorf("the styled buttons: %v", m)
+	}
+	script := strings.Join(alert.OverlayCommand(styled).Args, " ")
+	for _, want := range []string{"cfg.buttonColor", "cfg.buttonTextColor", "setButtonTitle", "inks", "ink.setTextColor(buttonInk)", "sizeToFit", "NSBox", "backdrops", "setFillColor(buttonFill)"} {
+		if !strings.Contains(script, want) {
+			t.Errorf("the script does not mention %s", want)
+		}
+	}
+	if strings.Contains(script, "setAttributedTitle") || strings.Contains(script, "NSAttributedString.alloc") || strings.Contains(script, "setContentTintColor") {
+		t.Error("an attributed title cannot be built from JXA and a content tint did nothing in the banner window (both left the button text uncolored): the text is a label over the button's face")
+	}
+	if strings.Contains(script, ".layer") || strings.Contains(script, "CGColor") {
+		t.Error("a CGColor handed to a layer from JXA can take osascript down with it (and then every banner falls back to a system notification): the buttons are painted with a box instead")
+	}
+	if strings.Contains(script, "button.setTitle($(flagged") || strings.Contains(script, "button.setTitle($(expanded") {
+		t.Error("a button that changes its label must set it through setButtonTitle, or the new label loses the button text color")
+	}
+}
+
+func TestAButtonsLabelIsCenteredByHandNotWithTheAlignmentConstant(t *testing.T) {
+	script := strings.Join(alert.OverlayCommand(request("Ana", "top-right")).Args, " ")
+	if strings.Contains(script, "setAlignment") || strings.Contains(script, "NSTextAlignmentCenter") {
+		t.Error("NSTextAlignmentCenter came out as right-aligned text in the banner (the label sat against the right edge of its button): center the label from its size instead")
+	}
+	if !strings.Contains(script, "(face.size.width - size.width) / 2") || !strings.Contains(script, "(face.size.height - size.height) / 2") {
+		t.Error("the label is centered both ways from its own size")
+	}
 }

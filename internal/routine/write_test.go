@@ -205,7 +205,6 @@ func TestEveryFieldOfARoutineSurvivesTheRoundTrip(t *testing.T) {
 	r.Finish = mustSteps(t, "off 15m long rest", "baseline off")
 	r.Waiting = routine.WaitNext
 	r.Summary = []routine.Where{routine.WhereMenu}
-	r.Schedule = []routine.Schedule{{Days: []time.Weekday{time.Monday, time.Friday}, At: "09:30"}}
 	if err := routine.Save(p, r, false); err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +214,7 @@ func TestEveryFieldOfARoutineSurvivesTheRoundTrip(t *testing.T) {
 	}
 	got := rs[0]
 	if got.Outline() != r.Outline() || got.Description != r.Description || got.Repeat != 3 || got.Waiting != routine.WaitNext ||
-		len(got.Summary) != 1 || got.Summary[0] != routine.WhereMenu || len(got.Schedule) != 1 || got.Schedule[0].At != "09:30" || len(got.Schedule[0].Days) != 2 {
+		len(got.Summary) != 1 || got.Summary[0] != routine.WhereMenu {
 		t.Errorf("got  %+v\nwant %+v", got, r)
 	}
 	if text := read(t, p); strings.Contains(text, `\u003c`) || strings.Contains(text, `\u0026`) {
@@ -229,7 +228,7 @@ func TestDefaultsAreLeftOutOfTheFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := read(t, p)
-	for _, absent := range []string{"repeat", "waiting", "summary", "finish", "schedule", "description"} {
+	for _, absent := range []string{"repeat", "waiting", "summary", "finish", "description"} {
 		if strings.Contains(text, absent) {
 			t.Errorf("%q is the default and should not be written:\n%s", absent, text)
 		}
@@ -320,5 +319,29 @@ func TestCheckReturnsTheRoutineAsItWillReadBack(t *testing.T) {
 	}
 	if _, err := routine.Check(routine.Routine{Name: "", Steps: mustSteps(t, "75% 25m x")}); err == nil {
 		t.Error("a nameless routine is not valid")
+	}
+}
+
+func TestLogAndAnEmptySummarySurviveSavingAndReading(t *testing.T) {
+	p := tempFile(t, "")
+	r := newRoutine(t, "logged", "75% 25m work")
+	r.Log = []routine.Where{routine.WhereBanner, routine.WhereMenu}
+	r.Summary = []routine.Where{} // nowhere is a choice, and must not come back as the default
+	if err := routine.Save(p, r, false); err != nil {
+		t.Fatal(err)
+	}
+	rs, err := routine.Load(p)
+	if err != nil || len(rs[0].Log) != 2 || rs[0].Log[1] != routine.WhereMenu || len(rs[0].Summary) != 0 {
+		t.Fatalf("%+v %v\n%s", rs, err, read(t, p))
+	}
+	if text := read(t, p); !strings.Contains(text, `"log": [`) || !strings.Contains(text, `"summary": []`) {
+		t.Errorf("file:\n%s", text)
+	}
+	plain := newRoutine(t, "plain", "75% 25m work")
+	if err := routine.Save(p, plain, false); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(read(t, p), `"log"`) != 1 || strings.Count(read(t, p), `"summary"`) != 1 {
+		t.Errorf("a routine with the defaults writes neither:\n%s", read(t, p))
 	}
 }

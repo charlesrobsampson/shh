@@ -72,7 +72,10 @@ func realEnv() cli.Env {
 	env.PersistedFocus = func() bool { return persistedFocus(cfg.Paths.DB) }
 	env.Daemon = func(context.Context) error { return runDaemon(cfg) }
 	env.Menubar = func(ctx context.Context) error { return runMenubar(ctx, cfg) }
-	env.TUI = func() error { return runTUI(cfg) }
+	env.TUI = func() error { return runTUI(cfg, "", "", false, "") }
+	env.UI = func(tab string) error { return runTUI(cfg, "", "", false, tab) }
+	env.Guide = func(section, search string) error { return runTUI(cfg, section, search, true, "") }
+	env.WithStore = func(do func(*store.Store) error) error { return withStore(cfg.Paths.DB, do) }
 	for source := range cfg.Alert.Source {
 		env.AlertSources = append(env.AlertSources, source)
 	}
@@ -116,6 +119,19 @@ func spawnDaemon(cfg config.Config) error {
 	return cmd.Process.Release()
 }
 
+// withStore opens the database for a command that reads the history, without creating one that is not there, and closes it after.
+func withStore(path string, do func(*store.Store) error) error {
+	if _, err := os.Stat(path); err != nil {
+		return fmt.Errorf("there is no history yet (%s does not exist): it starts when the worker first runs", path)
+	}
+	s, err := store.Open(path)
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	return do(s)
+}
+
 // persistedFocus reports whether the database holds an active focus level, without creating a database that is not there.
 func persistedFocus(dbPath string) bool {
 	if _, err := os.Stat(dbPath); err != nil {
@@ -132,7 +148,7 @@ func persistedFocus(dbPath string) bool {
 
 // newAlerter draws alerts in the AppKit overlay and falls back to a Notification Center notification (titled with the own-banner
 // prefix so the suppressor lets it through) if the overlay cannot run or dies.
-func newAlerter(cfg config.Config, onError func(error), onFlag func(notificationID int64, flagged bool), onAction func(token, id string)) (alert.Alerter, *alert.Overlay) {
+func newAlerter(alertConfig func() config.Alert, onError func(error), onFlag func(notificationID int64, flagged bool), onAction func(token, id string)) (alert.Alerter, *alert.Overlay) {
 	fallback := alert.NewFallback(alert.FallbackConfig{OwnPrefix: ingest.OwnTitlePrefix})
 	overlay := alert.NewOverlay(alert.OverlayConfig{
 		OnFlag:   onFlag,
@@ -144,7 +160,7 @@ func newAlerter(cfg config.Config, onError func(error), onFlag func(notification
 			}
 		},
 	})
-	return alert.NewDisplay(cfg.Alert, overlay, fallback, onError), overlay
+	return alert.NewLiveDisplay(alertConfig, overlay, fallback, onError), overlay
 }
 
 // runDaemon is the background worker: real notification source, real banner suppressor and the real alerter.
@@ -181,7 +197,16 @@ func runDaemon(cfg config.Config) error {
 	// A routine's banner can carry a button ("Start next", "Skip"); the worker, made just below, is the one that acts on it.
 	var worker *session.Worker
 	// A banner's Flag button marks its notification for review in the Train tab (and pressing it again clears the mark).
-	alerter, overlay := newAlerter(cfg, onError, func(id int64, flagged bool) {
+	// Banners are styled from config.json as it is when they are shown, not as it was when the worker started.
+	var watcher *config.Watcher
+	if path, err := config.DefaultPath(); err == nil {
+		watcher = config.NewWatcher(path, cfg, onError)
+	}
+	alertConfig := func() config.Alert { return cfg.Alert }
+	if watcher != nil {
+		alertConfig = watcher.Alert
+	}
+	alerter, overlay := newAlerter(alertConfig, onError, func(id int64, flagged bool) {
 		if id < 0 {
 			return // a sample from `shh alert test`: nothing real to mark
 		}
@@ -204,66 +229,90 @@ func runDaemon(cfg config.Config) error {
 		// Routines are read from routines.json each time one is needed, so edits apply to the next run.
 		Routines: func() ([]routine.Routine, error) { return routine.Load(routine.DefaultPath(cfg.Paths.Dir)) },
 		// The sound for alerts that are only a sound is the one the alert style uses.
-		PlaySound: func() error { return playSystemSound(cfg.Alert.Base.Sound) },
+		PlaySound:   playSystemSound,
+		OpenUI:      openUI,
+		AlertConfig: alertConfig,
 	})
 	if err != nil {
 		return err
 	}
-	if cfg.Menubar.Enabled {
-		if err := spawnMenubar(cfg); err != nil {
-			onError(fmt.Errorf("starting the menu bar item: %w", err))
-		}
-	}
 	logger.Println("shh worker started")
 	defer logger.Println("shh worker stopped")
+	// The menu bar item is this worker's: started once the worker owns the socket (a second worker that loses the race for it must not
+	// leave an item behind), and sent away when the worker goes, so a restarted worker is not left with its old one beside the new.
+	var menubarProc *os.Process
+	defer func() {
+		if menubarProc != nil {
+			_ = menubarProc.Signal(syscall.SIGTERM)
+		}
+	}()
 	return session.RunDaemon(ctx, session.DaemonConfig{
+		OnReady: func() {
+			if !cfg.Menubar.Enabled {
+				return
+			}
+			proc, err := spawnMenubar(cfg)
+			if err != nil {
+				onError(fmt.Errorf("starting the menu bar item: %w", err))
+				return
+			}
+			menubarProc = proc
+		},
 		Worker: worker, Clock: clock.Real{}, SocketPath: cfg.Paths.Socket,
 		LockPath: filepath.Join(cfg.Paths.Dir, "shh.lock"), PIDPath: cfg.Paths.PID, OnError: onError,
 		// Banners stay until dismissed, and only this process can lay them out, so do not leave while any are up.
 		// A routine waiting for the user may have nothing in force, but it still needs this process to carry on.
-		Busy: func() bool { return overlay.Active() > 0 || worker.RoutineActive() },
+		// A routine with a trigger switched on is started by this process, so it stays up for as long as there is one.
+		Busy: func() bool { return overlay.Active() > 0 || worker.RoutineActive() || worker.HasTriggers() },
 	})
 }
 
 // spawnMenubar starts `shh menubar` as a child of the worker. It is not waited for or killed: it polls the worker's socket and
 // leaves on its own when the worker is gone.
-func spawnMenubar(cfg config.Config) error {
+func spawnMenubar(cfg config.Config) (*os.Process, error) {
 	exe, err := os.Executable()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	logFile, err := os.OpenFile(filepath.Join(cfg.Paths.Dir, "shh.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer logFile.Close()
 	cmd := exec.Command(exe, "menubar")
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	if err := cmd.Start(); err != nil {
-		return err
+		return nil, err
 	}
 	go cmd.Wait() // reap it when it ends
-	return nil
+	return cmd.Process, nil
 }
 
 // runMenubar is the menu bar item's process: a status item driven by the worker over its socket.
 func runMenubar(ctx context.Context, cfg config.Config) error {
 	logger := log.New(os.Stderr, "menubar: ", log.LstdFlags)
+	parent := os.Getppid() // the worker that started it: when that changes, the worker is gone and so is this item
 	return menubar.Run(ctx, menubar.Config{
+		Gone:       func() bool { return os.Getppid() != parent },
 		Controller: session.NewClient(cfg.Paths.Socket),
 		Label:      cfg.Menubar.Label,
-		Open:       openUI,
+		Open:       func() error { return openUI("") },
+		Review:     func() error { return openUI("train") },
 		OnError:    func(err error) { logger.Println("error:", err) },
 	})
 }
 
 // openUI opens a Terminal window running shh, which shows the terminal UI.
-func openUI() error {
+// With a tab (focus, notifications, train, routines) the UI opens on it.
+func openUI(tab string) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return err
 	}
 	quoted := "'" + strings.ReplaceAll(exe, "'", `'\''`) + "'"
+	if tab != "" {
+		quoted += " ui --tab " + tab
+	}
 	script := `tell application "Terminal"
 	activate
 	do script ` + strconv.Quote(quoted) + `
@@ -273,7 +322,7 @@ end tell`
 
 // runTUI opens the terminal UI. It reads the same database as the worker (SQLite allows that) and asks the worker for the session
 // status, which it does without: with no worker the UI is for review and training.
-func runTUI(cfg config.Config) error {
+func runTUI(cfg config.Config, helpSection, helpSearch string, helpOnly bool, startTab string) error {
 	if err := os.MkdirAll(cfg.Paths.Dir, 0o700); err != nil {
 		return err
 	}
@@ -285,6 +334,7 @@ func runTUI(cfg config.Config) error {
 	client := session.NewClient(cfg.Paths.Socket)
 	return tui.Run(tui.Config{
 		Data: db, Worker: client, Label: cfg.Menubar.Label,
+		HelpOnly: helpOnly, HelpSection: helpSection, HelpSearch: helpSearch, StartTab: startTab,
 		// The Focus tab does everything the command line does, through the worker.
 		Control: client,
 		// The Routines tab starts and steers routines through the worker and reads the routines file itself.

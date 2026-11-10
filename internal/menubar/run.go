@@ -50,6 +50,9 @@ type Config struct {
 	Controller Controller
 	// Label starts the title, for example "shh".
 	Label string
+	// Review handles the item that says notifications were flagged during a routine's run, typically by opening the UI on the Train tab.
+	// Nil falls back to Open.
+	Review func() error
 	// Open handles the "Open shh…" item, typically by opening a terminal with the UI. Nil means the item does nothing.
 	Open func() error
 	// Start launches the status item. The default runs statusitem.js with osascript.
@@ -61,7 +64,10 @@ type Config struct {
 	// GoneAfter is how many polls in a row may find no worker before Run gives up; 2 when zero. The menu bar item exists for the
 	// worker's sake, so it leaves when the worker does.
 	GoneAfter int
-	OnError   func(error)
+	// Gone, if set, is asked at every poll: true means the process that started this one (the worker) is no longer there, and the item
+	// leaves at once. Without it a new worker that answers on the same socket would keep an old item alive beside its own.
+	Gone    func() bool
+	OnError func(error)
 }
 
 // Run keeps the menu bar item up to date until ctx ends or the worker is gone: once per Interval it asks the worker for its status
@@ -158,6 +164,9 @@ func (r *runner) launch() error {
 
 // refresh polls the worker and updates the item. It reports whether the worker is gone.
 func (r *runner) refresh() (gone bool) {
+	if r.cfg.Gone != nil && r.cfg.Gone() {
+		return true
+	}
 	st, err := r.cfg.Controller.Status()
 	if errors.Is(err, session.ErrNotRunning) {
 		r.misses++
@@ -212,6 +221,13 @@ func (r *runner) act(id string) {
 			_, err = rc.RoutineBack()
 		default:
 			_, err = rc.RoutineStop()
+		}
+	case IDReview:
+		switch {
+		case r.cfg.Review != nil:
+			err = r.cfg.Review()
+		case r.cfg.Open != nil:
+			err = r.cfg.Open()
 		}
 	case IDOpen:
 		if r.cfg.Open != nil {

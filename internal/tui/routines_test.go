@@ -36,6 +36,12 @@ func (f *fakeRoutines) RoutineNext() (session.RoutineInfo, error)    { return f.
 func (f *fakeRoutines) RoutineBack() (session.RoutineInfo, error)    { return f.answer("back") }
 func (f *fakeRoutines) RoutineStop() (session.RoutineInfo, error)    { return f.answer("stop") }
 func (f *fakeRoutines) RoutineUnqueue() (session.RoutineInfo, error) { return f.answer("unqueue") }
+func (f *fakeRoutines) RoutineSkip(name string) (session.RoutineInfo, error) {
+	return f.answer("skip " + name)
+}
+func (f *fakeRoutines) RoutineUnskip(name string) (session.RoutineInfo, error) {
+	return f.answer("unskip " + name)
+}
 
 const tuiRoutines = `{"routines": {
   "pomo": {"description": "short and sweet", "repeat": 2, "steps": ["75% 25m work --alert banner", "off 5m break"], "finish": ["off 15m long break"]},
@@ -271,15 +277,15 @@ func TestTheDollarKeyJumpsToRoutinesAndTheTabBarListsIt(t *testing.T) {
 // ---- the editor ----
 
 // editorRig is a routines rig whose save and remove act on a file text, as the real ones act on the file.
-func editorRig(t *testing.T) (*rig, *string, *[]string) {
+func editorRig(t *testing.T) (*rig, *string, *[]string) { return editorRigText(t, tuiRoutines) }
+
+func editorRigText(t *testing.T, text string) (*rig, *string, *[]string) {
 	t.Helper()
 	r, _ := routinesRig(t)
-	text := tuiRoutines
 	var log []string
-	r.m.cfg.Saved = func() ([]routine.Routine, error) { return routine.Parse("routines.json", []byte(text)) }
 	dir := t.TempDir()
 	path := dir + "/routines.json"
-	_ = os.WriteFile(path, []byte(tuiRoutines), 0o600)
+	_ = os.WriteFile(path, []byte(text), 0o600)
 	r.m.cfg.Saved = func() ([]routine.Routine, error) { return routine.Load(path) }
 	r.m.cfg.SaveRoutine = func(rt routine.Routine, replace bool) error {
 		log = append(log, fmt.Sprintf("save %s replace=%v", rt.Name, replace))
@@ -314,7 +320,7 @@ func TestEditingARoutineChangesAStepAndSavesInPlace(t *testing.T) {
 			t.Errorf("the editor should show %q:\n%s", want, v)
 		}
 	}
-	r.press("j", "j", "j", "j", "j", "enter") // the first step
+	r.press("j", "j", "j", "j", "j", "j", "j", "enter") // the first step
 	if r.m.prompt == nil || r.m.prompt.text != "75% 25m work --alert banner" {
 		t.Fatalf("Enter on a step should open it for editing: %+v", r.m.prompt)
 	}
@@ -392,7 +398,7 @@ func TestBadValuesStayInTheBoxWithTheReason(t *testing.T) {
 		t.Errorf("err = %v", r.m.prompt)
 	}
 	r.press("esc")
-	r.press("j", "j", "j", "enter") // the first step
+	r.press("j", "j", "j", "j", "j", "enter") // the first step
 	r.typeInto("75% work")
 	if r.m.prompt == nil || !strings.Contains(r.m.prompt.err, "length") {
 		t.Errorf("err = %v", r.m.prompt)
@@ -404,7 +410,7 @@ func TestBadValuesStayInTheBoxWithTheReason(t *testing.T) {
 
 func TestStepsCanBeMovedAndDeletedButNotTheLastOne(t *testing.T) {
 	r, _, _ := editorRig(t)
-	r.press("e", "j", "j", "j", "j", "j") // first step
+	r.press("e", "j", "j", "j", "j", "j", "j", "j") // first step
 	r.press("J")
 	if r.m.editor.draft.Steps[1].Name != "work" || r.m.editor.draft.Steps[0].Name != "break" {
 		t.Errorf("steps = %+v", r.m.editor.draft.Steps)
@@ -541,7 +547,7 @@ func TestEditingKeysAreOffWithoutSaveSupport(t *testing.T) {
 func openStepBox(t *testing.T) *rig {
 	t.Helper()
 	r, _, _ := editorRig(t)
-	r.press("e", "j", "j", "j", "j", "j", "enter") // the first step of pomo: "75% 25m work --alert banner"
+	r.press("e", "j", "j", "j", "j", "j", "j", "j", "enter") // the first step of pomo: "75% 25m work --alert banner"
 	if r.m.prompt == nil || r.m.prompt.text != "75% 25m work --alert banner" {
 		t.Fatalf("prompt = %+v", r.m.prompt)
 	}
@@ -777,5 +783,28 @@ func TestQDoesNothingWhenStoppingAndUDropsTheQueuedSession(t *testing.T) {
 	r.press("u")
 	if got := strings.Join(fr.calls, ","); got != "unqueue" || !strings.Contains(r.m.messageLine(), "$ shh routine unqueue") {
 		t.Errorf("calls %s message %q", got, r.m.messageLine())
+	}
+}
+
+func TestTheEditorTakesForeverForRepeat(t *testing.T) {
+	r, _, _ := editorRig(t)
+	r.press("e", "j", "j", "enter")
+	r.typeInto("forever")
+	if r.m.editor.draft.Repeat != routine.Forever || !strings.Contains(r.view(), "forever (until stopped)") {
+		t.Errorf("draft = %+v\\n%s", r.m.editor.draft, r.view())
+	}
+	if got := addCommand(r.m.editor.draft, true); !strings.Contains(got, "-r forever") {
+		t.Errorf("command = %s", got)
+	}
+	r.press("s")
+	if r.m.editor == nil || !strings.Contains(r.m.notice, "finish steps") {
+		t.Errorf("pomo has finish steps, which a routine that repeats forever cannot have: %q", r.m.notice)
+	}
+}
+
+func TestTheListSaysHowLongEachRoutineTakes(t *testing.T) {
+	r, _ := routinesRig(t)
+	if v := r.view(); !strings.Contains(v, "(1h15m in all)") || !strings.Contains(v, "(1h30m in all)") {
+		t.Errorf("view:\\n%s", v)
 	}
 }

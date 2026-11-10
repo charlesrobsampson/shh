@@ -196,3 +196,56 @@ func TestAQueuedSessionIsListedUnderTheRoutine(t *testing.T) {
 		t.Errorf("menu = %s", ids(v))
 	}
 }
+
+func TestTheMenuSaysWhenARoutineStartsNextExceptWhileOneRuns(t *testing.T) {
+	now := time.Date(2026, 11, 9, 7, 0, 0, 0, time.UTC)
+	up := []session.UpcomingStart{{Routine: "morning", Start: now.Add(2 * time.Hour)}, {Routine: "late", Start: now.Add(10 * time.Hour)}}
+	v := menubar.Build(session.StatusView{Now: now, Upcoming: up}, "shh")
+	if v.Items[0].Title != "Next: morning today 09:00" {
+		t.Errorf("items = %+v", v.Items)
+	}
+	up[0].Skipped = true
+	if v = menubar.Build(session.StatusView{Now: now, Upcoming: up}, "shh"); v.Items[0].Title != "Next: morning today 09:00 (skipped)" {
+		t.Errorf("items = %+v", v.Items)
+	}
+	running := menubar.Build(session.StatusView{Now: now, Upcoming: up, Routine: &session.RoutineView{Name: "x", Step: "s"}}, "shh")
+	for _, it := range running.Items {
+		if strings.HasPrefix(it.Title, "Next:") {
+			t.Error("while a routine runs the menu is about it, not the next one")
+		}
+	}
+}
+
+func TestTheMenuOffersAReviewWhenFlaggedNotificationsWaitAndTheRoutineAsksForIt(t *testing.T) {
+	end := time.Date(2026, 11, 10, 15, 0, 0, 0, time.UTC)
+	last := &session.RoutineSummary{Name: "pomo", Reason: "finished", ToReview: 2, Flagged: 2, Ended: end, LogWhere: []string{"menu"}}
+	build := func(l *session.RoutineSummary, after time.Duration) menubar.View {
+		return menubar.Build(session.StatusView{Now: end.Add(after), LastRoutine: l}, "shh")
+	}
+	v := build(last, time.Minute)
+	found := false
+	for _, it := range v.Items {
+		if it.ID == menubar.IDReview && it.Title == "Review: 2 flagged during pomo" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("items = %+v", v.Items)
+	}
+	none := *last
+	none.ToReview = 0
+	other := *last
+	other.LogWhere = []string{"banner"}
+	for name, l := range map[string]*session.RoutineSummary{"nothing to review": &none, "not asked for the menu": &other} {
+		for _, it := range build(l, time.Minute).Items {
+			if it.ID == menubar.IDReview {
+				t.Errorf("%s: the review item should not be there", name)
+			}
+		}
+	}
+	for _, it := range build(last, 2*time.Hour).Items {
+		if it.ID == menubar.IDReview {
+			t.Error("an old run's review item goes from the menu after an hour")
+		}
+	}
+}

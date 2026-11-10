@@ -511,3 +511,257 @@ func TestNonTerminalRefusalNamesAllThreeFlags(t *testing.T) {
 		t.Errorf("code %d stderr %q", code, r.err.String())
 	}
 }
+
+func TestRoutineAddTakesForeverAndCallsAndUntilSteps(t *testing.T) {
+	r := newRig(t, false)
+	r.mustRun("routine", "add", "base", "75% 25m work", "off 5m break")
+	out := r.mustRun("routine", "add", "day", "run base --times 2", "50% until 17:00 email", "-r", "forever")
+	if !strings.Contains(out, "run base --times 2 -> 50% until 17:00 email, forever") || !strings.Contains(out, "(until stopped)") {
+		t.Errorf("out:\n%s", out)
+	}
+	rs, err := routine.Load(r.routines)
+	if err != nil || len(rs) != 2 || rs[1].Repeat != routine.Forever {
+		t.Fatalf("%v %v", rs, err)
+	}
+	if code := r.run("routine", "add", "x", "75% 25m a", "-r", "often"); code == 0 || !strings.Contains(r.err.String(), "not a number or forever") {
+		t.Errorf("code %d stderr %q", code, r.err.String())
+	}
+	if code := r.run("routine", "add", "y", "run nothing"); code == 0 || !strings.Contains(r.err.String(), "no routine is called that") {
+		t.Errorf("code %d stderr %q", code, r.err.String())
+	}
+	if code := r.run("routine", "add", "z", "75% 25m a", "--finish", "off 5m b", "-r", "forever"); code == 0 || !strings.Contains(r.err.String(), "finish steps") {
+		t.Errorf("code %d stderr %q", code, r.err.String())
+	}
+}
+
+func TestListSaysHowLongARoutineTakesIncludingCallsAndSetTimes(t *testing.T) {
+	r := newRig(t, false)
+	r.saveRoutines(`{"routines": {
+	  "base": {"repeat": 2, "steps": ["75% 25m work", "off 5m break"]},
+	  "twice": {"steps": ["run base --times 2"]},
+	  "timed": {"steps": ["75% 25m work", "50% until 17:00 email"]},
+	  "onlytimed": {"steps": ["50% until 17:00 email"]},
+	  "loop": {"repeat": "forever", "steps": ["75% 25m work"]}}}`)
+	out := r.mustRun("routine", "list")
+	for _, want := range []string{"(1h in all)", "(2h in all)", "(at least 25m in all)", "(ends at set times)", "(until stopped)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("list is missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestRoutineAddTakesTriggersAndListShowsWhenItStartsNext(t *testing.T) {
+	r := newRig(t, false)
+	r.env.Now = func() time.Time { return time.Date(2026, 11, 9, 7, 0, 0, 0, time.Local) } // a monday morning
+	out := r.mustRun("routine", "add", "morning", "75% 25m work", "-t", "weekdays except fri at 09:00 until 12:00 --reminder 5m", "-t", "fri at 10:00 --ask")
+	for _, want := range []string{"starts by itself:", "mon-thu at 09:00 until 12:00 --reminder 5m", "fri at 10:00 --ask", "next start: today 09:00"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("add output is missing %q:\n%s", want, out)
+		}
+	}
+	rs, err := routine.Load(r.routines)
+	if err != nil || len(rs) != 1 || len(rs[0].Triggers) != 2 {
+		t.Fatalf("%v %v", rs, err)
+	}
+	r.env.Now = func() time.Time { return time.Date(2026, 11, 9, 12, 30, 0, 0, time.Local) }
+	if list := r.mustRun("routine", "list"); !strings.Contains(list, "next start: tomorrow 09:00") {
+		t.Errorf("list:\n%s", list)
+	}
+	r.env.Now = func() time.Time { return time.Date(2026, 11, 12, 12, 30, 0, 0, time.Local) } // thursday afternoon
+	if list := r.mustRun("routine", "list"); !strings.Contains(list, "next start: tomorrow 10:00") {
+		t.Errorf("list:\n%s", list)
+	}
+	r.env.Now = func() time.Time { return time.Date(2026, 11, 13, 12, 30, 0, 0, time.Local) } // friday afternoon
+	if list := r.mustRun("routine", "list"); !strings.Contains(list, "next start: Mon 09:00") {
+		t.Errorf("list:\n%s", list)
+	}
+	r.env.Now = func() time.Time { return time.Date(2026, 11, 1, 12, 30, 0, 0, time.Local) } // sunday: monday is tomorrow
+	if list := r.mustRun("routine", "list"); !strings.Contains(list, "next start: tomorrow 09:00") {
+		t.Errorf("list:\n%s", list)
+	}
+}
+
+func TestListSaysWhenEveryTriggerIsDisabledAndStaysQuietForRoutinesWithNone(t *testing.T) {
+	r := newRig(t, false)
+	r.saveRoutines(`{"routines": {"off": {"steps": ["75% 25m x"], "triggers": ["mon at 09:00 --disabled"]}, "plain": {"steps": ["75% 25m x"]}}}`)
+	list := r.mustRun("routine", "list")
+	if !strings.Contains(list, "next start: none (every trigger is disabled)") || strings.Count(list, "next start") != 1 || strings.Count(list, "starts by itself") != 1 {
+		t.Errorf("list:\n%s", list)
+	}
+}
+
+func TestRoutineAddSaysWhichTriggerIsWrong(t *testing.T) {
+	r := newRig(t, false)
+	if code := r.run("routine", "add", "x", "75% 25m a", "-t", "weekdays at 09:00", "-t", "weekdays"); code == 0 || !strings.Contains(r.err.String(), `--trigger 2 ("weekdays")`) || !strings.Contains(r.err.String(), "needs a start time") {
+		t.Errorf("code %d stderr %q", code, r.err.String())
+	}
+	if _, err := os.Stat(r.routines); err == nil {
+		t.Error("nothing should be written")
+	}
+}
+
+func TestGuidePrintsASectionOrSearchesItWhenNotOnATerminal(t *testing.T) {
+	r := newRig(t, false)
+	out := r.mustRun("guide", "steps")
+	if !strings.Contains(out, "Writing steps") || !strings.Contains(out, "until 11:00") || strings.Contains(out, "Moving around") {
+		t.Errorf("one section:\n%s", out)
+	}
+	out = r.mustRun("guide", "-s", "queue")
+	if !strings.Contains(out, "unqueue") || strings.Contains(out, "Reading\n===") {
+		t.Errorf("search:\n%s", out)
+	}
+	out = r.mustRun("guide", "routine-commands", "--search", "remove")
+	if !strings.Contains(out, "shh routine remove") || strings.Contains(out, "shh routine example prints") {
+		t.Errorf("a section and a search:\n%s", out)
+	}
+	if out = r.mustRun("guide", "--list"); !strings.Contains(out, "routine-files") || !strings.Contains(out, "during-a-run") {
+		t.Errorf("list:\n%s", out)
+	}
+	if out = r.mustRun("guide"); !strings.Contains(out, "Moving around") || !strings.Contains(out, "Routine commands") {
+		t.Errorf("everything:\n%s", out[:200])
+	}
+}
+
+func TestGuideSaysWhenASectionIsUnknownOrAmbiguousOrASearchFindsNothing(t *testing.T) {
+	r := newRig(t, false)
+	if code := r.run("guide", "nonsense"); code != 2 || !strings.Contains(r.err.String(), "routine-files") {
+		t.Errorf("code %d stderr %q: an unknown section lists the sections", code, r.err.String())
+	}
+	if code := r.run("guide", "routine"); code != 2 {
+		t.Errorf("code %d: routine starts several sections", code)
+	}
+	if code := r.run("guide", "-s", "zzzzqqqq"); code != 1 || !strings.Contains(r.err.String(), "nothing in the guide matches") {
+		t.Errorf("code %d stderr %q", code, r.err.String())
+	}
+}
+
+func TestGuideOpensTheUIOnATerminalAndPrintsWithPrint(t *testing.T) {
+	r := newRig(t, false)
+	var gotSection, gotSearch string
+	opened := 0
+	r.env.IsTerminal = true
+	r.env.Guide = func(section, search string) error { opened++; gotSection, gotSearch = section, search; return nil }
+	r.mustRun("guide", "routine-f", "-s", "comments")
+	if opened != 1 || gotSection != "routine-files" || gotSearch != "comments" {
+		t.Errorf("opened %d at %q searching %q", opened, gotSection, gotSearch)
+	}
+	r.mustRun("guide")
+	if opened != 2 || gotSection != "" || gotSearch != "" {
+		t.Errorf("opened %d at %q searching %q", opened, gotSection, gotSearch)
+	}
+	if out := r.mustRun("guide", "steps", "--print"); opened != 2 || !strings.Contains(out, "Writing steps") {
+		t.Errorf("--print should print: opened %d\n%s", opened, out)
+	}
+}
+
+func TestSkipLeavesOutTheNextStartAndStatusShowsWhatIsUpcoming(t *testing.T) {
+	r := newRig(t, true)
+	r.env.Now = func() time.Time { return time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC) }
+	r.saveRoutines(`{"routines": {"morning": {"steps": ["75% 25m work"], "triggers": ["daily at 09:30", "weekdays at 17:00"]}, "plain": {"steps": ["75% 5m x"]}}}`)
+	out := r.mustRun("routine", "status")
+	if !strings.Contains(out, "Starts by itself:") || !strings.Contains(out, "morning  today 09:30  (daily at 09:30)") || strings.Contains(out, "plain  ") {
+		t.Errorf("status:\n%s", out)
+	}
+	out = r.mustRun("routine", "skip", "morning")
+	if !strings.Contains(out, "Skipped the next start of morning (today 09:30)") || !strings.Contains(out, "The one after is today 17:00") || !strings.Contains(out, "shh routine skip --undo morning") {
+		t.Errorf("skip:\n%s", out)
+	}
+	if out = r.mustRun("routine", "status"); !strings.Contains(out, "SKIPPED, then today 17:00") {
+		t.Errorf("status:\n%s", out)
+	}
+	if out = r.mustRun("routine", "skip", "--undo", "morning"); !strings.Contains(out, "back on: today 09:30") {
+		t.Errorf("undo:\n%s", out)
+	}
+	if code := r.run("routine", "skip", "--undo", "morning"); code == 0 || !strings.Contains(r.err.String(), "is not skipped") {
+		t.Errorf("code %d stderr %q", code, r.err.String())
+	}
+}
+
+func TestSkipSaysWhenARoutineHasNoTriggerOrDoesNotExist(t *testing.T) {
+	r := newRig(t, true)
+	r.saveRoutines(`{"routines": {"plain": {"steps": ["75% 5m x"]}}}`)
+	if code := r.run("routine", "skip", "plain"); code == 0 || !strings.Contains(r.err.String(), "does not start by itself") {
+		t.Errorf("code %d stderr %q", code, r.err.String())
+	}
+	if code := r.run("routine", "skip", "nothing"); code == 0 || !strings.Contains(r.err.String(), "no saved routine is called") {
+		t.Errorf("code %d stderr %q", code, r.err.String())
+	}
+}
+
+func TestListWarnsThatTriggersNeedAWorkerWhenThereIsNone(t *testing.T) {
+	r := newRig(t, false)
+	r.saveRoutines(`{"routines": {"morning": {"steps": ["75% 25m work"], "triggers": ["daily at 09:30"]}, "off": {"steps": ["75% 25m work"], "triggers": ["daily at 09:30 --disabled"]}}}`)
+	if out := r.mustRun("routine", "list"); !strings.Contains(out, "the shh worker is not running, so triggers will not start anything yet") || !strings.Contains(out, "shh worker start") {
+		t.Errorf("list:\n%s", out)
+	}
+	r.saveRoutines(`{"routines": {"off": {"steps": ["75% 25m work"], "triggers": ["daily at 09:30 --disabled"]}, "plain": {"steps": ["75% 25m work"]}}}`)
+	if out := r.mustRun("routine", "list"); strings.Contains(out, "worker is not running") {
+		t.Errorf("no enabled trigger, nothing to warn about:\n%s", out)
+	}
+}
+
+func TestStatusSaysAnUntilCutOffInWords(t *testing.T) {
+	if got := session.ReasonText("until"); got != "was cut off at its end time" {
+		t.Errorf("ReasonText = %q", got)
+	}
+	if session.ReasonText("finished") != "finished" || !strings.Contains(session.ReasonText("missing"), "gone from the file") {
+		t.Error("the other reasons")
+	}
+}
+
+func TestRoutineAddTakesABannerStyleAndListShowsIt(t *testing.T) {
+	r := newRig(t, false)
+	out := r.mustRun("routine", "add", "styled", "75% 25m work --alert banner --color 196", "--style=--color 33 --size large --sound Hero")
+	if !strings.Contains(out, "banners: --color 33 --size large --sound Hero") || !strings.Contains(out, "--color 196") {
+		t.Errorf("add output:\n%s", out)
+	}
+	rs, err := routine.Load(r.routines)
+	if err != nil || *rs[0].Style.Color != 33 || *rs[0].Style.Size != "large" || *rs[0].Steps[0].Style.Color != 196 {
+		t.Fatalf("%+v %v", rs, err)
+	}
+	if code := r.run("routine", "add", "bad", "75% 25m x", "--style=--color purple"); code == 0 || !strings.Contains(r.err.String(), "--style:") || !strings.Contains(r.err.String(), "0 to 255") {
+		t.Errorf("code %d stderr %q", code, r.err.String())
+	}
+	if code := r.run("routine", "add", "bad", "75% 25m x", "--style=--colour 3"); code == 0 || !strings.Contains(r.err.String(), "not a style flag") {
+		t.Errorf("code %d stderr %q", code, r.err.String())
+	}
+	if code := r.run("routine", "add", "bad", "75% 25m x", "--style=--size huge"); code == 0 || !strings.Contains(r.err.String(), "style.size") {
+		t.Errorf("code %d stderr %q", code, r.err.String())
+	}
+}
+
+func TestAlertColorsShowsThePaletteOrOneColor(t *testing.T) {
+	r := newRig(t, false)
+	out := r.mustRun("alert", "colors")
+	if !strings.Contains(out, "https://en.wikipedia.org/wiki/ANSI_escape_code#8-bit") || !strings.Contains(out, "208  #ff8700") || strings.Count(out, "\n") < 250 {
+		t.Errorf("plain list:\n%s", out[:300])
+	}
+	if strings.Contains(out, "\x1b[") {
+		t.Error("with no terminal there must be no escape sequences")
+	}
+	r.env.IsTerminal = true
+	out = r.mustRun("alert", "colors")
+	for _, want := range []string{"\x1b[48;5;208m", "\x1b[48;5;0m", "\x1b[48;5;255m", "Standard (0-7)", "Colors (16-231)", "Greys (232-255)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the palette is missing %q", strings.ReplaceAll(want, "\x1b", "ESC"))
+		}
+	}
+	if out = r.mustRun("alert", "colors", "208"); !strings.Contains(out, "208 is #ff8700") || !strings.Contains(out, "\x1b[48;5;208m") {
+		t.Errorf("one color:\n%s", out)
+	}
+	if code := r.run("alert", "colors", "300"); code != 2 || !strings.Contains(r.err.String(), "0 to 255") {
+		t.Errorf("code %d stderr %q", code, r.err.String())
+	}
+}
+
+func TestRoutineAddTakesWhereToReportFlaggedNotifications(t *testing.T) {
+	r := newRig(t, false)
+	r.mustRun("routine", "add", "morning", "75% 25m work", "--log", "banner,ui")
+	rs, err := routine.Load(r.routines)
+	if err != nil || len(rs[0].Log) != 2 || rs[0].Log[0] != routine.WhereBanner || rs[0].Log[1] != routine.WhereUI {
+		t.Fatalf("%+v %v", rs, err)
+	}
+	if code := r.run("routine", "add", "bad", "75% 25m work", "--log", "email"); code == 0 {
+		t.Error("an unknown place is refused")
+	}
+}

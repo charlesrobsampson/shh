@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -24,26 +23,35 @@ const (
 
 // Style is a fully resolved banner style.
 type Style struct {
-	Position     string
-	Size         string
-	Color        string
-	DurationSecs int // 0 (the default) means until dismissed: alerts are the important ones, so they stay until acted on
-	Sound        string
+	Position string
+	Size     string
+	// Color is the banner's background and TextColor its text, each a code from the 8-bit ANSI palette, 0 to 255 (see ANSIHex).
+	Color     int
+	TextColor int
+	// ButtonColor and ButtonTextColor style the banner's buttons the same way; NoColor (the default) leaves them as the system draws them.
+	ButtonColor     int
+	ButtonTextColor int
+	DurationSecs    int // 0 (the default) means until dismissed: alerts are the important ones, so they stay until acted on
+	Sound           string
 }
 
 // StyleOverride changes only the fields that are set.
 type StyleOverride struct {
-	Position     *string `json:"position,omitempty"`
-	Size         *string `json:"size,omitempty"`
-	Color        *string `json:"color,omitempty"`
-	DurationSecs *int    `json:"duration_secs,omitempty"`
-	Sound        *string `json:"sound,omitempty"`
+	Position  *string `json:"position,omitempty"`
+	Size      *string `json:"size,omitempty"`
+	Color     *int    `json:"color,omitempty"`
+	TextColor *int    `json:"text_color,omitempty"`
+	// ButtonColor is the buttons' background and ButtonTextColor their text.
+	ButtonColor     *int    `json:"button_color,omitempty"`
+	ButtonTextColor *int    `json:"button_text_color,omitempty"`
+	DurationSecs    *int    `json:"duration_secs,omitempty"`
+	Sound           *string `json:"sound,omitempty"`
 	// Buttons replaces the whole button list when set; it is not merged with the list above it.
 	Buttons []ButtonEntry `json:"buttons,omitempty"`
 }
 
 func (o StyleOverride) isZero() bool {
-	return o.Position == nil && o.Size == nil && o.Color == nil && o.DurationSecs == nil && o.Sound == nil && o.Buttons == nil
+	return o.Position == nil && o.Size == nil && o.Color == nil && o.TextColor == nil && o.ButtonColor == nil && o.ButtonTextColor == nil && o.DurationSecs == nil && o.Sound == nil && o.Buttons == nil
 }
 
 type Alert struct {
@@ -54,7 +62,11 @@ type Alert struct {
 }
 
 // Resolve layers the base style, then the kind override, then the per-source override.
-func (a Alert) Resolve(kind Kind, source string) Style {
+func (a Alert) Resolve(kind Kind, source string) Style { return a.ResolveWith(kind, source) }
+
+// ResolveWith is Resolve with more overrides laid over the result, in order: a routine's, then one of its steps', so what is more
+// specific wins.
+func (a Alert) ResolveWith(kind Kind, source string, overrides ...StyleOverride) Style {
 	style := a.Base
 	if kind == KindCalendar {
 		style = style.with(a.Calendar)
@@ -62,8 +74,46 @@ func (a Alert) Resolve(kind Kind, source string) Style {
 	if override, ok := a.Source[source]; ok {
 		style = style.with(override)
 	}
+	for _, o := range overrides {
+		style = style.with(o)
+	}
 	return style
 }
+
+// Merge returns the override with another laid over it: what b sets wins, and the rest is a's.
+func (a StyleOverride) Merge(b StyleOverride) StyleOverride {
+	if b.Position != nil {
+		a.Position = b.Position
+	}
+	if b.Size != nil {
+		a.Size = b.Size
+	}
+	if b.Color != nil {
+		a.Color = b.Color
+	}
+	if b.TextColor != nil {
+		a.TextColor = b.TextColor
+	}
+	if b.ButtonColor != nil {
+		a.ButtonColor = b.ButtonColor
+	}
+	if b.ButtonTextColor != nil {
+		a.ButtonTextColor = b.ButtonTextColor
+	}
+	if b.DurationSecs != nil {
+		a.DurationSecs = b.DurationSecs
+	}
+	if b.Sound != nil {
+		a.Sound = b.Sound
+	}
+	if b.Buttons != nil {
+		a.Buttons = b.Buttons
+	}
+	return a
+}
+
+// IsZero says whether the override changes nothing.
+func (a StyleOverride) IsZero() bool { return a.isZero() }
 
 func (s Style) with(o StyleOverride) Style {
 	if o.Position != nil {
@@ -74,6 +124,15 @@ func (s Style) with(o StyleOverride) Style {
 	}
 	if o.Color != nil {
 		s.Color = *o.Color
+	}
+	if o.TextColor != nil {
+		s.TextColor = *o.TextColor
+	}
+	if o.ButtonColor != nil {
+		s.ButtonColor = *o.ButtonColor
+	}
+	if o.ButtonTextColor != nil {
+		s.ButtonTextColor = *o.ButtonTextColor
 	}
 	if o.DurationSecs != nil {
 		s.DurationSecs = *o.DurationSecs
@@ -134,7 +193,6 @@ var (
 	positions = []string{"top-left", "top-center", "top-right", "bottom-left", "bottom-center", "bottom-right"}
 	sizes     = []string{"small", "medium", "large"}
 	backends  = []string{"none", "ollama", "claude"}
-	hexColor  = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 )
 
 // DefaultPath is ~/.config/shh/config.json.
@@ -157,7 +215,7 @@ func Load(path string) (Config, error) {
 	}
 	var f file
 	if err := jsonc.Decode(path, raw, &f); err != nil {
-		return Config{}, err
+		return Config{}, ExplainColorError(err)
 	}
 	cfg, err := build(f, filepath.Dir(path))
 	if err != nil {
@@ -168,7 +226,7 @@ func Load(path string) (Config, error) {
 
 func build(f file, configDir string) (Config, error) {
 	cfg := Config{
-		Alert:      Alert{Base: Style{Position: "top-right", Size: "medium", Color: "#ff9f0a", DurationSecs: 0, Sound: "Glass"}},
+		Alert:      Alert{Base: Style{Position: "top-right", Size: "medium", Color: DefaultColor, TextColor: DefaultTextColor, ButtonColor: NoColor, ButtonTextColor: NoColor, DurationSecs: 0, Sound: "Glass"}},
 		Menubar:    Menubar{Enabled: true, Label: "shh"},
 		Summarizer: Summarizer{Backend: "none"},
 	}
@@ -238,14 +296,23 @@ func buildPaths(f file, configDir string) (Paths, error) {
 	}, nil
 }
 
+// ValidateOverride checks the settings of a style override, naming prefix in a problem. Routines and their steps use it for theirs.
+func ValidateOverride(prefix string, o StyleOverride) error { return validateOverride(prefix, o) }
+
 func validateOverride(prefix string, o StyleOverride) error {
 	switch {
 	case o.Position != nil && !slices.Contains(positions, *o.Position):
 		return notOneOf(prefix+".position", *o.Position, positions)
 	case o.Size != nil && !slices.Contains(sizes, *o.Size):
 		return notOneOf(prefix+".size", *o.Size, sizes)
-	case o.Color != nil && !hexColor.MatchString(*o.Color):
-		return fmt.Errorf("%q: %q is not a #rrggbb color", prefix+".color", *o.Color)
+	case o.Color != nil && (*o.Color < 0 || *o.Color > 255):
+		return fmt.Errorf("%q: %d is not a color code from 0 to 255 (the 8-bit ANSI palette: %s; shh alert colors shows them)", prefix+".color", *o.Color, ColorChartURL)
+	case o.TextColor != nil && (*o.TextColor < 0 || *o.TextColor > 255):
+		return fmt.Errorf("%q: %d is not a color code from 0 to 255 (the 8-bit ANSI palette: %s; shh alert colors shows them)", prefix+".text_color", *o.TextColor, ColorChartURL)
+	case o.ButtonColor != nil && (*o.ButtonColor < 0 || *o.ButtonColor > 255):
+		return fmt.Errorf("%q: %d is not a color code from 0 to 255 (the 8-bit ANSI palette: %s; shh alert colors shows them)", prefix+".button_color", *o.ButtonColor, ColorChartURL)
+	case o.ButtonTextColor != nil && (*o.ButtonTextColor < 0 || *o.ButtonTextColor > 255):
+		return fmt.Errorf("%q: %d is not a color code from 0 to 255 (the 8-bit ANSI palette: %s; shh alert colors shows them)", prefix+".button_text_color", *o.ButtonTextColor, ColorChartURL)
 	case o.DurationSecs != nil && *o.DurationSecs < 0:
 		return fmt.Errorf("%q: %d is negative (use 0 for until dismissed)", prefix+".duration_secs", *o.DurationSecs)
 	case o.Sound != nil && *o.Sound == "":
@@ -262,8 +329,14 @@ func notOneOf(key, got string, allowed []string) error {
 func (c Config) Effective() ([]byte, error) {
 	var f file
 	base := c.Alert.Base
-	f.Alert.Position, f.Alert.Size, f.Alert.Color, f.Alert.DurationSecs, f.Alert.Sound =
-		&base.Position, &base.Size, &base.Color, &base.DurationSecs, &base.Sound
+	f.Alert.Position, f.Alert.Size, f.Alert.Color, f.Alert.TextColor, f.Alert.DurationSecs, f.Alert.Sound =
+		&base.Position, &base.Size, &base.Color, &base.TextColor, &base.DurationSecs, &base.Sound
+	if base.ButtonColor != NoColor { // left out when the buttons are the system's
+		f.Alert.ButtonColor = &base.ButtonColor
+	}
+	if base.ButtonTextColor != NoColor {
+		f.Alert.ButtonTextColor = &base.ButtonTextColor
+	}
 	f.Alert.Buttons = entries(normalize(c.Alert.Buttons))
 	if !c.Alert.Calendar.isZero() {
 		calendar := c.Alert.Calendar

@@ -70,6 +70,21 @@ type Response struct {
 	Train *TrainView `json:"train,omitempty"`
 	// Routine answers the routine commands: the run in progress, if any, and the last one that ended.
 	Routine *RoutineInfo `json:"routine,omitempty"`
+	// Worker answers "worker_info".
+	Worker *WorkerInfo `json:"worker,omitempty"`
+}
+
+// WorkerInfo is what the worker says about itself: which process it is, how long it has been up, and what it is keeping going.
+type WorkerInfo struct {
+	PID     int       `json:"pid"`
+	Started time.Time `json:"started"`
+	Now     time.Time `json:"now"`
+	Build   string    `json:"build,omitempty"`
+	// Level is the effective focus level (0 when off), and Routine the name of the routine run in progress ("" for none).
+	Level   int    `json:"level"`
+	Routine string `json:"routine,omitempty"`
+	// Triggers is how many triggers are switched on, which are what keep the worker running with nothing else to do.
+	Triggers int `json:"triggers"`
 }
 
 // RoutineView is the routine run in progress, as clients see it.
@@ -108,6 +123,12 @@ type RoutineSummary struct {
 	Let         int       `json:"let"`
 	// Where is the places the routine says its summary should be shown: banner, menu, ui.
 	Where []string `json:"where,omitempty"`
+	// RunID names the run, for shh routine log. Flagged is how many notifications were flagged for review during it (counted when it
+	// ended) and ToReview how many of them still are. LogWhere is the places the routine says to tell you about them.
+	RunID    int64    `json:"run_id,omitempty"`
+	Flagged  int      `json:"flagged,omitempty"`
+	ToReview int      `json:"to_review,omitempty"`
+	LogWhere []string `json:"log_where,omitempty"`
 }
 
 // Sentence is the summary as one sentence: how many steps, how long, and what was held back and let through.
@@ -117,12 +138,49 @@ func (s RoutineSummary) Sentence() string {
 	if s.Held == 1 {
 		held = "held back 1 notification"
 	}
-	return fmt.Sprintf("%d steps in %s. %s, let through %d.", s.Steps, took, strings.ToUpper(held[:1])+held[1:], s.Let)
+	out := fmt.Sprintf("%d steps in %s. %s, let through %d.", s.Steps, took, strings.ToUpper(held[:1])+held[1:], s.Let)
+	if s.Flagged > 0 {
+		out += fmt.Sprintf(" %d flagged for review", s.Flagged)
+		switch {
+		case s.ToReview == 0:
+			out += ", all reviewed."
+		case s.ToReview < s.Flagged:
+			out += fmt.Sprintf(", %d still to review.", s.ToReview)
+		default:
+			out += "."
+		}
+	}
+	return out
 }
+
+// ShowsLog says whether the routine asked to be told about flagged notifications there (banner, menu or ui).
+func (s RoutineSummary) ShowsLog(where string) bool { return slices.Contains(s.LogWhere, where) }
 
 // Line is the summary with the routine and how it ended in front: "pomodoro finished: 4 steps in 1h15m. ...".
 func (s RoutineSummary) Line() string {
-	return fmt.Sprintf("%s %s: %s", s.Name, s.Reason, s.Sentence())
+	return fmt.Sprintf("%s %s: %s", s.Name, ReasonText(s.Reason), s.Sentence())
+}
+
+// ReasonText says how a run ended in words: finished, stopped, "was cut off at its end time", ...
+func ReasonText(reason string) string {
+	switch reason {
+	case "until":
+		return "was cut off at its end time"
+	case "missing":
+		return "ended (the routine is gone from the file)"
+	}
+	return reason
+}
+
+// UpcomingStart is the next time a routine starts by itself.
+type UpcomingStart struct {
+	Routine string `json:"routine"`
+	// Trigger is the trigger that starts it, written as words.
+	Trigger string    `json:"trigger"`
+	Start   time.Time `json:"start"`
+	// Skipped says that start has been skipped; Then is the start after it, when there is one.
+	Skipped bool       `json:"skipped,omitempty"`
+	Then    *time.Time `json:"then,omitempty"`
 }
 
 // Shows says whether the routine asked for its summary to be shown there.
@@ -132,6 +190,8 @@ func (s RoutineSummary) Shows(where string) bool { return slices.Contains(s.Wher
 type RoutineInfo struct {
 	Active *RoutineView    `json:"active,omitempty"`
 	Last   *RoutineSummary `json:"last,omitempty"`
+	// Upcoming is the next scheduled start of each routine that has a trigger switched on.
+	Upcoming []UpcomingStart `json:"upcoming,omitempty"`
 }
 
 // TrainView is a TrainOutcome on the wire.
@@ -153,6 +213,8 @@ type StatusView struct {
 	// LastRoutine is the run that ended most recently, while none is in progress, for the places its summary is to be shown (see
 	// RoutineSummary.Where).
 	LastRoutine *RoutineSummary `json:"last_routine,omitempty"`
+	// Upcoming is the next scheduled start of each routine that has a trigger switched on.
+	Upcoming []UpcomingStart `json:"upcoming,omitempty"`
 	// Build identifies the executable the worker is running (see BuildID), so a command can tell when the worker predates the
 	// binary it was typed with, which would otherwise be easy to mistake for a bug in the new code.
 	Build string `json:"build,omitempty"`
@@ -218,6 +280,8 @@ var codes = map[string]error{
 	"routine_running": ErrRoutineRunning,
 	"no_routine":      ErrNoRoutine,
 	"unknown_routine": ErrUnknownRoutine,
+	"no_trigger":      ErrNoTrigger,
+	"not_skipped":     ErrNotSkipped,
 }
 
 func (e *RemoteError) Is(target error) bool {

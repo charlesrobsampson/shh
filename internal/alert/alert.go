@@ -19,6 +19,9 @@ type Alert struct {
 	// dismisses the banner. ActionToken is handed back with the button's ID, so the receiver can tell which alert it was.
 	Actions     []Action
 	ActionToken string
+	// Overrides change the banner's style from what the configuration says for this kind and source, in order, the later winning: a
+	// routine's, then the step's.
+	Overrides []config.StyleOverride
 }
 
 // Action is a button that belongs to one alert, such as "Start next" on the banner that says a routine step is over.

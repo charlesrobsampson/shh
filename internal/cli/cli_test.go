@@ -89,6 +89,7 @@ func (r *rig) serve() {
 	ctx, cancel := context.WithCancel(context.Background())
 	r.stop = cancel
 	r.served = make(chan struct{})
+	server.OnQuit = cancel // shh worker stop
 	go func() { server.Serve(ctx); close(r.served) }()
 }
 
@@ -97,6 +98,18 @@ func (r *rig) shutdown() {
 		r.stop()
 		<-r.served
 		r.stop = nil
+	}
+}
+
+// canSpawn lets the rig start its worker when a command asks for one, as the real binary does.
+func (r *rig) canSpawn() {
+	r.env.Spawn = func() error {
+		if r.stop != nil {
+			r.stop()
+			<-r.served
+		}
+		r.serve()
+		return nil
 	}
 }
 
@@ -622,11 +635,11 @@ func TestTheDaemonCommandRunsTheWorkerInTheForeground(t *testing.T) {
 	}
 }
 
-func TestTheDaemonCommandIsHiddenFromHelp(t *testing.T) {
+func TestTheDaemonCommandIsInHelpBecauseTriggersNeedItRunningAtLogin(t *testing.T) {
 	r := newRig(t, false)
 	r.run("--help")
-	if strings.Contains(r.out.String()+r.err.String(), "daemon") {
-		t.Error("the internal daemon command shows up in --help")
+	if text := r.out.String() + r.err.String(); !strings.Contains(text, "daemon") || !strings.Contains(text, "at login") {
+		t.Errorf("the daemon command should be listed and say why:\n%s", text)
 	}
 }
 
@@ -886,7 +899,7 @@ func TestACommandWarnsWhenTheWorkerIsFromAnotherBuild(t *testing.T) {
 	t.Cleanup(func() { session.BuildID = "" })
 	r.env.Build = "newbuild0002"
 	r.mustRun("alert", "test")
-	if got := r.err.String(); !strings.Contains(got, "different build") || !strings.Contains(got, "shh stop --all") {
+	if got := r.err.String(); !strings.Contains(got, "different build") || !strings.Contains(got, "shh worker restart") {
 		t.Errorf("stderr = %q, want a note that the worker is from another build and how to replace it", got)
 	}
 	if strings.Count(r.err.String(), "different build") != 1 {

@@ -53,6 +53,10 @@ ObjC.registerSubclass({
 const hex = cfg.color.replace('#', '');
 const channel = i => parseInt(hex.slice(i, i + 2), 16) / 255;
 const color = $.NSColor.colorWithSRGBRedGreenBlueAlpha(channel(0), channel(2), channel(4), 1);
+// The text is drawn in its own color (white when none is given).
+const textHex = (cfg.textColor || '#ffffff').replace('#', '');
+const textChannel = i => parseInt(textHex.slice(i, i + 2), 16) / 255;
+const textColor = $.NSColor.colorWithSRGBRedGreenBlueAlpha(textChannel(0), textChannel(2), textChannel(4), 1);
 
 const area = $.NSScreen.mainScreen.visibleFrame;
 const margin = 16;
@@ -95,7 +99,7 @@ function label(text, size, bold, frame, lines) {
   // wrappingLabelWithString wraps long text onto further lines; labelWithString would keep it on one line and clip it.
   const field = $.NSTextField.wrappingLabelWithString($(text));
   field.setFont(bold ? $.NSFont.boldSystemFontOfSize(size) : $.NSFont.systemFontOfSize(size));
-  field.setTextColor($.NSColor.whiteColor);
+  field.setTextColor(textColor);
   // Wrapping labels are selectable by default, and a selectable field keeps the mouse for text selection, so a click on the text
   // would never reach the banner. Static text lets the click through.
   field.setSelectable(false);
@@ -115,7 +119,7 @@ function label(text, size, bold, frame, lines) {
 const headerRow = cfg.header ? 14 : 0;
 const buttonRow = cfg.buttons.length > 0 ? 32 : 0;
 const header = cfg.header ? label(cfg.header, 11, true, $.NSMakeRect(16, height - 12 - headerRow, cfg.width - 32, headerRow), 1) : null;
-if (header) header.setTextColor($.NSColor.colorWithWhiteAlpha(1, 0.75));
+if (header) header.setTextColor(textColor.colorWithAlphaComponent(0.75));
 const title = label(cfg.title, 15, true, $.NSMakeRect(16, height - 12 - headerRow - 20, cfg.width - 32, 20), 1);
 const body = label(cfg.body, 13, false, $.NSMakeRect(16, 12 + buttonRow, cfg.width - 32, height - 12 - headerRow - 20 - 4 - 12 - buttonRow), 1);
 function layoutText() {
@@ -127,16 +131,66 @@ function layoutText() {
 }
 layoutText();
 
+// Buttons look like the system's unless the configuration gives them a color: then they are drawn as a patch of that color with the
+// button text color on it (the banner's own text color when only a button color was given, and a faint white patch when only a text
+// color was). A bezel cannot be recolored, so a colored button has none: its face is a box behind it and its text a label of its own on
+// that box, with the (now empty and invisible) button on top to take the clicks. Both are things the banner is already made of, which
+// is the point: the two ways of coloring a button's own title do not work from here (JXA cannot call NSAttributedString's
+// initializers, and a content tint did nothing in the banner's window). Anything that goes wrong leaves the system look.
+const buttonHex = h => {
+  const rgb = h.replace('#', '');
+  const ch = i => parseInt(rgb.slice(i, i + 2), 16) / 255;
+  return $.NSColor.colorWithSRGBRedGreenBlueAlpha(ch(0), ch(2), ch(4), 1);
+};
+const buttonFill = cfg.buttonColor ? buttonHex(cfg.buttonColor)
+  : (cfg.buttonTextColor ? $.NSColor.colorWithSRGBRedGreenBlueAlpha(1, 1, 1, 0.25) : null);
+const buttonInk = cfg.buttonTextColor ? buttonHex(cfg.buttonTextColor) : (buttonFill ? textColor : null);
+// A painted button says its words through its label, and the button itself says nothing.
+const inks = [];
+function setButtonTitle(button, text, i) {
+  if (inks[i]) {
+    inks[i].setStringValue($(text));
+    button.setTitle($(''));
+    layoutButtons(); // the new words may be a different width, and are centered again
+  } else {
+    button.setTitle($(text));
+  }
+}
+// A button with a color has no bezel of its own: a box of that color sits behind it as its face (the same kind of box the banner itself
+// is made of), its words are a label over the box, and layoutButtons keeps both under the button.
+const backdrops = [];
+function paintButton(button, i, text) {
+  if (!buttonFill) return;
+  try {
+    button.setBordered(false);
+    const box = $.NSBox.alloc.initWithFrame($.NSMakeRect(0, 0, 10, 10));
+    box.setBoxType($.NSBoxCustom);
+    box.setTitlePosition($.NSNoTitle);
+    box.setBorderWidth(0);
+    box.setCornerRadius(6);
+    box.setFillColor(buttonFill);
+    view.addSubview(box); // before the button is added, so it is behind it
+    const ink = $.NSTextField.labelWithString($(text));
+    ink.setFont($.NSFont.systemFontOfSize(12));
+    ink.setTextColor(buttonInk);
+    view.addSubview(ink);
+    backdrops[i] = box;
+    inks[i] = ink;
+    button.setTitle($(''));
+  } catch (e) { button.setBordered(true); button.setTitle($(text)); /* the system's look stays */ }
+}
+
 const actions = $.ShhBannerActions.alloc.init;
 const buttons = cfg.buttons.map((spec, i) => {
   const button = $.ShhBannerButton.alloc.init;
-  button.setTitle($(spec.label));
   button.setBezelStyle($.NSBezelStyleRounded);
   button.setControlSize($.NSControlSizeSmall);
   button.setFont($.NSFont.systemFontOfSize(12));
   button.setTag(i);
   button.setTarget(actions);
   button.setAction('press:');
+  button.setTitle($(spec.label));
+  paintButton(button, i, spec.label);
   view.addSubview(button);
   return button;
 });
@@ -146,6 +200,21 @@ function layoutButtons() {
   const gap = 8;
   const each = Math.min(96, (cfg.width - 32 - gap * (shown.length - 1)) / Math.max(shown.length, 1));
   shown.forEach((b, n) => b.setFrame($.NSMakeRect(16 + n * (each + gap), 8, each, 24)));
+  buttons.forEach((b, i) => {
+    const box = backdrops[i];
+    if (!box) return;
+    box.setHidden(b.isHidden);
+    inks[i].setHidden(b.isHidden);
+    if (!b.isHidden) {
+      box.setFrame(b.frame);
+      // The label is centered on the button by hand, from the size its words take. (Its alignment setting is not used: the constant
+      // that is named center came out as right-aligned text on the macOS this was tried on.)
+      inks[i].sizeToFit;
+      const size = inks[i].frame.size;
+      const face = b.frame;
+      inks[i].setFrame($.NSMakeRect(face.origin.x + (face.size.width - size.width) / 2, face.origin.y + (face.size.height - size.height) / 2, size.width, size.height));
+    }
+  });
 }
 layoutButtons();
 
@@ -187,14 +256,14 @@ function press(spec) {
     // the mark. The script tells Go the state it now has (1 or 0), not just that it was pressed, so the two cannot drift apart.
     const button = buttons[cfg.buttons.indexOf(spec)];
     flagged = !flagged;
-    button.setTitle($(flagged ? (spec.flaggedLabel || 'Flagged') : spec.label));
+    setButtonTitle(button, flagged ? (spec.flaggedLabel || 'Flagged') : spec.label, cfg.buttons.indexOf(spec));
     emit('flag ' + (flagged ? 1 : 0));
   } else if (spec.type === 'preview') {
     expanded = !expanded;
     // Someone reading the full text should not have it vanish: stop the auto-dismiss timer.
     if (expanded && timer) { timer.invalidate; timer = null; }
     const button = buttons[cfg.buttons.indexOf(spec)];
-    button.setTitle($(expanded ? (spec.collapseLabel || 'Collapse') : spec.label));
+    setButtonTitle(button, expanded ? (spec.collapseLabel || 'Collapse') : spec.label, cfg.buttons.indexOf(spec));
     // Resize at once, then tell Go so it can move the banners after this one; Go answers with the same height and so changes nothing.
     layoutTo(indent, offset, expanded ? Math.max(cfg.previewHeight, cfg.height) : cfg.height);
     emit('height ' + height);

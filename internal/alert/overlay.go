@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"github.com/charlesrobsampson/shh/internal/config"
 	"io"
 	"os"
 	"os/exec"
@@ -90,11 +91,16 @@ type bannerSpec struct {
 	Body   string `json:"body"`
 	// Bundle is the app the banner script opens when the banner is clicked. The script does it itself, because the process that
 	// showed the banner (a short-lived CLI command, say) may be gone by the time of the click.
-	Bundle   string `json:"bundle"`
-	Color    string `json:"color"`
-	Width    int    `json:"width"`
-	Height   int    `json:"height"`
-	Position string `json:"position"`
+	Bundle string `json:"bundle"`
+	Color  string `json:"color"`
+	// TextColor is the color of the text, as #rrggbb.
+	TextColor string `json:"textColor"`
+	// ButtonColor and ButtonTextColor are #rrggbb, or empty to leave the buttons as the system draws them.
+	ButtonColor     string `json:"buttonColor,omitempty"`
+	ButtonTextColor string `json:"buttonTextColor,omitempty"`
+	Width           int    `json:"width"`
+	Height          int    `json:"height"`
+	Position        string `json:"position"`
 	// Indent and Offset say where the banner sits, so banners shown together do not overlap.
 	Indent   int    `json:"indent"`
 	Offset   int    `json:"offset"`
@@ -124,13 +130,21 @@ type bannerButton struct {
 	ID string `json:"id,omitempty"`
 }
 
+// buttonHex is a button color as #rrggbb, or "" for the system look (config.NoColor).
+func buttonHex(code int) string {
+	if code < 0 {
+		return ""
+	}
+	return config.ANSIHex(code)
+}
+
 func bannerEnv(r Request, at layoutMessage) []string {
 	buttons := make([]bannerButton, 0, len(r.Buttons))
 	for _, b := range r.Buttons {
 		buttons = append(buttons, bannerButton{Type: b.Type, Label: b.Label, CollapseLabel: b.CollapseLabel, FlaggedLabel: b.FlaggedLabel, ID: b.ID})
 	}
 	spec, _ := json.Marshal(bannerSpec{
-		Header: strings.TrimSpace(r.Source), Title: r.Title, Body: r.Body, Bundle: r.BundleID, Color: r.Style.Color, Width: r.Width, Height: r.Height,
+		Header: strings.TrimSpace(r.Source), Title: r.Title, Body: r.Body, Bundle: r.BundleID, Color: config.ANSIHex(r.Style.Color), TextColor: config.ANSIHex(r.Style.TextColor), ButtonColor: buttonHex(r.Style.ButtonColor), ButtonTextColor: buttonHex(r.Style.ButtonTextColor), Width: r.Width, Height: r.Height,
 		Position: r.Style.Position, Indent: at.Indent, Offset: at.Offset, Duration: r.Style.DurationSecs, Sound: r.Style.Sound,
 		Buttons: buttons, DismissOnClick: r.DismissOnClick, PreviewHeight: r.PreviewHeight, Managed: true, Parent: os.Getpid(),
 	})
