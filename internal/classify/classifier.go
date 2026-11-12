@@ -45,8 +45,39 @@ func NewClassifier(s *store.Store, r rules.Rules, embedder Embedder) (*Classifie
 		if err := c.pretrain(); err != nil {
 			return nil, err
 		}
+		// The weights are per feature version, and the version changes with the embedding model (and the rules that shape the features).
+		// What the user has taught shh is in the notifications they labelled, so it is taught again to the new weights rather than lost.
+		if err := c.relearn(s); err != nil {
+			return nil, err
+		}
 	}
 	return c, nil
+}
+
+// relearn trains the model on the notifications the user already labelled, oldest first, as they were labelled: an exact score as it was
+// given, quick feedback against the level the notification was decided at. A notification trained by shh itself counts like any other.
+func (c *Classifier) relearn(s *store.Store) error {
+	rows, err := s.TrainedNotifications()
+	if err != nil {
+		return err
+	}
+	for _, n := range rows {
+		var label Label
+		switch {
+		case n.UserLabel != nil:
+			label = ExactLabel(*n.UserLabel)
+		case (n.UserFeedback == "y" || n.UserFeedback == "n") && n.ThresholdAtDecision != nil:
+			label = QuickLabel(n.UserFeedback, *n.ThresholdAtDecision)
+		default:
+			continue
+		}
+		v := c.Features.Extract(Input{Source: n.Source, BundleID: n.BundleID, Sender: n.Sender, Title: n.Title, Subtitle: n.Subtitle, Body: n.Body,
+			Category: n.Category, Thread: n.Thread})
+		if _, err := c.Model.Train(n.ID, v, label); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (c *Classifier) pretrain() error {

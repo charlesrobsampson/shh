@@ -83,6 +83,21 @@ func realEnv() cli.Env {
 	env.Guide = func(section, search string) error { return runTUI(cfg, section, search, true, "") }
 	env.WithStore = func(do func(*store.Store) error) error { return withStore(cfg.Paths.DB, do) }
 	env.Doctor = doctorEnv(cfg)
+	env.FetchModel = func() (string, error) {
+		dir := filepath.Join(cfg.Paths.Dir, "models")
+		if _, where, err := classify.ResolveEmbedder(dir, classify.DefaultModelSHA256); err == nil {
+			return "already there (" + where + ").", nil
+		} else if !errors.Is(err, classify.ErrNoEmbeddingModel) {
+			return "", err // a model that is there but wrong: say so rather than write over it
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer cancel()
+		path, err := classify.DownloadModel(ctx, dir, classify.DefaultModelURL, classify.DefaultModelSHA256, nil)
+		if err != nil {
+			return "", err
+		}
+		return "downloaded to " + path + ". Restart the worker (shh worker restart) to use it.", nil
+	}
 	env.Retention = func() store.Retention {
 		return store.Retention{TTL: days(cfg.Retention.TTLDays), KeepUntrained: days(cfg.Retention.KeepUntrainedDays)}
 	}

@@ -1,11 +1,14 @@
 package classify_test
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -303,6 +306,9 @@ func sum(data []byte) string {
 }
 
 func TestTheModelIsLoadedFromTheModelsDirectory(t *testing.T) {
+	if classify.HasEmbeddedModel() {
+		t.Skip("a build with the model inside never looks in the models folder")
+	}
 	asset := fixtureAsset(t)
 	dir := t.TempDir()
 	writeAsset(t, dir, asset)
@@ -317,6 +323,9 @@ func TestTheModelIsLoadedFromTheModelsDirectory(t *testing.T) {
 }
 
 func TestAMissingModelMeansLayerTwoIsOff(t *testing.T) {
+	if classify.HasEmbeddedModel() {
+		t.Skip("a build with the model inside never looks in the models folder")
+	}
 	e, _, err := classify.ResolveEmbedder(t.TempDir(), sum(fixtureAsset(t)))
 	if err != classify.ErrNoEmbeddingModel || e != nil {
 		t.Fatalf("ResolveEmbedder = %v, %v; want nil and ErrNoEmbeddingModel", e, err)
@@ -459,5 +468,35 @@ func TestTheEmbeddingGeneralisesToWordsTheModelNeverSawInTraining(t *testing.T) 
 	}
 	if m.Predict(vec("server down now")) <= m.Predict(vec("weekly newsletter tips")) {
 		t.Error("trained examples are not ordered correctly")
+	}
+}
+
+func TestDownloadModelChecksTheChecksumBeforeKeepingTheFile(t *testing.T) {
+	data := []byte("pretend this is a model")
+	sum := sha256.Sum256(data)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/missing" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write(data)
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	if _, err := classify.DownloadModel(context.Background(), dir, srv.URL+"/x", strings.Repeat("0", 64), nil); err == nil || !strings.Contains(err.Error(), "checksum") {
+		t.Errorf("a wrong checksum: err = %v", err)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Errorf("a wrong download left files: %v", entries)
+	}
+	if _, err := classify.DownloadModel(context.Background(), dir, srv.URL+"/missing", hex.EncodeToString(sum[:]), nil); err == nil || !strings.Contains(err.Error(), "404") {
+		t.Errorf("a missing file: err = %v", err)
+	}
+	path, err := classify.DownloadModel(context.Background(), dir, srv.URL+"/x", hex.EncodeToString(sum[:]), nil)
+	if err != nil || filepath.Base(path) != classify.ModelFileName {
+		t.Fatalf("path %q err %v", path, err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != string(data) {
+		t.Error("the file is not what was served")
 	}
 }

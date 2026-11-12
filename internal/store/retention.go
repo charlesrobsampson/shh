@@ -97,3 +97,22 @@ func (s *Store) UnreviewedBefore(before time.Time, limit int) ([]Notification, e
 func (s *Store) MarkAutoTrained(id int64) error {
 	return s.update(id, `UPDATE notifications SET auto_trained = 1 WHERE id = ?`, id)
 }
+
+// TrainedNotifications lists the notifications that have a label, oldest first: what the model is taught again when its weights start
+// over for a new feature version.
+func (s *Store) TrainedNotifications() ([]Notification, error) {
+	rows, err := s.db.Query(`SELECT ` + notificationColumns + ` FROM notifications WHERE is_trained = 1 ORDER BY timestamp, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Notification
+	for rows.Next() {
+		n, err := scanNotification(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}

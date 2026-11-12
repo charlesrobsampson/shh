@@ -108,7 +108,7 @@ func Standard(e Env) []Check {
 			case err == nil:
 				return OK, where, ""
 			case e.ModelMissing != nil && errors.Is(err, e.ModelMissing):
-				return Warn, "there is no embedding model, so the classifier runs without its second layer", "put the model file in the models folder (see the README)"
+				return Warn, "there is no embedding model, so the classifier runs without its second layer", "shh init downloads it (a release build has it inside); then shh worker restart"
 			default:
 				return Fail, err.Error(), "download the model again"
 			}

@@ -102,3 +102,16 @@ func TestInitStoresRecentNotificationsAsUnlabeledHistoryAndChecksAccess(t *testi
 		t.Errorf("a bad --history exited %d", code)
 	}
 }
+
+func TestInitFetchesTheModelAndSaysSoWhenItCannot(t *testing.T) {
+	r := newRig(t, false)
+	r.env.ConfigPath = filepath.Join(t.TempDir(), "config.json")
+	r.env.FetchModel = func() (string, error) { return "downloaded to /x/models/m.bin.", nil }
+	if out := r.mustRun("init", "--history", "0"); !strings.Contains(out, "Embedding model: downloaded to /x/models/m.bin.") {
+		t.Errorf("out:\n%s", out)
+	}
+	r.env.FetchModel = func() (string, error) { return "", errors.New("no network") }
+	if out := r.mustRun("init", "--history", "0"); !strings.Contains(out, "Embedding model: not available (no network)") {
+		t.Errorf("a failed download is a note, not a failure:\n%s", out)
+	}
+}

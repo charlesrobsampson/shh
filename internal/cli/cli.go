@@ -51,6 +51,9 @@ type Env struct {
 	WithStore func(do func(*store.Store) error) error
 	// Doctor says how to look at the machine for shh doctor (the worker probe is added by the command). Nil when it is not available.
 	Doctor *doctor.Env
+	// FetchModel makes sure the embedding model is there, downloading it when this build does not carry it and the models folder lacks it.
+	// It returns a line to say what it found or did. Nil when it is not available.
+	FetchModel func() (string, error)
 	// Retention is how long notifications are kept, from config.json, for shh purge. Nil when it is not available.
 	Retention func() store.Retention
 	// Notifications reads the macOS notification records, for shh capture. Nil when it is not available.

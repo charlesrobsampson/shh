@@ -40,6 +40,7 @@ func (c *initCmd) Run(env *Env) error {
 		}
 		history = d
 	}
+	c.fetchModel(env)
 	c.checkAccess(env)
 	c.importHistory(env, history)
 	fmt.Fprintln(env.Stdout, "\nNext:")
@@ -82,6 +83,21 @@ type configDefaultsCmd struct{}
 func (c *configDefaultsCmd) Run(env *Env) error {
 	_, err := io.WriteString(env.Stdout, config.Template)
 	return err
+}
+
+// fetchModel makes sure the embedding model is available, which is what gives the classifier its second layer. It says what happened and
+// goes on: without the model shh works on its first two layers, and shh init can be run again.
+func (c *initCmd) fetchModel(env *Env) {
+	if env.FetchModel == nil {
+		return
+	}
+	fmt.Fprintln(env.Stdout)
+	line, err := env.FetchModel()
+	if err != nil {
+		fmt.Fprintf(env.Stdout, "Embedding model: not available (%v). shh works without it, a little less well; shh init tries again.\n", err)
+		return
+	}
+	fmt.Fprintln(env.Stdout, "Embedding model: "+line)
 }
 
 // checkAccess says whether shh can read the notification database and use the accessibility API: the two permissions it needs.
