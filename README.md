@@ -21,7 +21,7 @@ shh scores notifications in layers. The first two (fixed rules, and the words, s
 
 - A plain `task build` has no model and needs no network: shh works on its first two layers, a little less well. `shh init` mentions the option and downloads nothing.
 - `shh model install` downloads it once into `~/.config/shh/models/`, checked against a pinned checksum; `shh model status` says whether it is there and `shh model remove` deletes it again.
-- `task build:release` makes `dist/shh` with the model built in.
+- `task build:release` makes the lightweight `dist/shh` (no model); `task build:release:full` makes `dist/shh-full` with the model built in, for someone who wants one file and no download.
 - `"classifier": {"embedding_model": "off"}` in `config.json` ignores the model even where it is.
 
 After any of these, `shh worker restart`. The learned weights start from the seed again and **replay what you have labelled**, so your training is not lost.
@@ -106,7 +106,8 @@ In the terminal UI, `?` shows the same guide.
 ```sh
 task check     # format check, vet and test: run before every commit
 task build     # build ./shh
-task build:release   # build dist/shh with the embedding model inside
+task build:release   # build dist/shh, lightweight (no embedding model; shh model install adds it)
+task build:release:full   # build dist/shh-full with the embedding model inside
 task model:publish   # publish the model as the models-v1 release asset that shh init downloads
 ```
 

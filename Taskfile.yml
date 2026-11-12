@@ -32,14 +32,21 @@ tasks:
       - go build -ldflags "-X main.version={{.VERSION}}" -o shh ./cmd/shh
 
   build:release:
-    desc: "Build dist/shh with the embedding model inside (-tags embedmodel), after checking the model is the one the source expects"
+    desc: "Build the lightweight release, dist/shh, without the embedding model (shh model install adds it)"
+    cmds:
+      - mkdir -p dist
+      - go build -ldflags "-X main.version={{.VERSION}}" -o dist/shh ./cmd/shh
+      - ls -l dist/shh
+
+  build:release:full:
+    desc: "Build dist/shh-full with the embedding model inside (-tags embedmodel), after checking the model is the one the source expects"
     deps: [model:verify]
     cmds:
       - mkdir -p internal/classify/assets dist
       - cp private/models/potion-base-8M-int8.bin internal/classify/assets/potion-base-8M-int8.bin
-      - go build -tags embedmodel -ldflags "-X main.version={{.VERSION}}" -o dist/shh ./cmd/shh
-      - ls -l dist/shh
-      - dist/shh doctor | grep "embedding model"
+      - go build -tags embedmodel -ldflags "-X main.version={{.VERSION}}" -o dist/shh-full ./cmd/shh
+      - ls -l dist/shh-full
+      - dist/shh-full doctor | grep "embedding model"
 
   check:
     desc: Format check, vet and test (run before every commit)
