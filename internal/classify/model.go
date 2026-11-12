@@ -291,11 +291,18 @@ func (m *Model) Checkpoint() error {
 // Rollback returns to the most recent checkpoint that differs from the current weights, using the checkpoint up. A checkpoint
 // with no training after it is skipped over to the one before.
 func (m *Model) Rollback() error {
+	_, err := m.RollbackEntries()
+	return err
+}
+
+// RollbackEntries is Rollback that also returns the training it took back (newest first), so the notifications that were labelled can
+// be marked untrained again.
+func (m *Model) RollbackEntries() ([]store.TrainingLogEntry, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	log, err := m.store.TrainingLog(0)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var since []store.TrainingLogEntry
 	for _, e := range log {
@@ -306,9 +313,9 @@ func (m *Model) Rollback() error {
 		if len(since) == 0 {
 			continue // nothing happened after this checkpoint, so it is the current state
 		}
-		return m.revert(since, log, e.ID-1)
+		return since, m.revert(since, log, e.ID-1)
 	}
-	return ErrNoCheckpoint
+	return nil, ErrNoCheckpoint
 }
 
 // Reset zeroes every weight. A checkpoint is taken first, so Rollback can bring the old weights back.

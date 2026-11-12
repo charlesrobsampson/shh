@@ -152,6 +152,17 @@ func (s *Server) handle(req Request) Response {
 		err = w.showAlert(req.Alert)
 	case "train", "undo":
 		return s.handleTraining(req)
+	case "model_reset":
+		if err := w.ResetModel(); err != nil {
+			return Response{Code: codeFor(err), Error: err.Error()}
+		}
+		return Response{OK: true, Train: &TrainView{}}
+	case "model_rollback":
+		n, err := w.RollbackModel()
+		if err != nil {
+			return Response{Code: codeFor(err), Error: err.Error()}
+		}
+		return Response{OK: true, Train: &TrainView{Count: n}}
 	case "worker_info":
 		info := w.Info()
 		return Response{OK: true, Worker: &info}

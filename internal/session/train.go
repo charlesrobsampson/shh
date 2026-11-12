@@ -13,6 +13,8 @@ var (
 	ErrAlreadyTrained = errors.New("this notification is already trained")
 	// ErrNothingToUndo means there is no training left to reverse.
 	ErrNothingToUndo = classify.ErrNothingToUndo
+	// ErrNoCheckpoint means there is no earlier state of the model to go back to.
+	ErrNoCheckpoint = classify.ErrNoCheckpoint
 	// ErrNoSuchNotification means no stored notification has that id.
 	ErrNoSuchNotification = store.ErrNotFound
 )
@@ -96,6 +98,30 @@ func (w *Worker) UndoTraining() (TrainOutcome, error) {
 		}
 	}
 	return TrainOutcome{NotificationID: last.NotificationID}, nil
+}
+
+// ResetModel forgets everything learned from the user and goes back to the seeded model. Notifications already labelled stay marked as
+// trained (the labels are still theirs); a rollback brings the learned weights back.
+func (w *Worker) ResetModel() error { return w.classifier.ResetToSeed() }
+
+// RollbackModel goes back to the last checkpoint, taking back the training since, and marks the notifications that were trained
+// then as untrained again. It says how many there were.
+func (w *Worker) RollbackModel() (int, error) {
+	entries, err := w.classifier.Model.RollbackEntries()
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, e := range entries {
+		if e.NotificationID == 0 {
+			continue
+		}
+		if err := w.cfg.Store.Untrain(e.NotificationID); err != nil && !errors.Is(err, store.ErrNotFound) {
+			return n, err
+		}
+		n++
+	}
+	return n, nil
 }
 
 func percent(p float64) int { return int(p*100 + 0.5) }

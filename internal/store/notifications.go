@@ -108,6 +108,18 @@ func (s *Store) InsertNotification(n Notification) (id int64, inserted bool, err
 	return id, true, err
 }
 
+// FindNotification says whether a notification with this app, title, body and time is stored, and its id. It is how an import avoids
+// storing the same notification twice.
+func (s *Store) FindNotification(source, title, body string, at time.Time) (int64, bool, error) {
+	var id int64
+	err := s.db.QueryRow(`SELECT id FROM notifications WHERE source = ? AND COALESCE(title, '') = ? AND body = ? AND timestamp = ? LIMIT 1`,
+		source, title, body, formatTime(at)).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	return id, err == nil, err
+}
+
 func (s *Store) GetNotification(id int64) (Notification, error) {
 	n, err := scanNotification(s.db.QueryRow(`SELECT `+notificationColumns+` FROM notifications WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {

@@ -221,3 +221,32 @@ func TestPretrainRejectsBadExamples(t *testing.T) {
 		t.Errorf("pretraining on nothing should be a harmless no-op: %v", err)
 	}
 }
+
+func TestResetToSeedGoesBackToTheSeedAndRollbackBringsBackWhatWasLearned(t *testing.T) {
+	c := newClassifier(t, memoryStore(t))
+	vec := c.Features.Extract(heldOut[0].in)
+	seeded := c.Model.Predict(vec)
+	opposite := 0
+	if seeded < 0.5 {
+		opposite = 100
+	}
+	c.Model.Train(1, vec, classify.ExactLabel(opposite))
+	learned := c.Model.Predict(vec)
+	if learned == seeded {
+		t.Fatal("test setup: training changed nothing")
+	}
+	if err := c.ResetToSeed(); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Model.Predict(vec); got != seeded {
+		t.Errorf("after ResetToSeed %v, want the seeded %v", got, seeded)
+	}
+	entries, err := c.Model.RollbackEntries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Model.Predict(vec); got != learned {
+		t.Errorf("after rollback %v, want what was learned %v", got, learned)
+	}
+	_ = entries
+}
