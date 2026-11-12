@@ -156,6 +156,19 @@ type Summarizer struct {
 	URL, Model string
 }
 
+// Retention is how long shh keeps the text of notifications. Whole days.
+type Retention struct {
+	// TTLDays is how long a notification is kept at all.
+	TTLDays int
+	// KeepUntrainedDays is how long one that is still waiting to be reviewed (held back, or flagged, and not labelled) is kept: at
+	// least TTLDays.
+	KeepUntrainedDays int
+	// AutoTrain says whether a notification nobody labelled is taken as having been handled correctly and trained that way.
+	AutoTrain bool
+	// AutoTrainAfterDays is when that happens: no later than TTLDays, so a notification is never deleted before it could be.
+	AutoTrainAfterDays int
+}
+
 type Paths struct {
 	Dir    string
 	DB     string
@@ -167,6 +180,7 @@ type Config struct {
 	Alert      Alert
 	Menubar    Menubar
 	Summarizer Summarizer
+	Retention  Retention
 	Paths      Paths
 }
 
@@ -186,6 +200,12 @@ type file struct {
 		URL     *string `json:"url,omitempty"`
 		Model   *string `json:"model,omitempty"`
 	} `json:"summarizer"`
+	Retention struct {
+		TTLDays            *int  `json:"ttl_days,omitempty"`
+		KeepUntrainedDays  *int  `json:"keep_untrained_days,omitempty"`
+		AutoTrain          *bool `json:"auto_train,omitempty"`
+		AutoTrainAfterDays *int  `json:"auto_train_after_days,omitempty"`
+	} `json:"retention"`
 	Paths struct {
 		Dir    *string `json:"dir,omitempty"`
 		DB     *string `json:"db,omitempty"`
@@ -234,6 +254,7 @@ func build(f file, configDir string) (Config, error) {
 		Alert:      Alert{Base: Style{Position: "top-right", Size: "medium", Color: DefaultColor, TextColor: DefaultTextColor, ButtonColor: NoColor, ButtonTextColor: NoColor, DurationSecs: 0, Sound: "Glass"}},
 		Menubar:    Menubar{Enabled: true, Label: "shh"},
 		Summarizer: Summarizer{Backend: "none"},
+		Retention:  Retention{TTLDays: 30, KeepUntrainedDays: 90, AutoTrainAfterDays: 30},
 	}
 	if err := validateOverride("alert", f.Alert.StyleOverride); err != nil {
 		return Config{}, err
@@ -270,6 +291,22 @@ func build(f file, configDir string) (Config, error) {
 	}
 	if f.Summarizer.Model != nil {
 		cfg.Summarizer.Model = *f.Summarizer.Model
+	}
+
+	if f.Retention.TTLDays != nil {
+		cfg.Retention.TTLDays = *f.Retention.TTLDays
+	}
+	if f.Retention.KeepUntrainedDays != nil {
+		cfg.Retention.KeepUntrainedDays = *f.Retention.KeepUntrainedDays
+	}
+	if f.Retention.AutoTrain != nil {
+		cfg.Retention.AutoTrain = *f.Retention.AutoTrain
+	}
+	if f.Retention.AutoTrainAfterDays != nil {
+		cfg.Retention.AutoTrainAfterDays = *f.Retention.AutoTrainAfterDays
+	}
+	if err := cfg.Retention.validate(); err != nil {
+		return Config{}, err
 	}
 
 	paths, err := buildPaths(f, configDir)
@@ -336,6 +373,20 @@ func notOneOf(key, got string, allowed []string) error {
 	return fmt.Errorf("%q: %q is not one of %s", key, got, strings.Join(allowed, ", "))
 }
 
+func (r Retention) validate() error {
+	switch {
+	case r.TTLDays < 1:
+		return fmt.Errorf("\"retention.ttl_days\": %d is less than 1 day", r.TTLDays)
+	case r.KeepUntrainedDays < r.TTLDays:
+		return fmt.Errorf("\"retention.keep_untrained_days\" (%d) is shorter than \"retention.ttl_days\" (%d): it is how long past the time to live a notification waiting for review is kept, so it cannot be less", r.KeepUntrainedDays, r.TTLDays)
+	case r.AutoTrainAfterDays < 1:
+		return fmt.Errorf("\"retention.auto_train_after_days\": %d is less than 1 day", r.AutoTrainAfterDays)
+	case r.AutoTrainAfterDays > r.TTLDays:
+		return fmt.Errorf("\"retention.auto_train_after_days\" (%d) is longer than \"retention.ttl_days\" (%d): a notification would be deleted before it could be trained on", r.AutoTrainAfterDays, r.TTLDays)
+	}
+	return nil
+}
+
 // Effective renders the resolved configuration as JSON that Load reads back to the same values.
 func (c Config) Effective() ([]byte, error) {
 	var f file
@@ -373,6 +424,8 @@ func (c Config) Effective() ([]byte, error) {
 	if c.Summarizer.Model != "" {
 		f.Summarizer.Model = &c.Summarizer.Model
 	}
+	f.Retention.TTLDays, f.Retention.KeepUntrainedDays = &c.Retention.TTLDays, &c.Retention.KeepUntrainedDays
+	f.Retention.AutoTrain, f.Retention.AutoTrainAfterDays = &c.Retention.AutoTrain, &c.Retention.AutoTrainAfterDays
 	f.Paths.Dir, f.Paths.DB, f.Paths.Socket, f.Paths.PID = &c.Paths.Dir, &c.Paths.DB, &c.Paths.Socket, &c.Paths.PID
 	out, err := json.MarshalIndent(f, "", "  ")
 	return append(out, '\n'), err

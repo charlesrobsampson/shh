@@ -408,12 +408,13 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Manual check: `shh doctor` on your Mac gives a clear checklist.
 
 ### 37 · TTL cleanup and purge
-- [ ] Done
+- [x] Done
 - Session: _(fill on start)_
 - Branch: `task/37-ttl` · Depends: 08, 06
 - Read: `plan.md` §10 (TTL fix)
 - Build: cleanup on launch per the plan's rule; `shh purge` with confirmation.
 - **Added by the user (2026-11-12): assume it was right.** A notification that reaches the end of its time to live (or a shorter, separate time) untrained is taken as having been handled correctly and the model is trained that way: held back (`blocked`) counts as `n` ("rightly held back"), let through (`alerted`) as `y`, using the quick-label path so it needs the stored threshold. A **separate toggle** in `config.json` switches this on or off (decide its default when building; off is the careful choice), and its own delay `auto_train_after` must be **equal to or shorter than the ttl**, checked when the config loads with an error that names both. Rows trained this way should be marked as such (not the user's own label) so `shh ls` and the Train tab can tell, and `shh train --rollback`/`--undo` treat them like any other training. Flagged rows are not auto-trained (the user meant to review them).
+- **Built (2026-11-12):** `config.json` `retention` (`ttl_days` 30, `keep_untrained_days` 90, `auto_train` false, `auto_train_after_days` 30; the config refuses `auto_train_after_days` over `ttl_days`, or `keep_untrained_days` under `ttl_days`). Rule (`store.Retention`, `PurgeExpired`): older than the ttl goes, except an untrained notification that was held back or flagged, which goes at `keep_untrained_days`; a let-through one nobody reviewed goes at the ttl; unreadable calendar entries go at the ttl; the training log keeps its weight changes. `Worker.Maintain` (on start and every 6 hours from the tick) first auto-trains (`blocked` -> `n`, `alerted` -> `y`, flagged rows left alone, marked `auto_trained` by migration 14, shown `[auto-trained]` in `shh ls`) and then purges. `shh purge [--all] [--yes]` asks first (refuses without a terminal unless `--yes`).
 - Tests (fake clock): rows purged/kept per the rule; untrained recent rows survive; purge requires confirmation.
 - Manual check: none.
 

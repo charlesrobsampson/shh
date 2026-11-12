@@ -53,6 +53,11 @@ type Config struct {
 	// AlertConfig is the configured look of alerts, for the sound a "sound" alert plays: the base, then the routine's and the step's own.
 	// It is a function so that an edit to config.json applies to the next alert; nil means no configuration (a sound named "").
 	AlertConfig func() config.Alert
+	// Retention says how long notifications are kept; the zero value keeps them for ever (a test's choice, not a default). With AutoTrain
+	// a notification nobody labelled is trained as having been handled correctly once it is AutoTrainAfter old.
+	Retention      store.Retention
+	AutoTrain      bool
+	AutoTrainAfter time.Duration
 }
 
 // Decision is the outcome for one notification.
@@ -73,8 +78,10 @@ type Worker struct {
 	routines   *routineRunner
 	schedule   *scheduler
 	started    time.Time
-	scheduler  *calendar.Scheduler
-	tailer     *ingest.Tailer
+	// lastMaintained is when Maintain last ran.
+	lastMaintained time.Time
+	scheduler      *calendar.Scheduler
+	tailer         *ingest.Tailer
 
 	mu          sync.Mutex
 	suppressing bool
@@ -191,6 +198,7 @@ func (w *Worker) Init(backfillSince time.Time) error {
 	if err := w.syncSuppressor(); err != nil {
 		return err
 	}
+	w.Maintain()
 	if !backfillSince.IsZero() {
 		return w.tailer.Backfill(backfillSince)
 	}
@@ -200,6 +208,9 @@ func (w *Worker) Init(backfillSince time.Time) error {
 // Tick runs one cycle: bring the suppressor in line with the effective level (a timed layer may have ended), then poll for
 // new notifications.
 func (w *Worker) Tick() error {
+	if w.cfg.Clock.Now().Sub(w.lastMaintained) >= maintainEvery {
+		w.Maintain()
+	}
 	if err := w.routines.Tick(); err != nil && w.cfg.OnError != nil {
 		w.cfg.OnError(fmt.Errorf("routine: %w", err))
 	}

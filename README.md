@@ -72,6 +72,7 @@ shh ls --since 1d --status blocked --min-score 40   # what was held back, newest
 shh train 101 102 --yes                              # these should have reached me (--no: rightly held back, --label 0-100: exact)
 shh train --undo | --reset | --rollback              # take back a label, go back to the seeded model, or to the last checkpoint
 shh train --export | --import                        # labelled notifications to and from private/training.jsonl (it holds their text)
+shh purge                                            # delete notifications past their time to live now, asking first (--all: every one)
 shh rules review                                     # calendar reminders shh could not read a time from, and how to teach it
 shh capture --app teams                              # log raw notifications to private/captures/raw.jsonl, to build rules from
 ```

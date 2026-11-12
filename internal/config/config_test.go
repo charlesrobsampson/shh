@@ -539,3 +539,32 @@ func TestFlaggedLabelErrorsAndRoundTrip(t *testing.T) {
 		t.Errorf("flagged label after round trip = %q", got)
 	}
 }
+
+func TestRetentionDefaultsAndRules(t *testing.T) {
+	cfg, err := config.Load(filepath.Join(t.TempDir(), "none.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := cfg.Retention; r.TTLDays != 30 || r.KeepUntrainedDays != 90 || r.AutoTrain || r.AutoTrainAfterDays != 30 {
+		t.Errorf("defaults = %+v", r)
+	}
+	for text, want := range map[string]string{
+		`{"retention": {"auto_train_after_days": 45}}`:               "longer than \"retention.ttl_days\"",
+		`{"retention": {"ttl_days": 10}}`:                            "longer than \"retention.ttl_days\"", // the default 30 days to auto-train is now past 10
+		`{"retention": {"ttl_days": 0}}`:                             "less than 1 day",
+		`{"retention": {"ttl_days": 60, "keep_untrained_days": 30}}`: "shorter than",
+		`{"retention": {"auto_train_after_days": 0}}`:                "less than 1 day",
+	} {
+		path := filepath.Join(t.TempDir(), "config.json")
+		os.WriteFile(path, []byte(text), 0o600)
+		if _, err := config.Load(path); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: err = %v, want %q", text, err, want)
+		}
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	os.WriteFile(path, []byte(`{"retention": {"ttl_days": 14, "keep_untrained_days": 14, "auto_train": true, "auto_train_after_days": 7}}`), 0o600)
+	cfg, err = config.Load(path)
+	if err != nil || !cfg.Retention.AutoTrain || cfg.Retention.AutoTrainAfterDays != 7 {
+		t.Errorf("%+v %v", cfg.Retention, err)
+	}
+}
