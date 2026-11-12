@@ -526,7 +526,7 @@ func TestHelpOpensJKScrollItAndEscCloses(t *testing.T) {
 	r := newRig(t)
 	r.m.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
 	r.press("?")
-	if got := r.view(); !strings.Contains(got, "shh guide") || !strings.Contains(got, "Moving around") {
+	if got := r.view(); !strings.Contains(got, "shh guide") || !strings.Contains(got, "Getting started") {
 		t.Errorf("help:\n%s", got)
 	}
 	r.press("j", "j", "j")

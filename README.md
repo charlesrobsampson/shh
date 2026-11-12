@@ -4,16 +4,20 @@
 
 On top of that, shh runs **routines**: saved sequences of focus sessions (a pomodoro, a deep work block, a whole day's timetable) that can start by themselves on the days and times you choose.
 
-Everything stays on your machine.
+Everything stays on your machine (see [Privacy](#privacy)).
 
 ## Install
 
-shh is a Go program for macOS. Build it from source:
+shh is a Go program for macOS. You need [Go](https://go.dev/dl/) and [Task](https://taskfile.dev) to build it from source:
 
 ```sh
 task build          # builds ./shh   (or: go build -o shh ./cmd/shh)
-mv shh /usr/local/bin/   # or anywhere on your PATH
+mv shh /usr/local/bin/   # or anywhere on your PATH, and where it stays: the login agent points at it
 ```
+
+### Permissions
+
+shh needs **Accessibility**, which is how it hides notification banners while focus is on (System Settings, Privacy & Security, Accessibility: add the terminal you run shh from, or whatever starts the worker). It also reads the notification database as you, which may need **Full Disk Access** for that terminal; `shh doctor` says when it does and what to do.
 
 ### The embedding model
 
@@ -26,15 +30,13 @@ shh scores notifications in layers. The first two (fixed rules, and the words, s
 
 After any of these, `shh worker restart`. The learned weights start from the seed again and **replay what you have labelled**, so your training is not lost.
 
-It needs one permission: **Accessibility**, which is how it hides notification banners while focus is on (System Settings, Privacy & Security, Accessibility). It reads the notification database as you, which needs nothing extra on the macOS it was built on.
-
 ## First run
 
 ```sh
 shh init            # writes ~/.config/shh/config.json (every option at its default, explained), checks the permissions shh needs,
                     # and stores the last 3 days of notifications as unlabeled history for the Train tab (--history 0 skips that)
 shh doctor          # checks the whole setup: config, databases, model, permissions, the worker
-shh worker start    # starts the background worker (it also starts by itself when a command needs it)
+shh worker install  # starts the worker at every login, and now (or shh worker start, for this session only)
 shh 75% 25m writing # a focus session: level, length, and what you are doing
 shh                 # opens the terminal UI
 shh guide           # the guide to all of it
@@ -63,7 +65,13 @@ shh worker install     # a LaunchAgent that starts the worker at every login (an
 shh worker uninstall   # removes it
 ```
 
-It writes one file, `~/Library/LaunchAgents/app.shh.worker.plist`, which runs `shh daemon` from wherever shh is installed (install shh where it stays, such as `/usr/local/bin`, before running this; run it again after moving shh). `shh worker stop` stops the worker until the next login. A focus baseline you set carries over a restart, so it resumes at login. Prefer to do it yourself? `shh worker start` in a Login Item script or your shell profile works too, and anything that wants a process that stays in the foreground should run `shh daemon`. `shh worker status` shows what the worker is watching, `shh worker stop` shuts it down and `shh worker restart` replaces it after you update shh.
+It writes one file, `~/Library/LaunchAgents/app.shh.worker.plist`, which runs `shh daemon` from wherever shh is installed (install shh where it stays, such as `/usr/local/bin`, first; run `shh worker install` again after moving it). A focus baseline you set carries over a restart, so it resumes at login. Prefer to do it yourself? `shh worker start` in a Login Item script or your shell profile works too, and anything that wants a process that stays in the foreground should run `shh daemon`.
+
+`shh worker status` shows what the worker is watching and whether it starts at login, `shh worker stop` shuts it down (until the next login) and `shh worker restart` replaces it after you update shh.
+
+## The terminal UI
+
+`shh` on a terminal opens it: four tabs, **Focus** (start, change and end sessions), **Notifications** (everything shh saw and what it did), **Train** (the notifications most worth labelling) and **Routines** (your routines, an editor, their schedule and history). `y` and `n` say whether shh made the right call, `t` types an exact score, `f` flags one to look at later, `s` writes a one-line summary (with a summarizer set up), `v` shows only what was held back, `u` undoes the last label and `?` opens the guide. A notification shh held back that should have reached you is found under `v`, and `n` there teaches shh to let that kind through.
 
 ## Routines
 
@@ -89,6 +97,10 @@ shh rules review                                     # calendar reminders shh co
 shh capture --app teams                              # log raw notifications to private/captures/raw.jsonl, to build rules from
 ```
 
+## Privacy
+
+shh keeps what it needs in `~/.config/shh`, readable only by you: the notifications it saw (sender, title, message), what it did with each, your labels and what the model learned. Nothing leaves your Mac, except what you switch on: the optional `claude` summarizer sends the text of a notification you summarize to Anthropic's API (and says so in the UI's status bar), and `shh model install` is a one-time download. Notifications are deleted after 30 days, or after 90 if they are held back and still waiting for your review; both are in `config.json` (`retention`), and `shh purge` clears them on demand. Files that hold notification text (`shh train --export`, `shh capture`) go under `private/`, which git ignores, and shh warns when you put one elsewhere.
+
 ## The guide
 
 The guide is the documentation, and it is built into shh:
@@ -100,7 +112,7 @@ shh guide -s trigger    # opens it at the first match of a search
 shh guide --print       # writes it to the terminal instead, for a pager or a file
 ```
 
-In the terminal UI, `?` shows the same guide.
+In the terminal UI, `?` shows the same guide. It starts with Getting started and covers the keys, configuration, alerts, routines, triggers, the command line (`ls`, `train`, `doctor`, `purge`, ...) and privacy.
 
 ## Development
 
@@ -109,7 +121,7 @@ task check     # format check, vet and test: run before every commit
 task build     # build ./shh
 task build:release   # build dist/shh, lightweight (no embedding model; shh model install adds it)
 task build:release:full   # build dist/shh-full with the embedding model inside
-task model:publish   # publish the model as the models-v1 release asset that shh init downloads
+task model:publish   # publish the model as the models-v1 release asset that shh model install downloads
 ```
 
 `plan.md` and `manifest.md` describe the design, `checklist.md` the work done and still to do, `process.md` how the work is done.
