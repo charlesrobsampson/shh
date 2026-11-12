@@ -26,6 +26,7 @@ import (
 	"github.com/charlesrobsampson/shh/internal/config"
 	"github.com/charlesrobsampson/shh/internal/doctor"
 	"github.com/charlesrobsampson/shh/internal/ingest"
+	"github.com/charlesrobsampson/shh/internal/launchd"
 	"github.com/charlesrobsampson/shh/internal/menubar"
 	"github.com/charlesrobsampson/shh/internal/routine"
 	"github.com/charlesrobsampson/shh/internal/rules"
@@ -84,6 +85,7 @@ func realEnv() cli.Env {
 	env.WithStore = func(do func(*store.Store) error) error { return withStore(cfg.Paths.DB, do) }
 	env.Doctor = doctorEnv(cfg)
 	env.Model = modelOps(cfg)
+	env.Agent = loginAgent(cfg)
 	env.Retention = func() store.Retention {
 		return store.Retention{TTL: days(cfg.Retention.TTLDays), KeepUntrained: days(cfg.Retention.KeepUntrainedDays)}
 	}
@@ -132,6 +134,25 @@ func doctorEnv(cfg config.Config) *doctor.Env {
 		e.ConfigPath = path
 	}
 	return e
+}
+
+// loginAgent is the LaunchAgent for the worker: it runs this executable, wherever it really is (a symlink on the PATH is followed).
+func loginAgent(cfg config.Config) *launchd.Agent {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return nil
+	}
+	if real, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = real
+	}
+	return &launchd.Agent{
+		Home: home, UID: os.Getuid(), Exe: exe, Log: filepath.Join(cfg.Paths.Dir, "shh.log"),
+		Launchctl: func(args ...string) ([]byte, error) { return exec.Command("launchctl", args...).CombinedOutput() },
+	}
 }
 
 // resolveModel finds the embedding model unless the configuration turns it off.

@@ -287,7 +287,14 @@ func (c *daemonCmd) Run(env *Env) error {
 	if env.Daemon == nil {
 		return errors.New("this build cannot run the worker")
 	}
-	return env.Daemon(context.Background())
+	err := env.Daemon(context.Background())
+	if errors.Is(err, session.ErrAlreadyRunning) {
+		// Not a failure: the login agent and a worker started by hand can both try, and the one that comes second just steps aside. A
+		// failing exit would have launchd start it again and again.
+		fmt.Fprintln(env.Stderr, "shh: a worker is already running, so this one is not needed.")
+		return nil
+	}
+	return err
 }
 
 type replayCmd struct {

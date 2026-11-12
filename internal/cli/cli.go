@@ -14,6 +14,7 @@ import (
 	"github.com/charlesrobsampson/shh/internal/decide"
 	"github.com/charlesrobsampson/shh/internal/doctor"
 	"github.com/charlesrobsampson/shh/internal/ingest"
+	"github.com/charlesrobsampson/shh/internal/launchd"
 	"github.com/charlesrobsampson/shh/internal/session"
 	"github.com/charlesrobsampson/shh/internal/store"
 )
@@ -51,6 +52,8 @@ type Env struct {
 	WithStore func(do func(*store.Store) error) error
 	// Doctor says how to look at the machine for shh doctor (the worker probe is added by the command). Nil when it is not available.
 	Doctor *doctor.Env
+	// Agent is the login agent for the worker (shh worker install). Nil when it is not available.
+	Agent *launchd.Agent
 	// Model is what shh model does with the embedding model. Nil when it is not available.
 	Model *ModelOps
 	// Retention is how long notifications are kept, from config.json, for shh purge. Nil when it is not available.

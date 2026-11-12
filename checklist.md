@@ -444,12 +444,13 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Tests: none. Manual check: user reads the results.
 
 ### 40 · launchd install (survive reboot)
-- [ ] Done
+- [x] Done
 - Session: _(fill on start)_
 - Branch: `task/40-launchd` · Depends: 28
 - Read: `plan.md` §3
 - Build: `shh install|uninstall` writes/removes a LaunchAgent that runs the same daemon; baseline resumes at login.
-- Tests: generated plist content; install/uninstall against a temp `LaunchAgents` dir.
+- **Built (2026-11-12):** `shh worker install|uninstall` (not top-level `shh install`: it sits with the other worker commands) in `internal/launchd` (`Agent{Home, UID, Exe, Log, Launchctl}`: plist `app.shh.worker` running `shh daemon`, `RunAtLoad`, `KeepAlive {SuccessfulExit: false}` so a crash restarts it and `shh worker stop` stays stopped, `ThrottleInterval` 30, log in `shh.log`; `launchctl bootstrap|bootout gui/UID`; a temporary `go run` build is refused; a failed first install removes the plist). `shh daemon` exits 0 when a worker is already running (otherwise launchd would loop). `shh worker status` says whether it starts at login. Baseline resume at login is the worker's existing start-up (`Init` syncs the suppressor from the saved level).
+- Tests: generated plist content (`plutil -lint` passes); install/uninstall against a temp `LaunchAgents` dir.
 - Manual check: log out/in, baseline resumes.
 
 ### 41 · Linux port

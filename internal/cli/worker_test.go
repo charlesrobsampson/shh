@@ -1,9 +1,15 @@
 package cli_test
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/charlesrobsampson/shh/internal/launchd"
 	"github.com/charlesrobsampson/shh/internal/session"
 )
 
@@ -109,5 +115,60 @@ func TestWorkerStatusNotesAnOlderBuild(t *testing.T) {
 	r.env.Build = "newbuild0002"
 	if out := r.mustRun("worker", "status"); !strings.Contains(out, "older build") || !strings.Contains(out, "shh worker restart") {
 		t.Errorf("status:\n%s", out)
+	}
+}
+
+func TestWorkerInstallAndUninstallManageTheLoginAgentAndStatusSaysSo(t *testing.T) {
+	r := newRig(t, false)
+	loaded := false
+	home := t.TempDir()
+	r.env.Agent = &launchd.Agent{Home: home, UID: 501, Exe: "/usr/local/bin/shh", Log: filepath.Join(home, "shh.log"),
+		Launchctl: func(args ...string) ([]byte, error) {
+			switch args[0] {
+			case "bootstrap":
+				loaded = true
+			case "bootout":
+				loaded = false
+			case "print":
+				if !loaded {
+					return nil, errors.New("not loaded")
+				}
+			}
+			return nil, nil
+		}}
+	if out := r.mustRun("worker", "uninstall"); !strings.Contains(out, "not installed: nothing to remove") {
+		t.Errorf("out = %q", out)
+	}
+	out := r.mustRun("worker", "install")
+	if !strings.Contains(out, "starts at every login") || !strings.Contains(out, "It is starting now") || !loaded {
+		t.Errorf("out = %q loaded %v", out, loaded)
+	}
+	if _, err := os.Stat(r.env.Agent.Path()); err != nil {
+		t.Errorf("the plist is not there: %v", err)
+	}
+	r.serve()
+	if out := r.mustRun("worker", "status"); !strings.Contains(out, "at login: starts by itself") {
+		t.Errorf("status:\n%s", out)
+	}
+	if out := r.mustRun("worker", "install"); !strings.Contains(out, "already running") {
+		t.Errorf("with a worker running: %q", out)
+	}
+	if out := r.mustRun("worker", "uninstall"); !strings.Contains(out, "Removed the login agent") || loaded {
+		t.Errorf("out = %q loaded %v", out, loaded)
+	}
+	if out := r.mustRun("worker", "status"); !strings.Contains(out, "at login: not started") {
+		t.Errorf("status:\n%s", out)
+	}
+}
+
+func TestADaemonThatFindsAWorkerAlreadyRunningExitsCleanly(t *testing.T) {
+	r := newRig(t, false)
+	r.env.Daemon = func(context.Context) error { return fmt.Errorf("%w (socket x)", session.ErrAlreadyRunning) }
+	if code := r.run("daemon"); code != 0 || !strings.Contains(r.err.String(), "already running") {
+		t.Errorf("code %d: %s", code, r.err.String())
+	}
+	r.env.Daemon = func(context.Context) error { return errors.New("disk full") }
+	if code := r.run("daemon"); code != 1 {
+		t.Errorf("a real failure exits %d", code)
 	}
 }
