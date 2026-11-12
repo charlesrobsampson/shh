@@ -29,7 +29,7 @@ func TestListingHasEverySectionOnALine(t *testing.T) {
 	if len(lines) != len(guide.Sections) {
 		t.Fatalf("%d lines for %d sections", len(lines), len(guide.Sections))
 	}
-	if !strings.HasPrefix(lines[0], "moving") || !strings.Contains(guide.Listing(), "Routines file (routines.json)") {
+	if !strings.HasPrefix(lines[0], "start") || !strings.Contains(guide.Listing(), "Routines file (routines.json)") {
 		t.Errorf("listing:\n%s", guide.Listing())
 	}
 }
