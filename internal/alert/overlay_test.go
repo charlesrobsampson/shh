@@ -981,3 +981,30 @@ func TestTheTrainButtonTravelsWithItsTrainedLabelAndTheScriptHandlesIt(t *testin
 		}
 	}
 }
+
+func TestTheScriptPutsDismissInTheCornerAndSizesTheOtherButtonsToTheirWords(t *testing.T) {
+	script := strings.Join(alert.OverlayCommand(request("Ana", "top-right")).Args, " ")
+	for _, want := range []string{"cfg.buttonRows", "cornerWidth", "naturalWidth", "type === 'dismiss'", "cfg.width - 16 - width", "x + width > avail", "sizeWithAttributes", "saying[i]", "textWidth()"} {
+		if !strings.Contains(script, want) {
+			t.Errorf("the script does not mention %s", want)
+		}
+	}
+	if strings.Contains(script, "Math.min(96") {
+		t.Error("buttons are no longer capped at 96 points: that is what cut off the words of the wider ones")
+	}
+	r := newOverlayRig(t)
+	req := request("Ana", "top-right")
+	req.ButtonRows = 2
+	r.show(req)
+	var spec struct {
+		ButtonRows int `json:"buttonRows"`
+	}
+	for _, kv := range r.process(0).env {
+		if v, ok := strings.CutPrefix(kv, "SHH_BANNER="); ok {
+			_ = json.Unmarshal([]byte(v), &spec)
+		}
+	}
+	if spec.ButtonRows != 2 {
+		t.Errorf("the rows should travel with the banner: %+v", spec)
+	}
+}

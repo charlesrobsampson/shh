@@ -166,7 +166,7 @@ func TestTheGuideDocumentsTheRoutineFeatures(t *testing.T) {
 		"--end-routine", "--continue-routine", "--after-routine", "interrupt", "queue", "Start next", "Skip",
 		"shh guide", "shh routine list", "shh routine example",
 		"8-bit ANSI palette", "https://en.wikipedia.org/wiki/ANSI_escape_code#8-bit", "shh alert colors", "--color", "--position", "--size", "--sound", "--banner-for", "duration_secs", "button_color", "button_text_color", "--button-color", "live changes", "text_color", "--text-color", "Banner style", "--style",
-		"triggers", "trigger form", "Switched on", "Skip the selected routine", "except", "--reminder", "--ask", "--when-busy", "--grace", "--until-alert", "--disabled", "shh routine skip", "shh routine log", "shh ui --tab train", "shh init", "shh config show", "shh config defaults", "applies to the next banner", "held back view", "Not important", "trained_label", "Run log", "flagged for review", "Review button", "shh daemon", "at login", "shh worker start", "shh worker stop", "shh worker restart", "shh worker status", "weekdays",
+		"triggers", "trigger form", "Switched on", "Skip the selected routine", "except", "--reminder", "--ask", "--when-busy", "--grace", "--until-alert", "--disabled", "shh routine skip", "shh routine log", "shh ui --tab train", "shh init", "shh config show", "shh config defaults", "applies to the next banner", "held back view", "Not important", "top right corner", "trained_label", "Run log", "flagged for review", "Review button", "shh daemon", "at login", "shh worker start", "shh worker stop", "shh worker restart", "shh worker status", "weekdays",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the guide never mentions %q", want)

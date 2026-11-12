@@ -50,13 +50,13 @@ func TestStyleIsResolvedBeforeItReachesTheBackend(t *testing.T) {
 		wantH     int
 	}{
 		{"a plain message uses the base style", alert.Alert{Kind: config.KindMessage, Source: "Teams", Title: "Ana", Body: "hi"},
-			config.Style{Position: "top-right", Size: "small", Color: 233, TextColor: 15, ButtonColor: -1, ButtonTextColor: -1, DurationSecs: 8, Sound: "Glass"}, 280, 110},
+			config.Style{Position: "top-right", Size: "small", Color: 233, TextColor: 15, ButtonColor: -1, ButtonTextColor: -1, DurationSecs: 8, Sound: "Glass"}, 280, 78},
 		{"a calendar alert uses the kind override", alert.Alert{Kind: config.KindCalendar, Source: "Calendar", Title: "Sync"},
-			config.Style{Position: "top-right", Size: "small", Color: 39, TextColor: 15, ButtonColor: -1, ButtonTextColor: -1, DurationSecs: 8, Sound: "Hero"}, 280, 110},
+			config.Style{Position: "top-right", Size: "small", Color: 39, TextColor: 15, ButtonColor: -1, ButtonTextColor: -1, DurationSecs: 8, Sound: "Hero"}, 280, 78},
 		{"a source override applies to its messages", alert.Alert{Kind: config.KindMessage, Source: "Slack", Title: "ops"},
-			config.Style{Position: "bottom-left", Size: "large", Color: 233, TextColor: 15, ButtonColor: -1, ButtonTextColor: -1, DurationSecs: 8, Sound: "none"}, 460, 110},
+			config.Style{Position: "bottom-left", Size: "large", Color: 233, TextColor: 15, ButtonColor: -1, ButtonTextColor: -1, DurationSecs: 8, Sound: "none"}, 460, 78},
 		{"a longer body makes the banner taller", alert.Alert{Kind: config.KindMessage, Source: "Teams", Title: "Ana", Body: strings.Repeat("word ", 20)},
-			config.Style{Position: "top-right", Size: "small", Color: 233, TextColor: 15, ButtonColor: -1, ButtonTextColor: -1, DurationSecs: 8, Sound: "Glass"}, 280, 142},
+			config.Style{Position: "top-right", Size: "small", Color: 233, TextColor: 15, ButtonColor: -1, ButtonTextColor: -1, DurationSecs: 8, Sound: "Glass"}, 280, 110},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -388,6 +388,105 @@ func TestTheTrainButtonShowsOnlyForAlertsAboutAStoredNotificationAndOnlyWhenEnab
 	for _, b := range off.requests[0].Buttons {
 		if b.Type == "train" {
 			t.Error("the train button is off until it is asked for")
+		}
+	}
+}
+
+func TestButtonsGetAsManyRowsAsTheirWordsNeedAndDismissIsInTheCornerNotInARow(t *testing.T) {
+	// the buttons as they are by default plus the train button, with the app name and a long message so that Preview applies
+	cfg := loadConfig(t, `{"alert": {"size": "small", "buttons": [{"type": "preview"}, {"type": "goto"}, {"type": "dismiss"}, {"type": "flag"}, {"type": "train"}]}}`).Alert
+	long := alert.Alert{Kind: config.KindMessage, Source: "Teams", Title: "Ana", Body: strings.Repeat("word ", 40), BundleID: "com.x", NotificationID: 5}
+	primary := &recordingBackend{}
+	d := alert.NewDisplay(cfg, primary, nil, nil)
+	if err := d.Show(long); err != nil {
+		t.Fatal(err)
+	}
+	small := primary.requests[0]
+	if small.ButtonRows < 2 {
+		t.Errorf("Preview, Go to, Flag and Not important do not fit one row of a small banner: rows = %d", small.ButtonRows)
+	}
+	base := alert.BannerHeight(small.Width, long.Body) + alert.HeaderHeight
+	if small.Height != base+small.ButtonRows*alert.ButtonRowHeight {
+		t.Errorf("height %d, want %d plus %d rows of %d", small.Height, base, small.ButtonRows, alert.ButtonRowHeight)
+	}
+	if want := alert.PreviewHeight(small.Width, long.Body) + alert.HeaderHeight + small.ButtonRows*alert.ButtonRowHeight; small.PreviewHeight != want {
+		t.Errorf("preview height %d, want %d", small.PreviewHeight, want)
+	}
+	cfgLarge := loadConfig(t, `{"alert": {"size": "large", "buttons": [{"type": "goto"}, {"type": "dismiss"}, {"type": "flag"}, {"type": "train"}]}}`).Alert
+	primary = &recordingBackend{}
+	if err := alert.NewDisplay(cfgLarge, primary, nil, nil).Show(long); err != nil {
+		t.Fatal(err)
+	}
+	if got := primary.requests[0].ButtonRows; got != 1 {
+		t.Errorf("Go to, Flag and Not important fit one row of a large banner: rows = %d", got)
+	}
+	onlyDismiss := loadConfig(t, `{"alert": {"buttons": [{"type": "dismiss"}]}}`).Alert
+	primary = &recordingBackend{}
+	if err := alert.NewDisplay(onlyDismiss, primary, nil, nil).Show(alert.Alert{Kind: config.KindMessage, Source: "Teams", Title: "Ana", Body: "hi"}); err != nil {
+		t.Fatal(err)
+	}
+	got := primary.requests[0]
+	if got.ButtonRows != 0 || got.Height != alert.BannerHeight(got.Width, "hi")+alert.HeaderHeight || len(got.Buttons) != 1 {
+		t.Errorf("a banner with only the dismiss button has no row for it: rows %d height %d buttons %d", got.ButtonRows, got.Height, len(got.Buttons))
+	}
+}
+
+func TestARoutineBannerWithTwoOrMoreActionButtonsGrowsARowWhenTheyNeedIt(t *testing.T) {
+	primary := &recordingBackend{}
+	d := alert.NewDisplay(loadConfig(t, `{"alert": {"size": "small", "buttons": [{"type": "dismiss"}]}}`).Alert, primary, nil, nil)
+	_ = d.Show(alert.Alert{Kind: config.KindMessage, Source: "Routine", Title: "t", Body: "b",
+		Actions: []alert.Action{{ID: "a", Label: "Start now"}, {ID: "b", Label: "Skip this one"}, {ID: "c", Label: "Review notifications"}}})
+	if got := primary.requests[0].ButtonRows; got < 2 {
+		t.Errorf("three long action buttons on a small banner: rows = %d", got)
+	}
+}
+
+func TestButtonRowsPacksLeftToRightAndALongWordTakesARowToItself(t *testing.T) {
+	for _, tt := range []struct {
+		width int
+		words []string
+		want  int
+	}{
+		{360, nil, 0},
+		{360, []string{"Go to"}, 1},
+		{360, []string{"Preview", "Go to", "Flag"}, 1},
+		{280, []string{"Preview", "Go to", "Flag", "Not important"}, 2},
+		{280, []string{"a very very long label indeed, longer than the banner is wide"}, 1},
+		{280, []string{"Not important", "Not important", "Not important"}, 2}, // two fit side by side on a small banner
+		{280, []string{"Not important", "Not important", "Not important", "Not important", "Not important"}, 3},
+		{360, []string{"Preview", "Go to", "Flag", "Not important"}, 1}, // the four buttons of a default banner with the train button on
+	} {
+		if got := alert.ButtonRows(tt.width, tt.words); got != tt.want {
+			t.Errorf("ButtonRows(%d, %q) = %d, want %d", tt.width, tt.words, got, tt.want)
+		}
+	}
+}
+
+func TestTheEstimatedWidthOfWordsMatchesWhatTheSystemMeasuresWithin2Points(t *testing.T) {
+	// measured with NSString sizeWithAttributes: at 12 points in the system font, on the Mac this was built on
+	for words, measured := range map[string]float64{"Not important": 78.58, "Dismiss": 43.82} {
+		est := alert.TextWidthForTest(words)
+		if d := est - measured; d < -2 || d > 2 {
+			t.Errorf("%q: estimated %.2f, measured %.2f", words, est, measured)
+		}
+	}
+}
+
+// The same words and banner widths as tools/banner_layout/check.py, which lays real banners out headlessly and checks they fit the rows
+// reserved here: if these numbers change, change them there.
+func TestTheRowsReservedForTheLayoutCheckScenarios(t *testing.T) {
+	standard := []string{"Collapse", "Go to", "Flagged", "Not important"}
+	actions := []string{"Start now", "Skip this one", "Review notifications"}
+	for name, tt := range map[string]struct {
+		width int
+		words []string
+		want  int
+	}{
+		"small standard": {280, standard, 2}, "medium standard": {360, standard, 1}, "large standard": {460, standard, 1},
+		"small actions": {280, actions, 2}, "medium actions": {360, actions, 1},
+	} {
+		if got := alert.ButtonRows(tt.width, tt.words); got != tt.want {
+			t.Errorf("%s: %d rows, want %d", name, got, tt.want)
 		}
 	}
 }

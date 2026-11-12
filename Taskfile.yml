@@ -58,6 +58,11 @@ tasks:
     cmds:
       - tools/e2e_schedule.sh
 
+  banner:layout:
+    desc: Lay real banners out headlessly (the banner script with the window never shown) and check the buttons fit; macOS only, nothing appears on the screen
+    cmds:
+      - python3 tools/banner_layout/check.py
+
   watch:invites:
     desc: Watch for meeting invites and record only their structure to private/captures/invites.jsonl; says ENOUGH after 5 (task 47)
     cmds:

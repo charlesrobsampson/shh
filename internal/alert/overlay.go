@@ -116,6 +116,9 @@ type bannerSpec struct {
 	DismissOnClick bool           `json:"dismissOnClick"`
 	// PreviewHeight is the height the banner grows to on Preview.
 	PreviewHeight int `json:"previewHeight"`
+	// ButtonRows is how many rows of buttons the banner has room for at the bottom (not counting the dismiss button, which is in the
+	// top right corner).
+	ButtonRows int `json:"buttonRows"`
 	// Managed says Go is on the other end of the banner's standard input and output, sending layout changes and reading events.
 	Managed bool `json:"managed"`
 	// Parent is the process id of the Go process that started the banner. The banner compares it with its own parent to tell that Go
@@ -152,7 +155,7 @@ func bannerEnv(r Request, at layoutMessage) []string {
 	spec, _ := json.Marshal(bannerSpec{
 		Header: strings.TrimSpace(r.Source), Title: r.Title, Body: r.Body, Bundle: r.BundleID, Color: config.ANSIHex(r.Style.Color), TextColor: config.ANSIHex(r.Style.TextColor), ButtonColor: buttonHex(r.Style.ButtonColor), ButtonTextColor: buttonHex(r.Style.ButtonTextColor), Width: r.Width, Height: r.Height,
 		Position: r.Style.Position, Indent: at.Indent, Offset: at.Offset, Duration: r.Style.DurationSecs, Sound: r.Style.Sound,
-		Buttons: buttons, DismissOnClick: r.DismissOnClick, PreviewHeight: r.PreviewHeight, Managed: true, Parent: os.Getpid(),
+		Buttons: buttons, DismissOnClick: r.DismissOnClick, PreviewHeight: r.PreviewHeight, ButtonRows: r.ButtonRows, Managed: true, Parent: os.Getpid(),
 	})
 	return []string{"SHH_BANNER=" + string(spec)}
 }
