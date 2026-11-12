@@ -82,6 +82,9 @@ func realEnv() cli.Env {
 	env.Guide = func(section, search string) error { return runTUI(cfg, section, search, true, "") }
 	env.WithStore = func(do func(*store.Store) error) error { return withStore(cfg.Paths.DB, do) }
 	env.Doctor = doctorEnv(cfg)
+	if home, err := os.UserHomeDir(); err == nil {
+		env.Notifications = ingest.NewMacOS(ingest.DefaultPaths(home)...)
+	}
 	for source := range cfg.Alert.Source {
 		env.AlertSources = append(env.AlertSources, source)
 	}

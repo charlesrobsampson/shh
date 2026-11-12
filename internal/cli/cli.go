@@ -13,6 +13,7 @@ import (
 
 	"github.com/charlesrobsampson/shh/internal/decide"
 	"github.com/charlesrobsampson/shh/internal/doctor"
+	"github.com/charlesrobsampson/shh/internal/ingest"
 	"github.com/charlesrobsampson/shh/internal/session"
 	"github.com/charlesrobsampson/shh/internal/store"
 )
@@ -50,6 +51,8 @@ type Env struct {
 	WithStore func(do func(*store.Store) error) error
 	// Doctor says how to look at the machine for shh doctor (the worker probe is added by the command). Nil when it is not available.
 	Doctor *doctor.Env
+	// Notifications reads the macOS notification records, for shh capture. Nil when it is not available.
+	Notifications ingest.Source
 	// Guide opens the guide in the terminal UI, at a section (its slug, or empty) and with a search made (or empty). Nil when it is not
 	// available, and the guide is printed instead.
 	Guide func(section, search string) error
@@ -82,6 +85,7 @@ type cli struct {
 	Routine  routineCmd  `cmd:"" help:"Saved sequences of focus sessions, such as a pomodoro (shh guide routine-commands explains them)."`
 	Worker   workerCmd   `cmd:"" help:"Start, stop and check the background worker (shh daemon runs it in the foreground)."`
 	Ls       lsCmd       `cmd:"" help:"List stored notifications, newest first (read-only): --source, --since, --status, --min-score, --flagged."`
+	Capture  captureCmd  `cmd:"" help:"Log raw notifications to a file under private/, to build rules from real examples."`
 	Rules    rulesCmd    `cmd:"" help:"Check what the rules did not understand (shh rules review)."`
 	Train    trainCmd    `cmd:"" help:"Label notifications (ids from shh ls), undo, reset or roll back the model, export or import labels."`
 	Doctor   doctorCmd   `cmd:"" help:"Check the setup: config, database, notification access, model, permissions and the worker."`
