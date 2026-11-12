@@ -230,7 +230,7 @@ func TestResetToSeedGoesBackToTheSeedAndRollbackBringsBackWhatWasLearned(t *test
 	if seeded < 0.5 {
 		opposite = 100
 	}
-	c.Model.Train(1, vec, classify.ExactLabel(opposite))
+	c.Model.Train(0, vec, classify.ExactLabel(opposite))
 	learned := c.Model.Predict(vec)
 	if learned == seeded {
 		t.Fatal("test setup: training changed nothing")
