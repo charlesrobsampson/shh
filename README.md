@@ -20,7 +20,9 @@ It needs one permission: **Accessibility**, which is how it hides notification b
 ## First run
 
 ```sh
-shh init            # writes ~/.config/shh/config.json with every option at its default, explained
+shh init            # writes ~/.config/shh/config.json (every option at its default, explained), checks the permissions shh needs,
+                    # and stores the last 3 days of notifications as unlabeled history for the Train tab (--history 0 skips that)
+shh doctor          # checks the whole setup: config, databases, model, permissions, the worker
 shh worker start    # starts the background worker (it also starts by itself when a command needs it)
 shh 75% 25m writing # a focus session: level, length, and what you are doing
 shh                 # opens the terminal UI
@@ -62,6 +64,17 @@ shh routine run pomodoro
 ```
 
 Routines can run other routines, loop forever, wait for you between steps, end at a time of day (`until 12:00`), look different from your other banners, and **start by themselves**: `"triggers": ["weekdays at 09:00 until 12:00"]`. Every run is kept, with what it held back and any notifications you flagged during it (`shh routine log`).
+
+## Looking at and teaching what shh did
+
+```sh
+shh ls --since 1d --status blocked --min-score 40   # what was held back, newest first (read-only; --json for scripts)
+shh train 101 102 --yes                              # these should have reached me (--no: rightly held back, --label 0-100: exact)
+shh train --undo | --reset | --rollback              # take back a label, go back to the seeded model, or to the last checkpoint
+shh train --export | --import                        # labelled notifications to and from private/training.jsonl (it holds their text)
+shh rules review                                     # calendar reminders shh could not read a time from, and how to teach it
+shh capture --app teams                              # log raw notifications to private/captures/raw.jsonl, to build rules from
+```
 
 ## The guide
 

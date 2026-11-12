@@ -4,15 +4,20 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/charlesrobsampson/shh/internal/config"
+	"github.com/charlesrobsampson/shh/internal/doctor"
 )
 
-type initCmd struct{}
+type initCmd struct {
+	History string `default:"3d" help:"Store what the notification database holds from this last while as unlabeled history for the Train tab (90m, 2h, 3d), or 0 for none."`
+}
 
 // Run sets shh up for a new user: it makes the configuration folder and writes config.json with every option at its default and
-// explained, so what can be changed is in front of them. A file that is there already is never touched. (The rest of first-time setup, such
-// as checking permissions, belongs here too as it is built.)
+// explained, so what can be changed is in front of them. A file that is there already is never touched. It then checks that shh can read
+// the notification database and use the accessibility API, and stores recent notifications as history so the Train tab has something to
+// label on the first day.
 func (c *initCmd) Run(env *Env) error {
 	if env.ConfigPath == "" {
 		return errors.New("this build does not know where the configuration lives")
@@ -27,6 +32,16 @@ func (c *initCmd) Run(env *Env) error {
 	} else {
 		fmt.Fprintf(env.Stdout, "%s already exists, so it was left as it is. shh config defaults prints the documented defaults to compare with.\n", env.ConfigPath)
 	}
+	var history time.Duration
+	if c.History != "" && c.History != "0" {
+		d, err := parseSince(c.History)
+		if err != nil {
+			return usagef("--history: %w", err)
+		}
+		history = d
+	}
+	c.checkAccess(env)
+	c.importHistory(env, history)
 	fmt.Fprintln(env.Stdout, "\nNext:")
 	fmt.Fprintln(env.Stdout, "  shh worker start         start the background worker (it also starts by itself when a command needs it)")
 	fmt.Fprintln(env.Stdout, "  shh routine example      print a routines file to start from (focus sessions in sequence, even by themselves on a schedule)")
@@ -67,4 +82,34 @@ type configDefaultsCmd struct{}
 func (c *configDefaultsCmd) Run(env *Env) error {
 	_, err := io.WriteString(env.Stdout, config.Template)
 	return err
+}
+
+// checkAccess says whether shh can read the notification database and use the accessibility API: the two permissions it needs.
+// It reports problems and goes on, because setup is not over for a missing permission.
+func (c *initCmd) checkAccess(env *Env) {
+	if env.Doctor == nil {
+		return
+	}
+	probes := doctor.Env{NotificationDB: env.Doctor.NotificationDB, Accessibility: env.Doctor.Accessibility}
+	fmt.Fprintln(env.Stdout)
+	doctor.Print(env.Stdout, doctor.Run(doctor.Standard(probes)))
+}
+
+// importHistory has the worker store recent notifications as history. A worker that cannot be had, or a database that cannot be read, is
+// said and left at that: the import can be run again with shh init.
+func (c *initCmd) importHistory(env *Env, since time.Duration) {
+	if since <= 0 {
+		return
+	}
+	fmt.Fprintln(env.Stdout)
+	if err := env.ensureWorker(); err != nil {
+		fmt.Fprintf(env.Stdout, "History not imported: the worker could not be started (%v). shh init --history %s tries again.\n", err, c.History)
+		return
+	}
+	n, err := env.client().ImportHistory(since)
+	if err != nil {
+		fmt.Fprintf(env.Stdout, "History not imported: %v\n", err)
+		return
+	}
+	fmt.Fprintf(env.Stdout, "Stored %d notification%s from the last %s as history, unlabeled: shh ui --tab train is where to label them.\n", n, plural(n), c.History)
 }

@@ -1,12 +1,17 @@
 package cli_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charlesrobsampson/shh/internal/config"
+	"github.com/charlesrobsampson/shh/internal/doctor"
+	"github.com/charlesrobsampson/shh/internal/ingest"
+	"github.com/charlesrobsampson/shh/internal/store"
 )
 
 func TestInitWritesTheDocumentedConfigOnceAndSaysWhatToDoNext(t *testing.T) {
@@ -60,5 +65,40 @@ func TestConfigPathShowAndDefaults(t *testing.T) {
 	r.env.ConfigShow = nil
 	if code := r.run("config", "show"); code == 0 {
 		t.Error("show with nothing to show is an error")
+	}
+}
+
+func TestInitStoresRecentNotificationsAsUnlabeledHistoryAndChecksAccess(t *testing.T) {
+	r := newRig(t, true)
+	r.env.ConfigPath = filepath.Join(t.TempDir(), "config.json")
+	r.env.Now = r.clock.Now
+	r.env.Doctor = &doctor.Env{
+		NotificationDB: func() (string, error) { return "", errors.New("operation not permitted") },
+		Accessibility:  func() (bool, error) { return true, nil },
+	}
+	at := r.clock.Now()
+	r.source.Add(ingest.Notification{BundleID: "com.microsoft.teams2", Title: "Ana", Body: "can you look at this", Delivered: at.Add(-2 * time.Hour)})
+	r.source.Add(ingest.Notification{BundleID: "com.microsoft.teams2", Title: "Bo", Body: "too old", Delivered: at.Add(-5 * 24 * time.Hour)})
+	r.source.Add(ingest.Notification{BundleID: "com.apple.mail", Title: "[shh] Banner", Body: "own", Delivered: at.Add(-time.Hour)})
+
+	out := r.mustRun("init")
+	if !strings.Contains(out, "FAIL  notification database") || !strings.Contains(out, "ok    accessibility") {
+		t.Errorf("the permissions are checked:\n%s", out)
+	}
+	if !strings.Contains(out, "Stored 1 notification from the last 3d") {
+		t.Errorf("out:\n%s", out)
+	}
+	all, _ := r.store.ListNotifications(store.Filter{})
+	if len(all) != 1 || all[0].Source != "Teams" || all[0].IsTrained || !strings.HasPrefix(all[0].Reason, "imported from history") {
+		t.Errorf("history = %+v", all)
+	}
+	if again := r.mustRun("init"); !strings.Contains(again, "Stored 0 notifications") {
+		t.Errorf("a second init stores nothing new:\n%s", again)
+	}
+	if none := r.mustRun("init", "--history", "0"); strings.Contains(none, "Stored") {
+		t.Errorf("--history 0 imports nothing:\n%s", none)
+	}
+	if code := r.run("init", "--history", "soon"); code != 2 {
+		t.Errorf("a bad --history exited %d", code)
 	}
 }

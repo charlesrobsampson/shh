@@ -247,6 +247,15 @@ func (c *Client) ResetModel() error {
 	return err
 }
 
+// ImportHistory has the worker store what macOS holds from the last while as unlabeled history, and says how many were new.
+func (c *Client) ImportHistory(since time.Duration) (int, error) {
+	resp, err := c.call(Request{Cmd: "import_history", DurationSecs: int(since / time.Second)})
+	if err != nil || resp.Train == nil {
+		return 0, err
+	}
+	return resp.Train.Count, nil
+}
+
 func (c *Client) RollbackModel() (int, error) {
 	resp, err := c.call(Request{Cmd: "model_rollback"})
 	if err != nil || resp.Train == nil {

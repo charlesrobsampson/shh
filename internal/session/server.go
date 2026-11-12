@@ -152,6 +152,15 @@ func (s *Server) handle(req Request) Response {
 		err = w.showAlert(req.Alert)
 	case "train", "undo":
 		return s.handleTraining(req)
+	case "import_history":
+		if req.DurationSecs <= 0 {
+			return Response{Code: "invalid", Error: "import_history needs a length of time"}
+		}
+		n, err := w.ImportHistory(w.cfg.Clock.Now().Add(-time.Duration(req.DurationSecs) * time.Second))
+		if err != nil {
+			return Response{Code: codeFor(err), Error: err.Error()}
+		}
+		return Response{OK: true, Train: &TrainView{Count: n}}
 	case "model_reset":
 		if err := w.ResetModel(); err != nil {
 			return Response{Code: codeFor(err), Error: err.Error()}
