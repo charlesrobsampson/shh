@@ -116,7 +116,7 @@ func doctorEnv(cfg config.Config) *doctor.Env {
 			return where, err
 		},
 		ModelMissing: classify.ErrNoEmbeddingModel, ModelOff: classify.ErrEmbeddingOff,
-		RulesPath:    rulesPath, LoadRules: func() error { _, err := rules.Load(rulesPath); return err },
+		RulesPath: rulesPath, LoadRules: func() error { _, err := rules.Load(rulesPath); return err },
 		RoutinesPath: routinesPath, LoadRoutines: func() error { _, err := routine.Load(routinesPath); return err },
 		Tool: func(name string) bool { _, err := exec.LookPath(name); return err == nil },
 		// Asks the system, headless, whether this process is trusted for accessibility.
