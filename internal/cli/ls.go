@@ -73,6 +73,7 @@ func (c *lsCmd) Run(env *Env) error {
 			fmt.Fprintln(env.Stdout, "No notifications match.")
 			return nil
 		}
+		fmt.Fprintf(env.Stdout, "%-6s %-10s %-8s %3s  %-10s %s\n", "ID", "WHEN", "STATUS", "PCT", "APP", "SENDER · TITLE")
 		for _, n := range rows {
 			fmt.Fprintln(env.Stdout, lsLine(n, now))
 		}
@@ -101,7 +102,7 @@ func parseSince(text string) (time.Duration, error) {
 	return days + d, nil
 }
 
-// lsLine is a notification on one line: "#41  Thu 09:41  blocked  42  Teams  Ana  the title".
+// lsLine is a notification on one line: "#41 Thu 09:41 blocked 42 Teams Ana · the title" under a header that names the columns (PCT is the model's score).
 func lsLine(n store.Notification, now time.Time) string {
 	var marks []string
 	if n.IsFlagged {

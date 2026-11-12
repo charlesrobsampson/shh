@@ -47,6 +47,10 @@ func TestLsListsNotificationsNewestFirstWithWhatShhDid(t *testing.T) {
 	r := lsRig(t)
 	out := r.mustRun("ls")
 	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if !strings.HasPrefix(lines[0], "ID") || !strings.Contains(lines[0], "STATUS") || !strings.Contains(lines[0], "PCT") || !strings.Contains(lines[0], "APP") {
+		t.Errorf("the first line should name the columns: %s", lines[0])
+	}
+	lines = lines[1:]
 	if len(lines) != 4 {
 		t.Fatalf("lines = %d:\n%s", len(lines), out)
 	}
