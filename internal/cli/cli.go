@@ -78,6 +78,7 @@ type cli struct {
 	Resume   resumeCmd   `cmd:"" help:"Resume a paused countdown."`
 	Routine  routineCmd  `cmd:"" help:"Saved sequences of focus sessions, such as a pomodoro (shh guide routine-commands explains them)."`
 	Worker   workerCmd   `cmd:"" help:"Start, stop and check the background worker (shh daemon runs it in the foreground)."`
+	Ls       lsCmd       `cmd:"" help:"List stored notifications, newest first (read-only): --source, --since, --status, --min-score, --flagged."`
 	Init     initCmd     `cmd:"" help:"Set shh up: write config.json with every option at its default, explained."`
 	Config   configCmd   `cmd:"" help:"Where the configuration is, what is in force, and the documented defaults."`
 	Guide    guideCmd    `cmd:"" help:"The guide to the terminal UI, routines and commands: open it, jump to a section, or search it."`
