@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/charlesrobsampson/shh/internal/config"
 )
@@ -78,10 +79,26 @@ func (d *Display) addButtons(req *Request, a Alert, acfg config.Alert) {
 	if len(req.Buttons) == 0 {
 		return
 	}
-	req.Height += ButtonRowHeight
+	// The dismiss button sits in the top right corner. The rest are in rows at the bottom, as many as their words need; a button that
+	// says something else once pressed gets room for the longer of the two.
+	var words []string
+	for _, b := range req.Buttons {
+		if b.Type == config.ButtonDismiss {
+			continue
+		}
+		longest := b.Label
+		for _, other := range []string{b.CollapseLabel, b.FlaggedLabel, b.TrainedLabel} {
+			if utf8.RuneCountInString(other) > utf8.RuneCountInString(longest) {
+				longest = other
+			}
+		}
+		words = append(words, longest)
+	}
+	req.ButtonRows = ButtonRows(req.Width, words)
+	req.Height += req.ButtonRows * ButtonRowHeight
 	for _, b := range req.Buttons {
 		if b.Type == config.ButtonPreview {
-			req.PreviewHeight = PreviewHeight(req.Width, a.Body) + headerHeight(a) + ButtonRowHeight
+			req.PreviewHeight = PreviewHeight(req.Width, a.Body) + headerHeight(a) + req.ButtonRows*ButtonRowHeight
 		}
 	}
 }
@@ -90,7 +107,7 @@ func (d *Display) addButtons(req *Request, a Alert, acfg config.Alert) {
 const ButtonAction = "action"
 
 // applies is where each button type says when it makes sense: goto needs an app to open, preview needs cut-off text, flag needs a
-// stored notification to mark, and train (task 45) will need one too.
+// stored notification to mark, and train needs a stored message that the model scored.
 func applies(buttonType string, width int, a Alert) bool {
 	switch buttonType {
 	case config.ButtonDismiss:
@@ -101,6 +118,10 @@ func applies(buttonType string, width int, a Alert) bool {
 		return Truncated(width, a.Body)
 	case config.ButtonFlag:
 		return a.NotificationID != 0
+	case config.ButtonTrain:
+		// Teaching the model that an alert was not important only means something for an alert the model scored. A calendar reminder is
+		// not scored (it comes through because the meeting is about to start), so there is nothing to teach.
+		return a.NotificationID != 0 && a.Kind == config.KindMessage
 	}
 	return false
 }

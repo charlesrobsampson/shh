@@ -898,3 +898,113 @@ func TestAButtonsLabelIsCenteredByHandNotWithTheAlignmentConstant(t *testing.T) 
 		t.Error("the label is centered both ways from its own size")
 	}
 }
+
+// ---- the train button ----
+
+func trainReq(title string, notificationID int64) alert.Request {
+	r := request(title, "top-right")
+	r.NotificationID = notificationID
+	r.Buttons = []config.Button{{Type: "train", Label: "Not important", Enabled: true, TrainedLabel: "Noted"}}
+	return r
+}
+
+func trainRig(t *testing.T) (*overlayRig, func() []int64) {
+	t.Helper()
+	var mu sync.Mutex
+	var calls []int64
+	r := &overlayRig{t: t}
+	r.overlay = alert.NewOverlay(alert.OverlayConfig{
+		Start: func(env []string, onEvent func(string)) (alert.Process, error) {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			p := &fakeProcess{env: env, finish: make(chan string, 1), onEvent: onEvent}
+			r.started = append(r.started, p)
+			return p, nil
+		},
+		OnTrain: func(id int64) { mu.Lock(); calls = append(calls, id); mu.Unlock() },
+	})
+	return r, func() []int64 { mu.Lock(); defer mu.Unlock(); return append([]int64(nil), calls...) }
+}
+
+func TestTheTrainButtonReachesTheHookOncePerBanner(t *testing.T) {
+	r, calls := trainRig(t)
+	r.show(trainReq("a", 41))
+	r.show(trainReq("b", 42))
+	r.process(0).emit("train 1")
+	r.process(0).emit("train 1") // pressed again: the button is disabled, but a stray event must not teach twice
+	r.process(1).emit("train 1")
+	if got := calls(); fmt.Sprint(got) != "[41 42]" {
+		t.Errorf("OnTrain calls = %v, want one per banner", got)
+	}
+}
+
+func TestATrainEventFromABannerWithNoNotificationOrThatHasGoneIsIgnored(t *testing.T) {
+	r, calls := trainRig(t)
+	r.show(trainReq("no notification", 0))
+	r.show(trainReq("goes away", 5))
+	r.process(0).emit("train 1")
+	r.process(1).finish <- "dismissed"
+	settle()
+	r.process(1).emit("train 1")
+	if got := calls(); len(got) != 0 {
+		t.Errorf("OnTrain called %v", got)
+	}
+	plain := newOverlayRig(t)
+	plain.show(trainReq("x", 1))
+	plain.process(0).emit("train 1") // no hook: harmless
+}
+
+func TestTheTrainButtonTravelsWithItsTrainedLabelAndTheScriptHandlesIt(t *testing.T) {
+	r := newOverlayRig(t)
+	r.show(trainReq("a", 3))
+	var spec struct {
+		Buttons []struct {
+			Type         string `json:"type"`
+			Label        string `json:"label"`
+			TrainedLabel string `json:"trainedLabel"`
+		} `json:"buttons"`
+	}
+	for _, kv := range r.process(0).env {
+		if v, ok := strings.CutPrefix(kv, "SHH_BANNER="); ok {
+			if err := json.Unmarshal([]byte(v), &spec); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if len(spec.Buttons) != 1 || spec.Buttons[0].Type != "train" || spec.Buttons[0].Label != "Not important" || spec.Buttons[0].TrainedLabel != "Noted" {
+		t.Errorf("buttons = %+v", spec.Buttons)
+	}
+	script := strings.Join(alert.OverlayCommand(trainReq("a", 3)).Args, " ")
+	for _, want := range []string{"'train'", "emit('train 1')", "trainedLabel", "setEnabled(false)", "trainedOnce"} {
+		if !strings.Contains(script, want) {
+			t.Errorf("the script does not mention %s", want)
+		}
+	}
+}
+
+func TestTheScriptPutsDismissInTheCornerAndSizesTheOtherButtonsToTheirWords(t *testing.T) {
+	script := strings.Join(alert.OverlayCommand(request("Ana", "top-right")).Args, " ")
+	for _, want := range []string{"cfg.buttonRows", "cornerWidth", "naturalWidth", "type === 'dismiss'", "cfg.width - 16 - width", "x + width > avail", "sizeWithAttributes", "saying[i]", "textWidth()"} {
+		if !strings.Contains(script, want) {
+			t.Errorf("the script does not mention %s", want)
+		}
+	}
+	if strings.Contains(script, "Math.min(96") {
+		t.Error("buttons are no longer capped at 96 points: that is what cut off the words of the wider ones")
+	}
+	r := newOverlayRig(t)
+	req := request("Ana", "top-right")
+	req.ButtonRows = 2
+	r.show(req)
+	var spec struct {
+		ButtonRows int `json:"buttonRows"`
+	}
+	for _, kv := range r.process(0).env {
+		if v, ok := strings.CutPrefix(kv, "SHH_BANNER="); ok {
+			_ = json.Unmarshal([]byte(v), &spec)
+		}
+	}
+	if spec.ButtonRows != 2 {
+		t.Errorf("the rows should travel with the banner: %+v", spec)
+	}
+}

@@ -67,6 +67,10 @@ func realEnv() cli.Env {
 		os.Exit(1)
 	}
 	env.SocketPath, env.ConfigDir, env.Label = cfg.Paths.Socket, cfg.Paths.Dir, cfg.Menubar.Label
+	if path, err := config.DefaultPath(); err == nil {
+		env.ConfigPath = path
+	}
+	env.ConfigShow = func() ([]byte, error) { return cfg.Effective() }
 	env.RoutinesPath, env.Stdin = routine.DefaultPath(cfg.Paths.Dir), os.Stdin
 	env.Spawn = func() error { return spawnDaemon(cfg) }
 	env.PersistedFocus = func() bool { return persistedFocus(cfg.Paths.DB) }
@@ -148,10 +152,11 @@ func persistedFocus(dbPath string) bool {
 
 // newAlerter draws alerts in the AppKit overlay and falls back to a Notification Center notification (titled with the own-banner
 // prefix so the suppressor lets it through) if the overlay cannot run or dies.
-func newAlerter(alertConfig func() config.Alert, onError func(error), onFlag func(notificationID int64, flagged bool), onAction func(token, id string)) (alert.Alerter, *alert.Overlay) {
+func newAlerter(alertConfig func() config.Alert, onError func(error), onFlag func(notificationID int64, flagged bool), onTrain func(notificationID int64), onAction func(token, id string)) (alert.Alerter, *alert.Overlay) {
 	fallback := alert.NewFallback(alert.FallbackConfig{OwnPrefix: ingest.OwnTitlePrefix})
 	overlay := alert.NewOverlay(alert.OverlayConfig{
 		OnFlag:   onFlag,
+		OnTrain:  onTrain,
 		OnAction: onAction,
 		OnFailure: func(req alert.Request, err error) {
 			onError(fmt.Errorf("the alert overlay failed (%w); using a notification instead", err))
@@ -212,6 +217,14 @@ func runDaemon(cfg config.Config) error {
 		}
 		if err := db.SetFlagged(id, flagged); err != nil {
 			onError(fmt.Errorf("changing the flag on notification %d: %w", id, err))
+		}
+	}, func(id int64) {
+		// The train button of a banner: this alert should not have come. It is the same answer as n on the Notifications tab (undo with u).
+		if id < 0 || worker == nil {
+			return // a sample from `shh alert test`, or no worker yet
+		}
+		if _, err := worker.Train(session.TrainRequest{NotificationID: id, Feedback: "n"}); err != nil && !errors.Is(err, session.ErrAlreadyTrained) {
+			onError(fmt.Errorf("the train button of a banner (notification %d): %w", id, err))
 		}
 	}, func(token, id string) {
 		if worker == nil {

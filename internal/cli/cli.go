@@ -35,6 +35,9 @@ type Env struct {
 	Stdin io.Reader
 	// Now is the clock, for showing when a routine starts next; time.Now when nil.
 	Now func() time.Time
+	// ConfigPath is config.json, which init writes and config path prints; ConfigShow renders the configuration in force.
+	ConfigPath string
+	ConfigShow func() ([]byte, error)
 	// RoutinesPath is the saved routines file, which the list and example commands read without a worker.
 	RoutinesPath string
 	// TUI opens the terminal UI. Nil when it is not available.
@@ -75,6 +78,8 @@ type cli struct {
 	Resume   resumeCmd   `cmd:"" help:"Resume a paused countdown."`
 	Routine  routineCmd  `cmd:"" help:"Saved sequences of focus sessions, such as a pomodoro (shh guide routine-commands explains them)."`
 	Worker   workerCmd   `cmd:"" help:"Start, stop and check the background worker (shh daemon runs it in the foreground)."`
+	Init     initCmd     `cmd:"" help:"Set shh up: write config.json with every option at its default, explained."`
+	Config   configCmd   `cmd:"" help:"Where the configuration is, what is in force, and the documented defaults."`
 	Guide    guideCmd    `cmd:"" help:"The guide to the terminal UI, routines and commands: open it, jump to a section, or search it."`
 	Alert    alertCmd    `cmd:"" help:"Alert tools."`
 	Replay   replayCmd   `cmd:"" help:"Run the classifier over a file of notifications and print each decision."`

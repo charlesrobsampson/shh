@@ -114,18 +114,22 @@ function label(text, size, bold, frame, lines) {
 }
 
 // Layout, in points, matching the Go side: 12 of padding, an optional 14 point header line naming the app, a 20 point title line, a
-// 4 point gap, 16 points per body line, and when there are buttons a 32 point row at the bottom. The caller sized the banner to its
-// text; text beyond what fits ends in an ellipsis.
+// 4 point gap, 16 points per body line, and a 32 point row at the bottom for each row of buttons (the dismiss button is not one of
+// them: it sits in the top right corner). The caller sized the banner to its text and its buttons; text beyond what fits ends in an
+// ellipsis.
 const headerRow = cfg.header ? 14 : 0;
-const buttonRow = cfg.buttons.length > 0 ? 32 : 0;
-const header = cfg.header ? label(cfg.header, 11, true, $.NSMakeRect(16, height - 12 - headerRow, cfg.width - 32, headerRow), 1) : null;
+const buttonRow = 32 * (cfg.buttonRows !== undefined ? cfg.buttonRows : (cfg.buttons.some(b => b.type !== 'dismiss') ? 1 : 0));
+// How much of the top right corner the dismiss button takes from the title and the app name, which are cut short to leave it room.
+let cornerWidth = 0;
+const textWidth = () => cfg.width - 32 - (cornerWidth ? cornerWidth + 8 : 0);
+const header = cfg.header ? label(cfg.header, 11, true, $.NSMakeRect(16, height - 12 - headerRow, textWidth(), headerRow), 1) : null;
 if (header) header.setTextColor(textColor.colorWithAlphaComponent(0.75));
-const title = label(cfg.title, 15, true, $.NSMakeRect(16, height - 12 - headerRow - 20, cfg.width - 32, 20), 1);
+const title = label(cfg.title, 15, true, $.NSMakeRect(16, height - 12 - headerRow - 20, textWidth(), 20), 1);
 const body = label(cfg.body, 13, false, $.NSMakeRect(16, 12 + buttonRow, cfg.width - 32, height - 12 - headerRow - 20 - 4 - 12 - buttonRow), 1);
 function layoutText() {
   const room = height - 12 - headerRow - 20 - 4 - 12 - buttonRow;
-  if (header) header.setFrame($.NSMakeRect(16, height - 12 - headerRow, cfg.width - 32, headerRow));
-  title.setFrame($.NSMakeRect(16, height - 12 - headerRow - 20, cfg.width - 32, 20));
+  if (header) header.setFrame($.NSMakeRect(16, height - 12 - headerRow, textWidth(), headerRow));
+  title.setFrame($.NSMakeRect(16, height - 12 - headerRow - 20, textWidth(), 20));
   body.setFrame($.NSMakeRect(16, 12 + buttonRow, cfg.width - 32, room));
   body.setMaximumNumberOfLines(Math.max(1, Math.floor(room / 16)));
 }
@@ -147,14 +151,17 @@ const buttonFill = cfg.buttonColor ? buttonHex(cfg.buttonColor)
 const buttonInk = cfg.buttonTextColor ? buttonHex(cfg.buttonTextColor) : (buttonFill ? textColor : null);
 // A painted button says its words through its label, and the button itself says nothing.
 const inks = [];
+const measure = text => $(text).sizeWithAttributes($.NSDictionary.dictionaryWithObjectForKey($.NSFont.systemFontOfSize(12), $.NSFontAttributeName)).width;
+const saying = []; // what each button says now
 function setButtonTitle(button, text, i) {
+  saying[i] = text;
   if (inks[i]) {
     inks[i].setStringValue($(text));
     button.setTitle($(''));
-    layoutButtons(); // the new words may be a different width, and are centered again
   } else {
     button.setTitle($(text));
   }
+  layoutButtons(); // the new words may be a different width, so the buttons are placed again
 }
 // A button with a color has no bezel of its own: a box of that color sits behind it as its face (the same kind of box the banner itself
 // is made of), its words are a label over the box, and layoutButtons keeps both under the button.
@@ -190,16 +197,45 @@ const buttons = cfg.buttons.map((spec, i) => {
   button.setTarget(actions);
   button.setAction('press:');
   button.setTitle($(spec.label));
+  saying[i] = spec.label;
   paintButton(button, i, spec.label);
   view.addSubview(button);
   return button;
 });
-// Visible buttons are laid out left to right in the configured order, evenly sharing the width.
+// How wide a button is, from the words on it: their width in the button's font and ten points of padding either side, which is what the
+// system makes a small button. The Go side works the same out from a table of the widths of the letters, so the rows it reserved are
+// the rows used here.
+function naturalWidth(i) {
+  return Math.ceil(measure(saying[i])) + 20;
+}
+
+// The dismiss button is in the top right corner, as wide as its words. The other visible buttons are laid out left to right in the
+// configured order, each as wide as its words, and go on to a new row when the next one would not fit. The rows were reserved by the
+// Go side from a generous guess at the widths, and these are the real ones, so there are never more rows than room.
 function layoutButtons() {
-  const shown = buttons.filter(b => !b.isHidden);
   const gap = 8;
-  const each = Math.min(96, (cfg.width - 32 - gap * (shown.length - 1)) / Math.max(shown.length, 1));
-  shown.forEach((b, n) => b.setFrame($.NSMakeRect(16 + n * (each + gap), 8, each, 24)));
+  const avail = cfg.width - 32;
+  const rows = Math.max(1, cfg.buttonRows || 1);
+  let x = 0;
+  let row = 0;
+  let corner = 0;
+  buttons.forEach((b, i) => {
+    if (b.isHidden) return;
+    const width = Math.min(naturalWidth(i), avail);
+    if (cfg.buttons[i].type === 'dismiss') {
+      b.setFrame($.NSMakeRect(cfg.width - 16 - width, height - 10 - 22, width, 22));
+      corner = width;
+      return;
+    }
+    if (x > 0 && x + width > avail) { row++; x = 0; }
+    // the first row is the top of the area under the text, so the rows that were not needed are the ones left empty at the bottom
+    b.setFrame($.NSMakeRect(16 + x, 8 + Math.max(0, rows - 1 - row) * 32, width, 24));
+    x += width + gap;
+  });
+  if (corner !== cornerWidth) {
+    cornerWidth = corner;
+    layoutText();
+  }
   buttons.forEach((b, i) => {
     const box = backdrops[i];
     if (!box) return;
@@ -243,6 +279,7 @@ emit('screen ' + Math.round(area.size.height - 2 * margin));
 
 let expanded = false;
 let flagged = false;
+let trainedOnce = false;
 function press(spec) {
   if (spec.type === 'dismiss') finish('dismissed');
   else if (spec.type === 'goto') finish('opened');
@@ -251,7 +288,16 @@ function press(spec) {
     emit('action ' + spec.id);
     finish('dismissed');
   }
-  else if (spec.type === 'flag') {
+  else if (spec.type === 'train') {
+    // One press: the notification is marked as one that should not have alerted, the button says so and stops being pressable.
+    const i = cfg.buttons.indexOf(spec);
+    if (!trainedOnce) {
+      trainedOnce = true;
+      setButtonTitle(buttons[i], spec.trainedLabel || 'Noted', i);
+      buttons[i].setEnabled(false);
+      emit('train 1');
+    }
+  } else if (spec.type === 'flag') {
     // A toggle: pressing it marks the notification for review in the Train tab and shows the flagged label; pressing it again clears
     // the mark. The script tells Go the state it now has (1 or 0), not just that it was pressed, so the two cannot drift apart.
     const button = buttons[cfg.buttons.indexOf(spec)];

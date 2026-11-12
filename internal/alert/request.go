@@ -25,6 +25,9 @@ type Request struct {
 	Buttons []config.Button
 	// DismissOnClick is set when the Dismiss button is turned off: a click anywhere outside the other buttons then dismisses.
 	DismissOnClick bool
+	// ButtonRows is how many rows the buttons at the bottom of the banner need (the dismiss button is not among them: it sits in the top
+	// right corner). The banner has room for that many.
+	ButtonRows int
 	// PreviewHeight is the height the banner grows to when Preview is pressed; 0 when there is no Preview button.
 	PreviewHeight int
 }
@@ -57,6 +60,29 @@ const (
 	avgCharWidth = 7.5
 	textMargin   = 32
 )
+
+// ButtonRows is how many rows of buttons a banner of this width needs for buttons that say these words, packed left to right with a gap
+// of 8 points: one when they fit, more when they do not. A button is as wide as its words and a little padding (see buttonSlot).
+func ButtonRows(width int, words []string) int {
+	if len(words) == 0 {
+		return 0
+	}
+	const gap = 8
+	avail := width - 2*bannerPadding - 8 // what the script has: the banner less 16 either side
+	rows, used := 1, 0
+	for _, w := range words {
+		slot := min(buttonSlot(w), avail)
+		if used > 0 && used+gap+slot > avail {
+			rows++
+			used = 0
+		}
+		if used > 0 {
+			used += gap
+		}
+		used += slot
+	}
+	return rows
+}
 
 // SizeWidth converts a configured size name to a banner width in points; an unknown name means medium.
 func SizeWidth(size string) int {

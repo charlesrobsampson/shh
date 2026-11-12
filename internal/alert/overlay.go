@@ -38,6 +38,9 @@ type OverlayConfig struct {
 	// OnFlag hears that the Flag button of a banner was switched on or off, with the id of the notification it is about, so it can be
 	// marked (or unmarked) for review. Called from the goroutine that reads the banner's output, only when the state changes. Optional.
 	OnFlag func(notificationID int64, flagged bool)
+	// OnTrain hears that the train button of a banner was pressed, with the id of the notification it is about, so the model can be taught
+	// that it should not have alerted. Called once per banner, from the goroutine that reads the banner's output. Optional.
+	OnTrain func(notificationID int64)
 	// OnAction hears that an action button of a banner was pressed: the alert's ActionToken and the button's ID. Called from the
 	// goroutine that reads the banner's output. Optional.
 	OnAction func(token, id string)
@@ -60,6 +63,7 @@ type Overlay struct {
 // banner is what the overlay knows about one banner on screen.
 type banner struct {
 	flagged   bool // the Flag button is on
+	trained   bool // the train button has been pressed
 	req       Request
 	proc      Process
 	height    int // the current height, which Preview and Collapse change
@@ -112,6 +116,9 @@ type bannerSpec struct {
 	DismissOnClick bool           `json:"dismissOnClick"`
 	// PreviewHeight is the height the banner grows to on Preview.
 	PreviewHeight int `json:"previewHeight"`
+	// ButtonRows is how many rows of buttons the banner has room for at the bottom (not counting the dismiss button, which is in the
+	// top right corner).
+	ButtonRows int `json:"buttonRows"`
 	// Managed says Go is on the other end of the banner's standard input and output, sending layout changes and reading events.
 	Managed bool `json:"managed"`
 	// Parent is the process id of the Go process that started the banner. The banner compares it with its own parent to tell that Go
@@ -128,6 +135,8 @@ type bannerButton struct {
 	FlaggedLabel string `json:"flaggedLabel,omitempty"`
 	// ID is what an action button reports when it is pressed.
 	ID string `json:"id,omitempty"`
+	// TrainedLabel is what the train button says once it has been pressed.
+	TrainedLabel string `json:"trainedLabel,omitempty"`
 }
 
 // buttonHex is a button color as #rrggbb, or "" for the system look (config.NoColor).
@@ -141,12 +150,12 @@ func buttonHex(code int) string {
 func bannerEnv(r Request, at layoutMessage) []string {
 	buttons := make([]bannerButton, 0, len(r.Buttons))
 	for _, b := range r.Buttons {
-		buttons = append(buttons, bannerButton{Type: b.Type, Label: b.Label, CollapseLabel: b.CollapseLabel, FlaggedLabel: b.FlaggedLabel, ID: b.ID})
+		buttons = append(buttons, bannerButton{Type: b.Type, Label: b.Label, CollapseLabel: b.CollapseLabel, FlaggedLabel: b.FlaggedLabel, ID: b.ID, TrainedLabel: b.TrainedLabel})
 	}
 	spec, _ := json.Marshal(bannerSpec{
 		Header: strings.TrimSpace(r.Source), Title: r.Title, Body: r.Body, Bundle: r.BundleID, Color: config.ANSIHex(r.Style.Color), TextColor: config.ANSIHex(r.Style.TextColor), ButtonColor: buttonHex(r.Style.ButtonColor), ButtonTextColor: buttonHex(r.Style.ButtonTextColor), Width: r.Width, Height: r.Height,
 		Position: r.Style.Position, Indent: at.Indent, Offset: at.Offset, Duration: r.Style.DurationSecs, Sound: r.Style.Sound,
-		Buttons: buttons, DismissOnClick: r.DismissOnClick, PreviewHeight: r.PreviewHeight, Managed: true, Parent: os.Getpid(),
+		Buttons: buttons, DismissOnClick: r.DismissOnClick, PreviewHeight: r.PreviewHeight, ButtonRows: r.ButtonRows, Managed: true, Parent: os.Getpid(),
 	})
 	return []string{"SHH_BANNER=" + string(spec)}
 }
@@ -254,6 +263,10 @@ func (o *Overlay) onEvent(b *banner, line string) {
 		o.flag(b, value == "1")
 		return
 	}
+	if field == "train" {
+		o.train(b)
+		return
+	}
 	if field == "action" {
 		o.mu.Lock()
 		ok := o.onScreenLocked(b)
@@ -297,6 +310,20 @@ func (o *Overlay) flag(b *banner, on bool) {
 	o.mu.Unlock()
 	if ok && o.cfg.OnFlag != nil {
 		o.cfg.OnFlag(id, on)
+	}
+}
+
+// train passes on the first press of a banner's train button, for a banner that is still on screen and is about a stored notification.
+func (o *Overlay) train(b *banner) {
+	o.mu.Lock()
+	ok := o.onScreenLocked(b) && b.req.NotificationID != 0 && !b.trained
+	if ok {
+		b.trained = true
+	}
+	id := b.req.NotificationID
+	o.mu.Unlock()
+	if ok && o.cfg.OnTrain != nil {
+		o.cfg.OnTrain(id)
 	}
 }
 
