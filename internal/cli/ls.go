@@ -102,7 +102,7 @@ func parseSince(text string) (time.Duration, error) {
 	return days + d, nil
 }
 
-// lsLine is a notification on one line: "#41 Thu 09:41 blocked 42 Teams Ana · the title" under a header that names the columns (PCT is the model's score).
+// lsLine is a notification on one line: "41 Thu 09:41 blocked 42 Teams Ana · the title" under a header that names the columns (PCT is the model's score).
 func lsLine(n store.Notification, now time.Time) string {
 	var marks []string
 	if n.IsFlagged {
@@ -111,7 +111,7 @@ func lsLine(n store.Notification, now time.Time) string {
 	if n.IsTrained {
 		marks = append(marks, "trained")
 	}
-	line := fmt.Sprintf("#%-5d %-10s %-8s %3d  %-10s %s", n.ID, n.Timestamp.In(now.Location()).Format("Mon 15:04"), n.Status, scorePercent(n), n.Source, oneLineText(joinTitle(n)))
+	line := fmt.Sprintf("%-6d %-10s %-8s %3d  %-10s %s", n.ID, n.Timestamp.In(now.Location()).Format("Mon 15:04"), n.Status, scorePercent(n), n.Source, oneLineText(joinTitle(n)))
 	if len(marks) > 0 {
 		line += "  [" + strings.Join(marks, ", ") + "]"
 	}
