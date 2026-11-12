@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charlesrobsampson/shh/internal/cli"
 	"github.com/charlesrobsampson/shh/internal/config"
 	"github.com/charlesrobsampson/shh/internal/doctor"
 	"github.com/charlesrobsampson/shh/internal/ingest"
@@ -100,5 +101,52 @@ func TestInitStoresRecentNotificationsAsUnlabeledHistoryAndChecksAccess(t *testi
 	}
 	if code := r.run("init", "--history", "soon"); code != 2 {
 		t.Errorf("a bad --history exited %d", code)
+	}
+}
+
+func TestInitDoesNotDownloadAnythingButSaysHowToGetTheModel(t *testing.T) {
+	r := newRig(t, false)
+	r.env.ConfigPath = filepath.Join(t.TempDir(), "config.json")
+	r.env.Model = &cli.ModelOps{Install: func() (string, error) { t.Error("init must not download the model"); return "", nil }}
+	if out := r.mustRun("init", "--history", "0"); !strings.Contains(out, "shh model install") || !strings.Contains(out, "optional") {
+		t.Errorf("out:\n%s", out)
+	}
+}
+
+func TestModelStatusInstallAndRemove(t *testing.T) {
+	r := newRig(t, false)
+	installed := false
+	r.env.Model = &cli.ModelOps{
+		Status: func() string {
+			return map[bool]string{true: "installed at /x/m.bin", false: "not installed"}[installed]
+		},
+		Install: func() (string, error) { installed = true; return "/x/m.bin", nil },
+		Remove: func() (bool, error) {
+			was := installed
+			installed = false
+			return was, nil
+		},
+	}
+	if out := r.mustRun("model"); !strings.Contains(out, "Embedding model: not installed.") {
+		t.Errorf("a bare model shows the status: %q", out)
+	}
+	if out := r.mustRun("model", "install"); !strings.Contains(out, "Downloaded the embedding model to /x/m.bin") || !strings.Contains(out, "shh worker restart") {
+		t.Errorf("out = %q", out)
+	}
+	if out := r.mustRun("model", "status"); !strings.Contains(out, "installed at /x/m.bin") {
+		t.Errorf("out = %q", out)
+	}
+	if out := r.mustRun("model", "remove"); !strings.Contains(out, "Removed") {
+		t.Errorf("out = %q", out)
+	}
+	if out := r.mustRun("model", "remove"); !strings.Contains(out, "No downloaded model") {
+		t.Errorf("out = %q", out)
+	}
+	r.env.Model = &cli.ModelOps{Built: true, Off: true, Status: func() string { return "built into this shh" }}
+	if code := r.run("model", "remove"); code != 1 || !strings.Contains(r.err.String(), "embedding_model") {
+		t.Errorf("a built in model cannot be removed, only turned off: %d %s", code, r.err.String())
+	}
+	if out := r.mustRun("model", "status"); !strings.Contains(out, "turned off in config.json") {
+		t.Errorf("out = %q", out)
 	}
 }

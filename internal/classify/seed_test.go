@@ -250,3 +250,44 @@ func TestResetToSeedGoesBackToTheSeedAndRollbackBringsBackWhatWasLearned(t *test
 	}
 	_ = entries
 }
+
+func TestWhatTheUserTaughtSurvivesANewFeatureVersion(t *testing.T) {
+	s := memoryStore(t)
+	before := newClassifier(t, s)
+	threshold := 65
+	in := classify.Input{Source: "Teams", Sender: "Ana", Title: "Ana", Body: "the quarterly newsletter is out"}
+	id, _, err := s.InsertNotification(store.Notification{Source: "Teams", Sender: "Ana", Title: "Ana", Body: in.Body, Timestamp: t0, Status: store.StatusAlerted,
+		SourceRecID: 1, ThresholdAtDecision: &threshold})
+	if err != nil {
+		t.Fatal(err)
+	}
+	label := 100
+	if _, err := before.Model.Train(id, before.Features.Extract(in), classify.ExactLabel(label)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Train(id, store.Training{Label: &label}); err != nil {
+		t.Fatal(err)
+	}
+	taught := before.Model.Predict(before.Features.Extract(in))
+
+	// The embedding model arrives: the feature version changes, so the saved weights no longer apply.
+	after, err := classify.NewClassifier(s, defaultRules(t), fixtureEmbedder(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Features.Version() == before.Features.Version() {
+		t.Fatal("test setup: the version should change with the embedding model")
+	}
+	untaught, err := classify.NewClassifier(memoryStore(t), defaultRules(t), fixtureEmbedder(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := after.Model.Predict(after.Features.Extract(in))
+	plain := untaught.Model.Predict(untaught.Features.Extract(in))
+	if !(got > plain) {
+		t.Errorf("with the label replayed the score is %v, without it %v (it was %v before): it should be higher", got, plain, taught)
+	}
+	if _, ok := after.Model.LastTraining(); !ok {
+		t.Error("the replayed labels are ordinary training, so they can be undone")
+	}
+}

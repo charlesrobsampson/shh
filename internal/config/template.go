@@ -56,6 +56,14 @@ const Template = `// shh configuration. Every option is shown at its default, so
     // , "model": "llama3.2"               // ollama's default; claude's is claude-haiku-5-5
   },
 
+  "classifier": {
+    // How shh scores notifications. Its second layer, word meaning, needs a small embedding model (8 MB) that is optional: a release build
+    // has it inside and a plain build gets it with "shh model install". "auto" uses it when it is there, "off" never does, even when it
+    // is. Without it shh works on its first two layers, a little less well. Changing this restarts what the model has learned from the
+    // seed and your labels (they are replayed), so it takes shh worker restart.
+    "embedding_model": "auto"
+  },
+
   // How long shh keeps what it stores. The text of your notifications is private, so nothing is kept forever. Cleanup runs when the
   // worker starts and about every six hours after.
   "retention": {

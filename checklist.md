@@ -419,13 +419,15 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Manual check: none.
 
 ### 38 · Packaging and README
-- [ ] Done
+- [x] Done
 - Session: _(fill on start)_
 - Branch: `task/38-packaging` · Depends: 36
 - Read: `plan.md` §12
 - Build: release build target (a `Taskfile.yml` task, optionally using goreleaser) that fetches the model asset and builds with `-tags embedmodel`; a Taskfile task that publishes the quantized model as the `models-vN` release asset; README note that `go install` users need network once for `shh init`, README (install, permissions setup including Accessibility and Outlook's "Display new message alert on desktop", config examples), man-style `--help` text review.
 - README must include (user, 2026-11-10): how to start the worker at login so routine triggers fire (`shh daemon` added to a Login Item script, a launchd agent or the shell profile; the guide's Triggers section already says it), and that `shh guide` is the documentation of the UI, routines and commands.
 - **README written early (user, 2026-11-12):** `README.md` has install, first run (`shh init` writes the config with every option at its default and explained, so a new user sees what there is to change), the config commands, **starting the worker at login** (`shh worker start`, or `shh daemon` for launchd), routines and the guide. Still to do for this task: the release build target, the model asset, and checking a clean install follows it.
+- **Built (2026-11-12):** `task build:release` is the **lightweight release (user, 2026-11-12): no model inside, the model is added with `shh model install`**; `task build:release:full` is the optional one-file build (`model:verify` checks the pinned sha256, copies the asset into `internal/classify/assets`, builds `dist/shh-full` with `-tags embedmodel`, prints the doctor line), `task model:publish` (`gh release create models-v1`; **not run yet: it publishes**), **the model is opt-in (user, 2026-11-12):** `shh init` downloads nothing and only mentions it; `shh model status|install|remove` (`classify.DownloadModel`, checksum checked before the file is put in place; a build with the model inside cannot remove it); `config.json` `classifier.embedding_model` is `auto` (use it when there) or `off`; `shh doctor` reports a missing or switched-off model as ok, not a warning; README section. Because the feature version changes with the embedding model, the classifier now **replays the user's labelled notifications** into the fresh weights (`Classifier.relearn`). Tests that assume no embedded model are skipped under `-tags embedmodel`.
+- **Done (2026-11-12):** `models-v1` is published (https://github.com/charlesrobsampson/shh/releases/tag/models-v1, 7,926,543 bytes, sha256 pinned). Clean-install check with `dist/shh` (the lightweight release) in a temporary `HOME`: `init --history 0` wrote the config and checked the permissions, `doctor` ok with the model optional, `model install` downloaded and verified it, `doctor` then showed it, `config show`, `guide --list`. **Not exercised: starting the worker and menu bar** (they affect the desktop), which the README's `shh worker start` step covers.
 - Tests: none.
 - Manual check: a clean install from the built artifact follows the README successfully.
 

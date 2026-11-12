@@ -51,6 +51,8 @@ type Env struct {
 	Model func() (where string, err error)
 	// ModelMissing is the error Model returns when there is no model at all, which only costs the second layer of the classifier.
 	ModelMissing error
+	// ModelOff is the error Model returns when the configuration turns the model off.
+	ModelOff error
 	// LoadRules and LoadRoutines read the two files, which may not be there (that is fine).
 	RulesPath, RoutinesPath string
 	LoadRules, LoadRoutines func() error
@@ -107,8 +109,10 @@ func Standard(e Env) []Check {
 			switch {
 			case err == nil:
 				return OK, where, ""
+			case e.ModelOff != nil && errors.Is(err, e.ModelOff):
+				return OK, "turned off in config.json (classifier.embedding_model)", ""
 			case e.ModelMissing != nil && errors.Is(err, e.ModelMissing):
-				return Warn, "there is no embedding model, so the classifier runs without its second layer", "put the model file in the models folder (see the README)"
+				return OK, "not installed (optional): shh works on its first two layers; shh model install adds the second", ""
 			default:
 				return Fail, err.Error(), "download the model again"
 			}

@@ -83,6 +83,7 @@ func realEnv() cli.Env {
 	env.Guide = func(section, search string) error { return runTUI(cfg, section, search, true, "") }
 	env.WithStore = func(do func(*store.Store) error) error { return withStore(cfg.Paths.DB, do) }
 	env.Doctor = doctorEnv(cfg)
+	env.Model = modelOps(cfg)
 	env.Retention = func() store.Retention {
 		return store.Retention{TTL: days(cfg.Retention.TTLDays), KeepUntrained: days(cfg.Retention.KeepUntrainedDays)}
 	}
@@ -111,11 +112,11 @@ func doctorEnv(cfg config.Config) *doctor.Env {
 		},
 		NotificationDB: func() (string, error) { return ingest.NewMacOS(ingest.DefaultPaths(home)...).Check() },
 		Model: func() (string, error) {
-			_, where, err := classify.ResolveEmbedder(filepath.Join(cfg.Paths.Dir, "models"), classify.DefaultModelSHA256)
+			_, where, err := resolveModel(cfg)
 			return where, err
 		},
-		ModelMissing: classify.ErrNoEmbeddingModel,
-		RulesPath:    rulesPath, LoadRules: func() error { _, err := rules.Load(rulesPath); return err },
+		ModelMissing: classify.ErrNoEmbeddingModel, ModelOff: classify.ErrEmbeddingOff,
+		RulesPath: rulesPath, LoadRules: func() error { _, err := rules.Load(rulesPath); return err },
 		RoutinesPath: routinesPath, LoadRoutines: func() error { _, err := routine.Load(routinesPath); return err },
 		Tool: func(name string) bool { _, err := exec.LookPath(name); return err == nil },
 		// Asks the system, headless, whether this process is trusted for accessibility.
@@ -131,6 +132,52 @@ func doctorEnv(cfg config.Config) *doctor.Env {
 		e.ConfigPath = path
 	}
 	return e
+}
+
+// resolveModel finds the embedding model unless the configuration turns it off.
+func resolveModel(cfg config.Config) (classify.Embedder, string, error) {
+	if cfg.Classifier.EmbeddingModel == "off" {
+		return nil, "", classify.ErrEmbeddingOff
+	}
+	return classify.ResolveEmbedder(filepath.Join(cfg.Paths.Dir, "models"), classify.DefaultModelSHA256)
+}
+
+// modelOps is what shh model install, remove and status do.
+func modelOps(cfg config.Config) *cli.ModelOps {
+	dir := filepath.Join(cfg.Paths.Dir, "models")
+	file := filepath.Join(dir, classify.ModelFileName)
+	return &cli.ModelOps{
+		Status: func() string {
+			_, where, err := classify.ResolveEmbedder(dir, classify.DefaultModelSHA256)
+			switch {
+			case err == nil && where == "embedded":
+				return "built into this shh"
+			case err == nil:
+				return "installed at " + where
+			case errors.Is(err, classify.ErrNoEmbeddingModel):
+				return "not installed"
+			}
+			return "damaged: " + err.Error()
+		},
+		Off: cfg.Classifier.EmbeddingModel == "off",
+		Install: func() (string, error) {
+			if classify.HasEmbeddedModel() {
+				return "", errors.New("this shh has the model built in, nothing to install")
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+			defer cancel()
+			path, err := classify.DownloadModel(ctx, dir, classify.DefaultModelURL, classify.DefaultModelSHA256, nil)
+			return path, err
+		},
+		Remove: func() (bool, error) {
+			err := os.Remove(file)
+			if errors.Is(err, os.ErrNotExist) {
+				return false, nil
+			}
+			return err == nil, err
+		},
+		Built: classify.HasEmbeddedModel(),
+	}
 }
 
 func days(n int) time.Duration { return time.Duration(n) * 24 * time.Hour }
@@ -235,8 +282,8 @@ func runDaemon(cfg config.Config) error {
 	if err != nil {
 		return err
 	}
-	embedder, _, err := classify.ResolveEmbedder(filepath.Join(cfg.Paths.Dir, "models"), classify.DefaultModelSHA256)
-	if errors.Is(err, classify.ErrNoEmbeddingModel) {
+	embedder, _, err := resolveModel(cfg)
+	if errors.Is(err, classify.ErrNoEmbeddingModel) || errors.Is(err, classify.ErrEmbeddingOff) {
 		logger.Println("note:", err, "- running without the embedding layer")
 		embedder = nil
 	} else if err != nil {

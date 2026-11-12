@@ -15,6 +15,17 @@ task build          # builds ./shh   (or: go build -o shh ./cmd/shh)
 mv shh /usr/local/bin/   # or anywhere on your PATH
 ```
 
+### The embedding model
+
+shh scores notifications in layers. The first two (fixed rules, and the words, senders and apps it has seen) always work; the third, word meaning, uses a small **optional** embedding model (8 MB). You choose:
+
+- A plain `task build` has no model and needs no network: shh works on its first two layers, a little less well. `shh init` mentions the option and downloads nothing.
+- `shh model install` downloads it once into `~/.config/shh/models/`, checked against a pinned checksum; `shh model status` says whether it is there and `shh model remove` deletes it again.
+- `task build:release` makes the lightweight `dist/shh` (no model); `task build:release:full` makes `dist/shh-full` with the model built in, for someone who wants one file and no download.
+- `"classifier": {"embedding_model": "off"}` in `config.json` ignores the model even where it is.
+
+After any of these, `shh worker restart`. The learned weights start from the seed again and **replay what you have labelled**, so your training is not lost.
+
 It needs one permission: **Accessibility**, which is how it hides notification banners while focus is on (System Settings, Privacy & Security, Accessibility). It reads the notification database as you, which needs nothing extra on the macOS it was built on.
 
 ## First run
@@ -95,6 +106,9 @@ In the terminal UI, `?` shows the same guide.
 ```sh
 task check     # format check, vet and test: run before every commit
 task build     # build ./shh
+task build:release   # build dist/shh, lightweight (no embedding model; shh model install adds it)
+task build:release:full   # build dist/shh-full with the embedding model inside
+task model:publish   # publish the model as the models-v1 release asset that shh init downloads
 ```
 
 `plan.md` and `manifest.md` describe the design, `checklist.md` the work done and still to do, `process.md` how the work is done.

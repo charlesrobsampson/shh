@@ -43,6 +43,7 @@ func (c *initCmd) Run(env *Env) error {
 	c.checkAccess(env)
 	c.importHistory(env, history)
 	fmt.Fprintln(env.Stdout, "\nNext:")
+	fmt.Fprintln(env.Stdout, "  shh model install        optional: the embedding model, a second scoring layer (8 MB download; shh works without it)")
 	fmt.Fprintln(env.Stdout, "  shh worker start         start the background worker (it also starts by itself when a command needs it)")
 	fmt.Fprintln(env.Stdout, "  shh routine example      print a routines file to start from (focus sessions in sequence, even by themselves on a schedule)")
 	fmt.Fprintln(env.Stdout, "  shh alert test           see a sample of each banner style")
