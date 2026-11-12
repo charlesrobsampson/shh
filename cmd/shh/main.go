@@ -67,6 +67,10 @@ func realEnv() cli.Env {
 		os.Exit(1)
 	}
 	env.SocketPath, env.ConfigDir, env.Label = cfg.Paths.Socket, cfg.Paths.Dir, cfg.Menubar.Label
+	if path, err := config.DefaultPath(); err == nil {
+		env.ConfigPath = path
+	}
+	env.ConfigShow = func() ([]byte, error) { return cfg.Effective() }
 	env.RoutinesPath, env.Stdin = routine.DefaultPath(cfg.Paths.Dir), os.Stdin
 	env.Spawn = func() error { return spawnDaemon(cfg) }
 	env.PersistedFocus = func() bool { return persistedFocus(cfg.Paths.DB) }
