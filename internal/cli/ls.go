@@ -108,7 +108,9 @@ func lsLine(n store.Notification, now time.Time) string {
 	if n.IsFlagged {
 		marks = append(marks, "flagged")
 	}
-	if n.IsTrained {
+	if n.AutoTrained {
+		marks = append(marks, "auto-trained")
+	} else if n.IsTrained {
 		marks = append(marks, "trained")
 	}
 	line := fmt.Sprintf("%-6d %-10s %-8s %3d  %-10s %s", n.ID, n.Timestamp.In(now.Location()).Format("Mon 15:04"), n.Status, scorePercent(n), n.Source, oneLineText(joinTitle(n)))
@@ -141,7 +143,7 @@ func oneLineText(s string) string {
 func lsRecord(n store.Notification) map[string]any {
 	rec := map[string]any{
 		"id": n.ID, "time": n.Timestamp.UTC().Format(time.RFC3339), "source": n.Source, "sender": n.Sender, "title": n.Title, "status": string(n.Status),
-		"score": scorePercent(n), "boost": int(n.Boost*100 + 0.5), "reason": n.Reason, "flagged": n.IsFlagged, "trained": n.IsTrained, "read": n.IsRead,
+		"score": scorePercent(n), "boost": int(n.Boost*100 + 0.5), "reason": n.Reason, "flagged": n.IsFlagged, "trained": n.IsTrained, "auto_trained": n.AutoTrained, "read": n.IsRead,
 	}
 	if n.ThresholdAtDecision != nil {
 		rec["level"] = *n.ThresholdAtDecision

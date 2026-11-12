@@ -8,8 +8,8 @@ import (
 )
 
 // Watcher hands out the configuration and reads config.json again when the file has changed, so a banner shows the colors, sound and
-// position as they are now and not as they were when the worker started. Only the alert settings are meant to be taken from it: the rest
-// of the configuration (where files live, the menu bar) is used once, at start.
+// position as they are now and not as they were when the worker started. Only the alert and retention settings are meant to be taken
+// from it: the rest of the configuration (where files live, the menu bar) is used once, at start.
 //
 // A file that cannot be read after an edit (a typo mid-way) leaves the last good configuration in use, and the problem is reported once.
 type Watcher struct {
@@ -61,6 +61,9 @@ func (w *Watcher) Config() Config {
 	}
 	return w.cfg
 }
+
+// Retention is the retention part of Config: how long notifications are kept, as the file says now.
+func (w *Watcher) Retention() Retention { return w.Config().Retention }
 
 // Alert is the alert part of Config, for passing where a function that gives it is wanted.
 func (w *Watcher) Alert() Alert { return w.Config().Alert }

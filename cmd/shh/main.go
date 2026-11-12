@@ -83,6 +83,9 @@ func realEnv() cli.Env {
 	env.Guide = func(section, search string) error { return runTUI(cfg, section, search, true, "") }
 	env.WithStore = func(do func(*store.Store) error) error { return withStore(cfg.Paths.DB, do) }
 	env.Doctor = doctorEnv(cfg)
+	env.Retention = func() store.Retention {
+		return store.Retention{TTL: days(cfg.Retention.TTLDays), KeepUntrained: days(cfg.Retention.KeepUntrainedDays)}
+	}
 	if home, err := os.UserHomeDir(); err == nil {
 		env.Notifications = ingest.NewMacOS(ingest.DefaultPaths(home)...)
 	}
@@ -129,6 +132,8 @@ func doctorEnv(cfg config.Config) *doctor.Env {
 	}
 	return e
 }
+
+func days(n int) time.Duration { return time.Duration(n) * 24 * time.Hour }
 
 func loadConfig() (config.Config, error) {
 	path, err := config.DefaultPath()
@@ -288,6 +293,15 @@ func runDaemon(cfg config.Config) error {
 		PlaySound:   playSystemSound,
 		OpenUI:      openUI,
 		AlertConfig: alertConfig,
+		// How long notifications are kept, and whether the ones nobody labelled are taken as handled correctly.
+		// config.json is looked at again each time, so an edit applies to the next pass (every six hours) without a restart.
+		RetentionNow: func() (store.Retention, bool, time.Duration) {
+			r := cfg.Retention
+			if watcher != nil {
+				r = watcher.Retention()
+			}
+			return store.Retention{TTL: days(r.TTLDays), KeepUntrained: days(r.KeepUntrainedDays)}, r.AutoTrain, days(r.AutoTrainAfterDays)
+		},
 	})
 	if err != nil {
 		return err

@@ -191,4 +191,8 @@ CREATE TABLE schedule_events (
 	// How many notifications were flagged for review during a run, counted when it ended (task 52): a flag is cleared by training the
 	// notification, so counting later would lose the ones that have been reviewed since.
 	`ALTER TABLE routine_runs ADD COLUMN flagged INTEGER NOT NULL DEFAULT 0;`,
+
+	// A notification that was trained by shh itself, because it reached the end of its time unlabelled and was taken as handled correctly
+	// (task 37), as opposed to one the user labelled.
+	`ALTER TABLE notifications ADD COLUMN auto_trained BOOLEAN NOT NULL DEFAULT 0;`,
 }

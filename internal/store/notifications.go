@@ -49,8 +49,11 @@ type Notification struct {
 	IsRead           bool
 	IsDismissedInbox bool
 	IsTrained        bool
-	UserFeedback     string // "y", "n" or empty
-	UserLabel        *int   // exact 0-100 label, nil for quick feedback or untrained
+	// AutoTrained is set when shh trained the notification itself (it went unlabelled to the end of its time and was taken as right),
+	// not the user.
+	AutoTrained  bool
+	UserFeedback string // "y", "n" or empty
+	UserLabel    *int   // exact 0-100 label, nil for quick feedback or untrained
 }
 
 // View selects one of the TUI lists.
@@ -82,7 +85,7 @@ type Training struct {
 
 const notificationColumns = `id, source, sender, title, body, CAST(timestamp AS TEXT), status, predicted_score, time_sensitivity_boost,
 	reason, bundle_id, source_rec_id, threshold_at_decision, session_id, summary,
-	is_read, is_dismissed_inbox, is_trained, user_feedback, user_label, thread, subtitle, category, is_flagged`
+	is_read, is_dismissed_inbox, is_trained, user_feedback, user_label, thread, subtitle, category, is_flagged, auto_trained`
 
 // InsertNotification stores n and reports whether it was new. A row with the same macOS record id and delivery time is ignored.
 func (s *Store) InsertNotification(n Notification) (id int64, inserted bool, err error) {
@@ -217,7 +220,7 @@ func (s *Store) Train(id int64, t Training) error {
 }
 
 func (s *Store) Untrain(id int64) error {
-	return s.update(id, `UPDATE notifications SET is_trained = 0, user_feedback = NULL, user_label = NULL WHERE id = ?`, id)
+	return s.update(id, `UPDATE notifications SET is_trained = 0, auto_trained = 0, user_feedback = NULL, user_label = NULL WHERE id = ?`, id)
 }
 
 func (s *Store) update(id int64, query string, args ...any) error {
@@ -244,7 +247,7 @@ func scanNotification(row scanner) (Notification, error) {
 	)
 	err := row.Scan(&n.ID, &n.Source, &n.Sender, &title, &n.Body, &stamp, &status, &n.Score, &n.Boost,
 		&reason, &bundle, &recID, &threshold, &session, &summary,
-		&n.IsRead, &n.IsDismissedInbox, &n.IsTrained, &feedback, &label, &thread, &subtitle, &category, &n.IsFlagged)
+		&n.IsRead, &n.IsDismissedInbox, &n.IsTrained, &feedback, &label, &thread, &subtitle, &category, &n.IsFlagged, &n.AutoTrained)
 	if err != nil {
 		return Notification{}, err
 	}

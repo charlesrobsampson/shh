@@ -12,8 +12,8 @@ import (
 // what there is to change. Loading it gives exactly the configuration that no file at all gives (a test keeps it that way). Options that
 // have no default value (they are off until set) are there as comments to uncomment.
 const Template = `// shh configuration. Every option is shown at its default, so this file changes nothing until you edit it. Comments (// and /* */)
-// and trailing commas are allowed. A change to the "alert" section shows in the next banner; the rest is read when the worker starts
-// (shh worker restart). "shh config show" prints what is in force, and "shh guide config" explains it all.
+// and trailing commas are allowed. A change to the "alert" section shows in the next banner, "retention" applies at the next cleanup (about every
+// six hours), "summarizer" when the terminal UI is opened; only "menubar" and "paths" need shh worker restart. "shh config show" prints what is in force, and "shh guide config" explains it all.
 {
   "alert": {
     // How banners look. Colors are numbers from the 8-bit ANSI palette, 0-255 (shh alert colors shows it; chart:
@@ -54,6 +54,18 @@ const Template = `// shh configuration. Every option is shown at its default, so
     "backend": "none"
     // , "url": "http://localhost:11434"   // the server: this is ollama's default; claude's is https://api.anthropic.com
     // , "model": "llama3.2"               // ollama's default; claude's is claude-haiku-5-5
+  },
+
+  // How long shh keeps what it stores. The text of your notifications is private, so nothing is kept forever. Cleanup runs when the
+  // worker starts and about every six hours after.
+  "retention": {
+    "ttl_days": 30,             // a notification is deleted after this many days...
+    "keep_untrained_days": 90,  // ...except one still waiting for you to review it (held back, or flagged, and not labelled yet), which stays this long
+    // A notification you never labelled can be taken as handled correctly: one that was held back is trained as rightly held back, one
+    // that was let through as rightly let through. Flagged ones are left for you. Off until you switch it on. It happens after
+    // auto_train_after_days, which cannot be more than ttl_days (a notification must not be deleted before it could be trained on).
+    "auto_train": false,
+    "auto_train_after_days": 30
   }
 
   // Where shh keeps its files. These are relative to this folder unless they start with a slash.
