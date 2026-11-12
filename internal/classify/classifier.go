@@ -40,20 +40,34 @@ func NewClassifier(s *store.Store, r rules.Rules, embedder Embedder) (*Classifie
 	if err != nil {
 		return nil, err
 	}
+	c := &Classifier{Features: features, Model: model, Booster: NewBooster(r, s)}
 	if model.Fresh() {
-		seed, err := SeedExamples()
-		if err != nil {
-			return nil, err
-		}
-		examples := make([]Example, len(seed))
-		for i, ex := range seed {
-			examples[i] = Example{Vector: features.Extract(ex.Input), Label: ex.Label}
-		}
-		if err := model.Pretrain(examples, seedEpochs); err != nil {
+		if err := c.pretrain(); err != nil {
 			return nil, err
 		}
 	}
-	return &Classifier{Features: features, Model: model, Booster: NewBooster(r, s)}, nil
+	return c, nil
+}
+
+func (c *Classifier) pretrain() error {
+	seed, err := SeedExamples()
+	if err != nil {
+		return err
+	}
+	examples := make([]Example, len(seed))
+	for i, ex := range seed {
+		examples[i] = Example{Vector: c.Features.Extract(ex.Input), Label: ex.Label}
+	}
+	return c.Model.Pretrain(examples, seedEpochs)
+}
+
+// ResetToSeed forgets everything that was learned from the user and goes back to the seeded model. The old weights are kept under a
+// checkpoint, so Model.Rollback brings them back.
+func (c *Classifier) ResetToSeed() error {
+	if err := c.Model.Reset(); err != nil {
+		return err
+	}
+	return c.pretrain()
 }
 
 // Score classifies a notification delivered at the given time. Call it before the notification is stored, so a burst is not

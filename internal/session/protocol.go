@@ -200,6 +200,8 @@ type TrainView struct {
 	Before         int   `json:"before"`
 	After          int   `json:"after"`
 	Updated        bool  `json:"updated"`
+	// Count is how many notifications a rollback marked untrained again.
+	Count int `json:"count,omitempty"`
 }
 
 // StatusView is the stack of focus levels as clients see it.
@@ -276,6 +278,7 @@ var codes = map[string]error{
 	"invalid":         ErrInvalid,
 	"already_trained": ErrAlreadyTrained,
 	"nothing_to_undo": ErrNothingToUndo,
+	"no_checkpoint":   ErrNoCheckpoint,
 	"not_found":       ErrNoSuchNotification,
 	"routine_running": ErrRoutineRunning,
 	"no_routine":      ErrNoRoutine,

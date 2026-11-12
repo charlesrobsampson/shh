@@ -24,6 +24,7 @@ import (
 	"github.com/charlesrobsampson/shh/internal/cli"
 	"github.com/charlesrobsampson/shh/internal/clock"
 	"github.com/charlesrobsampson/shh/internal/config"
+	"github.com/charlesrobsampson/shh/internal/doctor"
 	"github.com/charlesrobsampson/shh/internal/ingest"
 	"github.com/charlesrobsampson/shh/internal/menubar"
 	"github.com/charlesrobsampson/shh/internal/routine"
@@ -80,11 +81,52 @@ func realEnv() cli.Env {
 	env.UI = func(tab string) error { return runTUI(cfg, "", "", false, tab) }
 	env.Guide = func(section, search string) error { return runTUI(cfg, section, search, true, "") }
 	env.WithStore = func(do func(*store.Store) error) error { return withStore(cfg.Paths.DB, do) }
+	env.Doctor = doctorEnv(cfg)
+	if home, err := os.UserHomeDir(); err == nil {
+		env.Notifications = ingest.NewMacOS(ingest.DefaultPaths(home)...)
+	}
 	for source := range cfg.Alert.Source {
 		env.AlertSources = append(env.AlertSources, source)
 	}
 	sort.Strings(env.AlertSources)
 	return env
+}
+
+// doctorEnv is the machine as shh doctor looks at it. Nothing in it changes a file or shows anything on the screen.
+func doctorEnv(cfg config.Config) *doctor.Env {
+	home, _ := os.UserHomeDir()
+	rulesPath := filepath.Join(cfg.Paths.Dir, "rules.json")
+	routinesPath := routine.DefaultPath(cfg.Paths.Dir)
+	e := &doctor.Env{
+		LoadConfig: func() error { _, err := loadConfig(); return err },
+		DBPath:     cfg.Paths.DB,
+		OpenDB: func() (int, error) {
+			var v int
+			err := withStore(cfg.Paths.DB, func(s *store.Store) (err error) { v, err = s.SchemaVersion(); return })
+			return v, err
+		},
+		NotificationDB: func() (string, error) { return ingest.NewMacOS(ingest.DefaultPaths(home)...).Check() },
+		Model: func() (string, error) {
+			_, where, err := classify.ResolveEmbedder(filepath.Join(cfg.Paths.Dir, "models"), classify.DefaultModelSHA256)
+			return where, err
+		},
+		ModelMissing: classify.ErrNoEmbeddingModel,
+		RulesPath:    rulesPath, LoadRules: func() error { _, err := rules.Load(rulesPath); return err },
+		RoutinesPath: routinesPath, LoadRoutines: func() error { _, err := routine.Load(routinesPath); return err },
+		Tool: func(name string) bool { _, err := exec.LookPath(name); return err == nil },
+		// Asks the system, headless, whether this process is trusted for accessibility.
+		Accessibility: func() (bool, error) {
+			out, err := exec.Command("osascript", "-l", "JavaScript", "-e", `ObjC.import("ApplicationServices"); $.AXIsProcessTrusted()`).Output()
+			if err != nil {
+				return false, err
+			}
+			return strings.TrimSpace(string(out)) == "true", nil
+		},
+	}
+	if path, err := config.DefaultPath(); err == nil {
+		e.ConfigPath = path
+	}
+	return e
 }
 
 func loadConfig() (config.Config, error) {

@@ -125,3 +125,22 @@ func cocoaTime(seconds float64) time.Time {
 	whole, fraction := math.Modf(seconds)
 	return time.Unix(cocoaEpoch+int64(whole), int64(fraction*1e9)).UTC()
 }
+
+// Check finds the database and reads one row count from it, which is what fails without Full Disk Access. It returns where the
+// database is.
+func (m *MacOS) Check() (string, error) {
+	path, err := m.find()
+	if err != nil {
+		return "", err
+	}
+	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Opaque: url.PathEscape(path), RawQuery: "mode=ro"}).String())
+	if err != nil {
+		return "", err
+	}
+	defer db.Close()
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM record`).Scan(&n); err != nil {
+		return "", fmt.Errorf("reading %s (does this terminal need Full Disk Access?): %w", path, err)
+	}
+	return path, nil
+}

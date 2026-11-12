@@ -31,6 +31,7 @@ type rig struct {
 	suppressor *testkit.FakeSuppressor
 	alerter    *testkit.FakeAlerter
 	store      *store.Store
+	source     *testkit.FakeSource
 	socket     string
 	out, err   bytes.Buffer
 	env        cli.Env
@@ -58,7 +59,7 @@ func newRig(t *testing.T, serve bool) *rig {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	r := &rig{t: t, clock: testkit.NewFakeClock(t0), suppressor: testkit.NewFakeSuppressor(), alerter: testkit.NewFakeAlerter(), store: s, socket: shortSocketPath(t)}
+	r := &rig{t: t, source: testkit.NewFakeSource(), clock: testkit.NewFakeClock(t0), suppressor: testkit.NewFakeSuppressor(), alerter: testkit.NewFakeAlerter(), store: s, socket: shortSocketPath(t)}
 	rl, err := rules.Defaults()
 	if err != nil {
 		t.Fatal(err)
@@ -66,7 +67,7 @@ func newRig(t *testing.T, serve bool) *rig {
 	configDir := t.TempDir()
 	r.routines = filepath.Join(configDir, "routines.json")
 	r.worker, err = session.NewWorker(session.Config{
-		Store: s, Source: testkit.NewFakeSource(), Clock: r.clock, Rules: rl, Alerter: r.alerter, Suppressor: r.suppressor, Location: time.UTC,
+		Store: s, Source: r.source, Clock: r.clock, Rules: rl, Alerter: r.alerter, Suppressor: r.suppressor, Location: time.UTC,
 		Routines: func() ([]routine.Routine, error) { return routine.Load(r.routines) },
 	})
 	if err != nil {

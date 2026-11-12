@@ -240,6 +240,30 @@ func (c *Client) UndoTraining() (TrainView, error) {
 	return *resp.Train, nil
 }
 
+// ResetModel sends the worker's model back to the seeded one; RollbackModel goes back to the last checkpoint and says how many
+// notifications were marked untrained again.
+func (c *Client) ResetModel() error {
+	_, err := c.call(Request{Cmd: "model_reset"})
+	return err
+}
+
+// ImportHistory has the worker store what macOS holds from the last while as unlabeled history, and says how many were new.
+func (c *Client) ImportHistory(since time.Duration) (int, error) {
+	resp, err := c.call(Request{Cmd: "import_history", DurationSecs: int(since / time.Second)})
+	if err != nil || resp.Train == nil {
+		return 0, err
+	}
+	return resp.Train.Count, nil
+}
+
+func (c *Client) RollbackModel() (int, error) {
+	resp, err := c.call(Request{Cmd: "model_rollback"})
+	if err != nil || resp.Train == nil {
+		return 0, err
+	}
+	return resp.Train.Count, nil
+}
+
 func readResponse(scanner *bufio.Scanner) (Response, error) {
 	if !scanner.Scan() {
 		if err := scanner.Err(); err != nil {

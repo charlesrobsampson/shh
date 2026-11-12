@@ -12,6 +12,8 @@ import (
 	"github.com/alecthomas/kong"
 
 	"github.com/charlesrobsampson/shh/internal/decide"
+	"github.com/charlesrobsampson/shh/internal/doctor"
+	"github.com/charlesrobsampson/shh/internal/ingest"
 	"github.com/charlesrobsampson/shh/internal/session"
 	"github.com/charlesrobsampson/shh/internal/store"
 )
@@ -47,6 +49,10 @@ type Env struct {
 	// WithStore opens the database for reading history (the runs of routines), calls do with it and closes it again. Nil when there is no
 	// database to read.
 	WithStore func(do func(*store.Store) error) error
+	// Doctor says how to look at the machine for shh doctor (the worker probe is added by the command). Nil when it is not available.
+	Doctor *doctor.Env
+	// Notifications reads the macOS notification records, for shh capture. Nil when it is not available.
+	Notifications ingest.Source
 	// Guide opens the guide in the terminal UI, at a section (its slug, or empty) and with a search made (or empty). Nil when it is not
 	// available, and the guide is printed instead.
 	Guide func(section, search string) error
@@ -78,6 +84,11 @@ type cli struct {
 	Resume   resumeCmd   `cmd:"" help:"Resume a paused countdown."`
 	Routine  routineCmd  `cmd:"" help:"Saved sequences of focus sessions, such as a pomodoro (shh guide routine-commands explains them)."`
 	Worker   workerCmd   `cmd:"" help:"Start, stop and check the background worker (shh daemon runs it in the foreground)."`
+	Ls       lsCmd       `cmd:"" help:"List stored notifications, newest first (read-only): --source, --since, --status, --min-score, --flagged."`
+	Capture  captureCmd  `cmd:"" help:"Log raw notifications to a file under private/, to build rules from real examples."`
+	Rules    rulesCmd    `cmd:"" help:"Check what the rules did not understand (shh rules review)."`
+	Train    trainCmd    `cmd:"" help:"Label notifications (ids from shh ls), undo, reset or roll back the model, export or import labels."`
+	Doctor   doctorCmd   `cmd:"" help:"Check the setup: config, database, notification access, model, permissions and the worker."`
 	Init     initCmd     `cmd:"" help:"Set shh up: write config.json with every option at its default, explained."`
 	Config   configCmd   `cmd:"" help:"Where the configuration is, what is in force, and the documented defaults."`
 	Guide    guideCmd    `cmd:"" help:"The guide to the terminal UI, routines and commands: open it, jump to a section, or search it."`
@@ -131,7 +142,7 @@ func Run(args []string, env Env) (code int) {
 	}
 	// A saved focus session is picked up again by the next command, by starting a worker. Not for the commands that are about the worker
 	// itself: a stop would be undone by the very next one, and start and restart start one anyway.
-	if name := ctx.Command(); name != "daemon" && name != "menubar" && name != "replay <file>" && name != "alert test" && !strings.HasPrefix(name, "worker") {
+	if name := ctx.Command(); name != "daemon" && name != "menubar" && name != "doctor" && name != "replay <file>" && name != "alert test" && !strings.HasPrefix(name, "worker") {
 		env.rearmPersistedFocus()
 	}
 	if err := ctx.Run(); err != nil {

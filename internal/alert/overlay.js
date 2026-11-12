@@ -272,6 +272,7 @@ function layoutTo(newIndent, newOffset, newHeight) {
   win.setFrameDisplayAnimate(frameFor(indent, offset, height), true, true);
   view.setFrame($.NSMakeRect(0, 0, cfg.width, height));
   layoutText();
+  layoutButtons(); // the dismiss button is placed from the top, so it has to follow the new height
 }
 
 // Tell Go how much height the screen offers, so it can start a new column when a stack would run off the bottom.

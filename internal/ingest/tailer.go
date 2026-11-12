@@ -217,8 +217,42 @@ func (t *Tailer) reportSkipped(skipped []Skipped) {
 	}
 }
 
-func (t *Tailer) sourceName(bundle string) string {
-	if name, ok := t.cfg.Sources[bundle]; ok {
+func (t *Tailer) sourceName(bundle string) string { return SourceName(t.cfg.Sources, bundle) }
+
+// ReadSince returns the notifications the source holds that were delivered since the given time, as events, without handling them or
+// moving the cursor: the ones shh would ignore (its own banners) and repeats within the duplicate window are left out. It is how
+// history is looked at without being replayed through the pipeline.
+func (t *Tailer) ReadSince(since time.Time) ([]Event, error) {
+	batch, err := t.cfg.Source.Since(0)
+	if err != nil {
+		return nil, err
+	}
+	rows := batch.Notifications
+	sort.Slice(rows, func(i, j int) bool {
+		if !rows[i].Delivered.Equal(rows[j].Delivered) {
+			return rows[i].Delivered.Before(rows[j].Delivered)
+		}
+		return rows[i].RecID < rows[j].RecID
+	})
+	var out []Event
+	last := map[duplicateKey]time.Time{}
+	for _, n := range rows {
+		if n.Delivered.Before(since) || t.isOwn(n) {
+			continue
+		}
+		key := duplicateKey{n.BundleID, n.Title, n.Body}
+		if at, ok := last[key]; ok && n.Delivered.Sub(at).Abs() <= DuplicateWindow {
+			continue
+		}
+		last[key] = n.Delivered
+		out = append(out, Event{Notification: n, Source: t.sourceName(n.BundleID)})
+	}
+	return out, nil
+}
+
+// SourceName is the friendly name of an app: the one rules.json gives its bundle id, else the last part of the id capitalised.
+func SourceName(sources map[string]string, bundle string) string {
+	if name, ok := sources[bundle]; ok {
 		return name
 	}
 	if bundle == "" {
