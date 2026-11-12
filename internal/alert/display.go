@@ -107,7 +107,7 @@ func (d *Display) addButtons(req *Request, a Alert, acfg config.Alert) {
 const ButtonAction = "action"
 
 // applies is where each button type says when it makes sense: goto needs an app to open, preview needs cut-off text, flag needs a
-// stored notification to mark, and train (task 45) will need one too.
+// stored notification to mark, and train needs a stored message that the model scored.
 func applies(buttonType string, width int, a Alert) bool {
 	switch buttonType {
 	case config.ButtonDismiss:
@@ -116,8 +116,12 @@ func applies(buttonType string, width int, a Alert) bool {
 		return a.BundleID != ""
 	case config.ButtonPreview:
 		return Truncated(width, a.Body)
-	case config.ButtonFlag, config.ButtonTrain:
+	case config.ButtonFlag:
 		return a.NotificationID != 0
+	case config.ButtonTrain:
+		// Teaching the model that an alert was not important only means something for an alert the model scored. A calendar reminder is
+		// not scored (it comes through because the meeting is about to start), so there is nothing to teach.
+		return a.NotificationID != 0 && a.Kind == config.KindMessage
 	}
 	return false
 }

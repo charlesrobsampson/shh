@@ -490,3 +490,27 @@ func TestTheRowsReservedForTheLayoutCheckScenarios(t *testing.T) {
 		}
 	}
 }
+
+func TestTheTrainButtonIsNeverOnACalendarReminder(t *testing.T) {
+	primary := &recordingBackend{}
+	d := alert.NewDisplay(loadConfig(t, `{"alert": {"buttons": [{"type": "goto"}, {"type": "flag"}, {"type": "train"}]}}`).Alert, primary, nil, nil)
+	_ = d.Show(alert.Alert{Kind: config.KindCalendar, Source: "Calendar", Title: "Standup in 5 minutes", Body: "b", BundleID: "com.x", NotificationID: 9})
+	_ = d.Show(alert.Alert{Kind: config.KindMessage, Source: "Teams", Title: "Ana", Body: "b", BundleID: "com.x", NotificationID: 10})
+	has := func(r alert.Request, kind string) bool {
+		for _, b := range r.Buttons {
+			if b.Type == kind {
+				return true
+			}
+		}
+		return false
+	}
+	if has(primary.requests[0], "train") {
+		t.Error("a calendar reminder is not scored by the model, so there is nothing to teach it by marking it not important")
+	}
+	if !has(primary.requests[0], "flag") {
+		t.Error("flagging a reminder for review is still possible")
+	}
+	if !has(primary.requests[1], "train") {
+		t.Error("a message the model scored has the train button")
+	}
+}
