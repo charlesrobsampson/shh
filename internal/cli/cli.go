@@ -82,6 +82,7 @@ type cli struct {
 	Routine  routineCmd  `cmd:"" help:"Saved sequences of focus sessions, such as a pomodoro (shh guide routine-commands explains them)."`
 	Worker   workerCmd   `cmd:"" help:"Start, stop and check the background worker (shh daemon runs it in the foreground)."`
 	Ls       lsCmd       `cmd:"" help:"List stored notifications, newest first (read-only): --source, --since, --status, --min-score, --flagged."`
+	Rules    rulesCmd    `cmd:"" help:"Check what the rules did not understand (shh rules review)."`
 	Train    trainCmd    `cmd:"" help:"Label notifications (ids from shh ls), undo, reset or roll back the model, export or import labels."`
 	Doctor   doctorCmd   `cmd:"" help:"Check the setup: config, database, notification access, model, permissions and the worker."`
 	Init     initCmd     `cmd:"" help:"Set shh up: write config.json with every option at its default, explained."`
