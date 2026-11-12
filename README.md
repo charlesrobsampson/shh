@@ -56,13 +56,14 @@ Changes to the `alert` section show in the **next banner**, with no restart. `re
 
 ### Start the worker at login
 
-Scheduled routines (and the menu bar item) need the worker running. shh starts it by itself when a command needs it, but after a restart or a login nothing is running until something starts it. Add this to whatever your Mac runs at login: a Login Item that runs a script, your shell profile, or a launchd agent:
+Scheduled routines (and the menu bar item) need the worker running. shh starts it by itself when a command needs it, but after a restart or a login nothing is running until something starts it. One command makes that automatic:
 
 ```sh
-shh worker start       # starts it in the background (does nothing if it is running)
+shh worker install     # a LaunchAgent that starts the worker at every login (and now), and again if it crashes
+shh worker uninstall   # removes it
 ```
 
-A launchd agent (or anything that wants a process that stays in the foreground) should run `shh daemon` instead. `shh worker status` shows what the worker is watching, `shh worker stop` shuts it down and `shh worker restart` replaces it after you update shh.
+It writes one file, `~/Library/LaunchAgents/app.shh.worker.plist`, which runs `shh daemon` from wherever shh is installed (install shh where it stays, such as `/usr/local/bin`, before running this; run it again after moving shh). `shh worker stop` stops the worker until the next login. A focus baseline you set carries over a restart, so it resumes at login. Prefer to do it yourself? `shh worker start` in a Login Item script or your shell profile works too, and anything that wants a process that stays in the foreground should run `shh daemon`. `shh worker status` shows what the worker is watching, `shh worker stop` shuts it down and `shh worker restart` replaces it after you update shh.
 
 ## Routines
 

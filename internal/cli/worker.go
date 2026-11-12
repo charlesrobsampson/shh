@@ -18,6 +18,50 @@ type workerCmd struct {
 	Stop    workerStopCmd    `cmd:"" help:"Shut the worker down (asks first if focus or a routine is on, since banners would come through)."`
 	Restart workerRestartCmd `cmd:"" help:"Stop the worker and start a new one, to pick up a new build of shh."`
 	Status  workerStatusCmd  `cmd:"" help:"Say whether the worker is running, since when, and what it is keeping going."`
+
+	Install   workerInstallCmd   `cmd:"" help:"Start the worker at every login (a LaunchAgent), so routine triggers fire without anything to remember."`
+	Uninstall workerUninstallCmd `cmd:"" help:"Stop starting the worker at login (removes the LaunchAgent)."`
+}
+
+type workerInstallCmd struct{}
+
+// Run has launchd start the worker at login, and now. It changes one file, ~/Library/LaunchAgents/app.shh.worker.plist, and loads it.
+func (c *workerInstallCmd) Run(env *Env) error {
+	if env.Agent == nil {
+		return errors.New("this build cannot install a login agent")
+	}
+	running := false
+	if _, err := env.client().WorkerInfo(); err == nil {
+		running = true
+	}
+	if err := env.Agent.Install(); err != nil {
+		return err
+	}
+	fmt.Fprintf(env.Stdout, "Installed %s: the shh worker now starts at every login, and starts again if it crashes.\n", env.Agent.Path())
+	if running {
+		fmt.Fprintln(env.Stdout, "A worker was already running, so the new one stepped aside; launchd takes over at the next login. (shh worker stop and then shh worker start is not needed.)")
+	} else {
+		fmt.Fprintln(env.Stdout, "It is starting now. shh worker stop stops it until the next login; shh worker uninstall removes the agent.")
+	}
+	return nil
+}
+
+type workerUninstallCmd struct{}
+
+func (c *workerUninstallCmd) Run(env *Env) error {
+	if env.Agent == nil {
+		return errors.New("this build cannot install a login agent")
+	}
+	was, err := env.Agent.Uninstall()
+	if err != nil {
+		return err
+	}
+	if !was {
+		fmt.Fprintln(env.Stdout, "The login agent was not installed: nothing to remove.")
+		return nil
+	}
+	fmt.Fprintln(env.Stdout, "Removed the login agent. The worker no longer starts at login (it still starts by itself when a command needs it).")
+	return nil
 }
 
 type workerStartCmd struct{}
@@ -142,6 +186,13 @@ func (c *workerStatusCmd) Run(env *Env) error {
 		fmt.Fprintf(env.Stdout, "  routine:  %s is running\n", info.Routine)
 	} else {
 		fmt.Fprintln(env.Stdout, "  routine:  none running")
+	}
+	if env.Agent != nil {
+		if env.Agent.Installed() {
+			fmt.Fprintln(env.Stdout, "  at login: starts by itself (shh worker uninstall removes that)")
+		} else {
+			fmt.Fprintln(env.Stdout, "  at login: not started (shh worker install makes it)")
+		}
 	}
 	switch info.Triggers {
 	case 0:
