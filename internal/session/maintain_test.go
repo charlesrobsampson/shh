@@ -120,3 +120,24 @@ func TestTheHousekeepingRunsOnTheTickEverySixHours(t *testing.T) {
 		t.Error("the tick should have run the housekeeping")
 	}
 }
+
+func TestRetentionIsReadAgainEachPass(t *testing.T) {
+	policy := store.Retention{TTL: 365 * day, KeepUntrained: 365 * day}
+	r := newWorkerRig(t, func(c *session.Config) {
+		c.RetentionNow = func() (store.Retention, bool, time.Duration) { return policy, false, 30 * day }
+	})
+	if err := r.worker.SetBaseline(65); err != nil {
+		t.Fatal(err)
+	}
+	n := r.scoredAt("Cy", "prod outage, everything is down, need you now")
+	r.clock.Advance(40 * day)
+	r.worker.Maintain()
+	if _, err := r.store.GetNotification(n.ID); err != nil {
+		t.Fatal("kept for a year: still there")
+	}
+	policy = store.Retention{TTL: 30 * day, KeepUntrained: 90 * day} // the file was edited
+	r.worker.Maintain()
+	if _, err := r.store.GetNotification(n.ID); err == nil {
+		t.Error("the edit should apply to the next pass")
+	}
+}

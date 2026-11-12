@@ -20,13 +20,17 @@ const autoTrainBatch = 500
 func (w *Worker) Maintain() {
 	now := w.cfg.Clock.Now()
 	w.lastMaintained = now
-	if w.cfg.AutoTrain && w.cfg.AutoTrainAfter > 0 {
-		if _, err := w.autoTrain(now); err != nil {
+	retention, autoTrain, after := w.cfg.Retention, w.cfg.AutoTrain, w.cfg.AutoTrainAfter
+	if w.cfg.RetentionNow != nil {
+		retention, autoTrain, after = w.cfg.RetentionNow()
+	}
+	if autoTrain && after > 0 {
+		if _, err := w.autoTrain(now, after); err != nil {
 			w.report(fmt.Errorf("training on notifications nobody labelled: %w", err))
 		}
 	}
-	if w.cfg.Retention.TTL > 0 {
-		if _, err := w.cfg.Store.PurgeExpired(now, w.cfg.Retention); err != nil {
+	if retention.TTL > 0 {
+		if _, err := w.cfg.Store.PurgeExpired(now, retention); err != nil {
 			w.report(fmt.Errorf("deleting old notifications: %w", err))
 		}
 	}
@@ -41,8 +45,8 @@ func (w *Worker) report(err error) {
 // autoTrain takes each unlabelled, unflagged notification older than AutoTrainAfter as handled correctly: one shh held back was rightly
 // held back ("n"), one it let through was rightly let through ("y"). It says how many it trained. A notification that cannot be trained
 // (no recorded level, say) is skipped, not retried for ever: it is left as it is and goes at its time to live.
-func (w *Worker) autoTrain(now time.Time) (int, error) {
-	rows, err := w.cfg.Store.UnreviewedBefore(now.Add(-w.cfg.AutoTrainAfter), autoTrainBatch)
+func (w *Worker) autoTrain(now time.Time, after time.Duration) (int, error) {
+	rows, err := w.cfg.Store.UnreviewedBefore(now.Add(-after), autoTrainBatch)
 	if err != nil {
 		return 0, err
 	}

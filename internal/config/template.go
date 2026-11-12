@@ -12,8 +12,8 @@ import (
 // what there is to change. Loading it gives exactly the configuration that no file at all gives (a test keeps it that way). Options that
 // have no default value (they are off until set) are there as comments to uncomment.
 const Template = `// shh configuration. Every option is shown at its default, so this file changes nothing until you edit it. Comments (// and /* */)
-// and trailing commas are allowed. A change to the "alert" section shows in the next banner; the rest is read when the worker starts
-// (shh worker restart). "shh config show" prints what is in force, and "shh guide config" explains it all.
+// and trailing commas are allowed. A change to the "alert" section shows in the next banner, "retention" applies at the next cleanup (about every
+// six hours), "summarizer" when the terminal UI is opened; only "menubar" and "paths" need shh worker restart. "shh config show" prints what is in force, and "shh guide config" explains it all.
 {
   "alert": {
     // How banners look. Colors are numbers from the 8-bit ANSI palette, 0-255 (shh alert colors shows it; chart:

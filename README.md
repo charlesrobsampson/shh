@@ -41,7 +41,7 @@ shh alert test         # a sample of each banner style
 shh alert colors       # the palette banner colors are chosen from
 ```
 
-Changes to the `alert` section show in the **next banner**, with no restart. Everything else in the file is read when the worker starts (`shh worker restart`). Colors are numbers from the [8-bit ANSI palette](https://en.wikipedia.org/wiki/ANSI_escape_code#8-bit), 0 to 255, not hex codes; `shh alert colors` draws the palette with each number.
+Changes to the `alert` section show in the **next banner**, with no restart. `retention` applies at the next cleanup (about every six hours) and `summarizer` the next time the UI opens; only `menubar` and `paths` need `shh worker restart`. Colors are numbers from the [8-bit ANSI palette](https://en.wikipedia.org/wiki/ANSI_escape_code#8-bit), 0 to 255, not hex codes; `shh alert colors` draws the palette with each number.
 
 ### Start the worker at login
 

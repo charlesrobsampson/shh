@@ -294,9 +294,14 @@ func runDaemon(cfg config.Config) error {
 		OpenUI:      openUI,
 		AlertConfig: alertConfig,
 		// How long notifications are kept, and whether the ones nobody labelled are taken as handled correctly.
-		Retention:      store.Retention{TTL: days(cfg.Retention.TTLDays), KeepUntrained: days(cfg.Retention.KeepUntrainedDays)},
-		AutoTrain:      cfg.Retention.AutoTrain,
-		AutoTrainAfter: days(cfg.Retention.AutoTrainAfterDays),
+		// config.json is looked at again each time, so an edit applies to the next pass (every six hours) without a restart.
+		RetentionNow: func() (store.Retention, bool, time.Duration) {
+			r := cfg.Retention
+			if watcher != nil {
+				r = watcher.Retention()
+			}
+			return store.Retention{TTL: days(r.TTLDays), KeepUntrained: days(r.KeepUntrainedDays)}, r.AutoTrain, days(r.AutoTrainAfterDays)
+		},
 	})
 	if err != nil {
 		return err

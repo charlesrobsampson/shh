@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -87,5 +88,20 @@ func TestTheWatcherDoesNotReadAFileThatHasNotChanged(t *testing.T) {
 	second := w.Config()
 	if first.Alert.Base != second.Alert.Base {
 		t.Error("the same configuration comes back")
+	}
+}
+
+func TestWatcherGivesRetentionAsTheFileSaysNow(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	os.WriteFile(path, []byte(`{}`), 0o600)
+	initial, _ := config.Load(path)
+	w := config.NewWatcher(path, initial, nil)
+	if w.Retention().TTLDays != 30 {
+		t.Fatal("default first")
+	}
+	time.Sleep(20 * time.Millisecond)
+	os.WriteFile(path, []byte(`{"retention": {"ttl_days": 14, "keep_untrained_days": 20, "auto_train_after_days": 14}}`), 0o600)
+	if r := w.Retention(); r.TTLDays != 14 || r.KeepUntrainedDays != 20 {
+		t.Errorf("retention = %+v", r)
 	}
 }

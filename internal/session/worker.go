@@ -58,6 +58,9 @@ type Config struct {
 	Retention      store.Retention
 	AutoTrain      bool
 	AutoTrainAfter time.Duration
+	// RetentionNow, when set, gives the same three as they are now (from config.json as it is on disk), and is used instead of them, so
+	// an edit applies to the next pass.
+	RetentionNow func() (retention store.Retention, autoTrain bool, autoTrainAfter time.Duration)
 }
 
 // Decision is the outcome for one notification.
