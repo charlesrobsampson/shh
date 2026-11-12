@@ -61,6 +61,12 @@ type Config struct {
 	// Either nil turns editing off.
 	SaveRoutine   func(r routine.Routine, replace bool) error
 	RemoveRoutine func(name string) error
+	// Summarize writes (and keeps) a short summary of a notification, for s. Nil, or ErrNoSummarizer from it, means none is set up. It
+	// runs off the UI's thread. SummarizerName is the backend's name and SummarizerRemote whether the text leaves this Mac (the status
+	// bar says so then).
+	Summarize        func(store.Notification) (string, error)
+	SummarizerName   string
+	SummarizerRemote bool
 	// Trainer handles y, n, t and u. Nil turns training off.
 	Trainer Trainer
 	// Ensure makes sure a worker is running before a notification is trained or an undo is made (starting one if need be); nil means
@@ -126,6 +132,9 @@ type Model struct {
 	status     session.StatusView
 	haveStatus bool // whether the worker answered the last time it was asked
 
+	// summaries holds the summaries made in this run (the stored ones come with the notification); summarizing is those being written.
+	summaries   map[int64]string
+	summarizing map[int64]bool
 	// expandedID is the notification shown in full across the whole screen (e); 0 when none is. scroll is how far down its text is.
 	expandedID int64
 	scroll     int
@@ -166,6 +175,16 @@ type Model struct {
 	noticeHasCmd bool
 	// notice is what the last action did or why it could not, shown in the status bar until the next key.
 	notice string
+}
+
+// ErrNoSummarizer is what Config.Summarize returns when the backend is none.
+var ErrNoSummarizer = errors.New("no summarizer is set up")
+
+// summaryMsg is a summary that arrived, or the reason there is none.
+type summaryMsg struct {
+	id   int64
+	text string
+	err  error
 }
 
 type tickMsg time.Time
@@ -295,10 +314,55 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.cursorOn = !m.cursorOn
 		return m, m.blink()
+	case summaryMsg:
+		delete(m.summarizing, msg.id)
+		switch {
+		case errors.Is(msg.err, ErrNoSummarizer):
+			m.notice = noSummarizerHint
+		case msg.err != nil:
+			m.notice = "could not summarize: " + oneLine(msg.err.Error())
+		default:
+			if m.summaries == nil {
+				m.summaries = map[int64]string{}
+			}
+			m.summaries[msg.id] = msg.text
+		}
 	case tea.KeyMsg:
 		return m.key(msg)
 	}
 	return m, nil
+}
+
+const noSummarizerHint = "no summarizer is set up: choose a backend in config.json (\"summarizer\": {\"backend\": \"ollama\"}), see shh guide config"
+
+// summarize starts a summary of the selected notification, unless it has one already or one is on its way. Nothing about the notification
+// changes but its summary: it is not marked read or trained.
+func (m *Model) summarize() tea.Cmd {
+	n, ok := m.Selected()
+	if !ok {
+		return nil
+	}
+	if m.cfg.Summarize == nil {
+		m.notice = noSummarizerHint
+		return nil
+	}
+	if n.Summary != "" || m.summaries[n.ID] != "" {
+		m.notice = "already summarized (shown under the score)"
+		return nil
+	}
+	if m.summarizing[n.ID] {
+		return nil
+	}
+	if m.summarizing == nil {
+		m.summarizing = map[int64]bool{}
+	}
+	m.summarizing[n.ID] = true
+	m.notice = "summarizing…"
+	summarize := m.cfg.Summarize
+	return func() tea.Msg {
+		text, err := summarize(n)
+		return summaryMsg{id: n.ID, text: text, err: err}
+	}
 }
 
 func (m *Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -344,6 +408,10 @@ func (m *Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.tab == TabRoutines && m.routineKey(key) {
 		return m, m.takeBlink()
+	}
+
+	if key == "s" && !m.listless() && m.tab != TabFocus && m.tab != TabRoutines {
+		return m, tea.Batch(m.summarize(), m.takeBlink())
 	}
 
 	switch key {
@@ -1339,6 +1407,11 @@ func (m *Model) detailParts(n store.Notification, w int) (meta, body []string) {
 	if n.Reason != "" {
 		meta = append(meta, " "+dim.Render("why: "+oneLine(n.Reason)))
 	}
+	if text := firstNonEmpty(n.Summary, m.summaries[n.ID]); text != "" {
+		meta = append(meta, " "+dim.Render("summary ("+m.cfg.SummarizerName+"): ")+oneLine(text))
+	} else if m.summarizing[n.ID] {
+		meta = append(meta, " "+dim.Render("summarizing…"))
+	}
 	meta = append(meta, "")
 	for _, line := range strings.Split(lipgloss.NewStyle().Width(w-2).Render(multiLine(n.Body)), "\n") {
 		body = append(body, " "+line)
@@ -1367,6 +1440,9 @@ func (m *Model) stateLine() string {
 	if m.filter != "" {
 		counts = fmt.Sprintf("%d of %d notifications · %d of %d to train", len(m.lists[TabNotifications]), m.totals[TabNotifications],
 			len(m.lists[TabTrain]), m.totals[TabTrain])
+	}
+	if m.cfg.SummarizerRemote {
+		counts += " · " + m.cfg.SummarizerName + " summaries: text leaves this Mac"
 	}
 	left := " " + m.sessionText() + "  │  " + counts
 	if lipgloss.Width(left) > room {
@@ -1431,6 +1507,15 @@ func withRight(left, right string, width int) string {
 // keyHints are the keys that work on the current tab, briefly and all of them: the help screen (?, shown at the right of the line above)
 // explains each in full. The keys that work everywhere, ? and q, are at the right of the state line instead.
 func (m *Model) keyHints() string {
+	hints := m.tabHints()
+	// s is in the hints only when there is a summarizer to use; the help always lists it.
+	if m.cfg.Summarize != nil && m.cfg.SummarizerName != "" && m.cfg.SummarizerName != "none" && (m.tab == TabNotifications || m.tab == TabTrain) {
+		hints = strings.Replace(hints, "e read · ", "e read · s summary · ", 1)
+	}
+	return hints
+}
+
+func (m *Model) tabHints() string {
 	switch m.tab {
 	case TabFocus:
 		return "j/k select · Enter run it · or its key: s b f p + - x X · Tab switch"
@@ -1653,4 +1738,13 @@ func multiLine(s string) string {
 		}
 	}
 	return b.String()
+}
+
+func firstNonEmpty(texts ...string) string {
+	for _, t := range texts {
+		if t != "" {
+			return t
+		}
+	}
+	return ""
 }

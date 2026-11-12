@@ -151,6 +151,9 @@ type Menubar struct {
 
 type Summarizer struct {
 	Backend string
+	// URL and Model are the server and the model the backend uses; empty means the backend's own default (ollama: localhost:11434 and
+	// llama3.2; claude: api.anthropic.com and claude-haiku-5-5).
+	URL, Model string
 }
 
 type Paths struct {
@@ -180,6 +183,8 @@ type file struct {
 	} `json:"menubar"`
 	Summarizer struct {
 		Backend *string `json:"backend,omitempty"`
+		URL     *string `json:"url,omitempty"`
+		Model   *string `json:"model,omitempty"`
 	} `json:"summarizer"`
 	Paths struct {
 		Dir    *string `json:"dir,omitempty"`
@@ -259,6 +264,12 @@ func build(f file, configDir string) (Config, error) {
 			return Config{}, notOneOf("summarizer.backend", *f.Summarizer.Backend, backends)
 		}
 		cfg.Summarizer.Backend = *f.Summarizer.Backend
+	}
+	if f.Summarizer.URL != nil {
+		cfg.Summarizer.URL = *f.Summarizer.URL
+	}
+	if f.Summarizer.Model != nil {
+		cfg.Summarizer.Model = *f.Summarizer.Model
 	}
 
 	paths, err := buildPaths(f, configDir)
@@ -356,6 +367,12 @@ func (c Config) Effective() ([]byte, error) {
 	}
 	f.Menubar.Enabled, f.Menubar.Label = &c.Menubar.Enabled, &c.Menubar.Label
 	f.Summarizer.Backend = &c.Summarizer.Backend
+	if c.Summarizer.URL != "" {
+		f.Summarizer.URL = &c.Summarizer.URL
+	}
+	if c.Summarizer.Model != "" {
+		f.Summarizer.Model = &c.Summarizer.Model
+	}
 	f.Paths.Dir, f.Paths.DB, f.Paths.Socket, f.Paths.PID = &c.Paths.Dir, &c.Paths.DB, &c.Paths.Socket, &c.Paths.PID
 	out, err := json.MarshalIndent(f, "", "  ")
 	return append(out, '\n'), err

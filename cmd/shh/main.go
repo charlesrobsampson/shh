@@ -31,6 +31,7 @@ import (
 	"github.com/charlesrobsampson/shh/internal/rules"
 	"github.com/charlesrobsampson/shh/internal/session"
 	"github.com/charlesrobsampson/shh/internal/store"
+	"github.com/charlesrobsampson/shh/internal/summarize"
 	"github.com/charlesrobsampson/shh/internal/suppress"
 	"github.com/charlesrobsampson/shh/internal/tui"
 )
@@ -387,7 +388,25 @@ func runTUI(cfg config.Config, helpSection, helpSearch string, helpOnly bool, st
 	}
 	defer db.Close()
 	client := session.NewClient(cfg.Paths.Socket)
+	summarizer, err := summarize.New(cfg.Summarizer.Backend, summarize.Options{URL: cfg.Summarizer.URL, Model: cfg.Summarizer.Model})
+	if err != nil {
+		return err
+	}
 	return tui.Run(tui.Config{
+		// s writes a short summary of the selected notification with the configured backend, and keeps it with the notification.
+		Summarize: func(n store.Notification) (string, error) {
+			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+			defer cancel()
+			text, err := summarizer.Summarize(ctx, summarize.Input{Source: n.Source, Sender: n.Sender, Title: n.Title, Subtitle: n.Subtitle, Body: n.Body})
+			if errors.Is(err, summarize.ErrDisabled) {
+				return "", tui.ErrNoSummarizer
+			}
+			if err != nil {
+				return "", err
+			}
+			return text, db.SetSummary(n.ID, text)
+		},
+		SummarizerName: summarizer.Name(), SummarizerRemote: summarizer.Remote(),
 		Data: db, Worker: client, Label: cfg.Menubar.Label,
 		HelpOnly: helpOnly, HelpSection: helpSection, HelpSearch: helpSearch, StartTab: startTab,
 		// The Focus tab does everything the command line does, through the worker.
