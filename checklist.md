@@ -387,11 +387,12 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 ## Phase 8: Extras
 
 ### 35 · Summarizer backends
-- [ ] Done
+- [x] Done
 - Session: _(fill on start)_
 - Branch: `task/35-summarizer` · Depends: 10, 32
 - Read: `plan.md` §6
 - Build: `Summarizer` interface with `none` (default), `ollama`, `claude` (key from env/Keychain) backends; `s` in TUI; cache in `summary`; status bar shows when a remote backend is active.
+- **Built (2026-11-12):** `internal/summarize` (`Summarizer{Summarize, Name, Remote}`, `New(name, Options)`; `none` answers `ErrDisabled`; ollama `POST /api/generate`; claude `POST /v1/messages` with the key from `ANTHROPIC_API_KEY` then the Keychain item `shh-anthropic`; the notification text is put in the prompt as data with an instruction not to follow it). Config: `summarizer.backend|url|model` (empty url/model = the backend's default; template and `config show` updated). TUI: `s` on the Notifications and Train tabs (off the UI thread, once per notification, stored with `Store.SetSummary`, shown as `summary (backend): ...` under the score, a hint when none is set up, errors are a message), the status bar says `claude summaries: text leaves this Mac` for a remote backend, the footer hint lists `s` only when a backend is on, the help always does. **Not done:** a `doctor` check for the summarizer (an ollama probe) and the manual check with a real Ollama.
 - Tests: `httptest` fake Ollama/Claude servers; `none` shows a hint; results are cached; backend errors don't break the TUI.
 - Manual check: with Ollama running, `s` summarizes a notification.
 

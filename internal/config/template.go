@@ -48,7 +48,12 @@ const Template = `// shh configuration. Every option is shown at its default, so
   },
 
   "summarizer": {
-    "backend": "none" // none, ollama or claude: what writes the short summary of a notification
+    // none, ollama or claude: what writes the short summary of a notification (s in the terminal UI). "ollama" runs on this Mac.
+    // "claude" sends the text of the notification to Anthropic's API, so it is off until you choose it: it needs the key in the
+    // ANTHROPIC_API_KEY environment variable, or in the Keychain (security add-generic-password -s shh-anthropic -a $USER -w).
+    "backend": "none"
+    // , "url": "http://localhost:11434"   // the server: this is ollama's default; claude's is https://api.anthropic.com
+    // , "model": "llama3.2"               // ollama's default; claude's is claude-haiku-5-5
   }
 
   // Where shh keeps its files. These are relative to this folder unless they start with a slash.
