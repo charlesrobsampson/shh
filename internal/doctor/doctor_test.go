@@ -10,7 +10,10 @@ import (
 	"github.com/charlesrobsampson/shh/internal/doctor"
 )
 
-var errNoModel = errors.New("no model")
+var (
+	errNoModel = errors.New("no model")
+	errOff     = errors.New("off")
+)
 
 func good(t *testing.T) doctor.Env {
 	dir := t.TempDir()
@@ -22,7 +25,7 @@ func good(t *testing.T) doctor.Env {
 		ConfigPath: cfg, LoadConfig: func() error { return nil },
 		DBPath: db, OpenDB: func() (int, error) { return 13, nil },
 		NotificationDB: func() (string, error) { return "/x/db", nil },
-		Model:          func() (string, error) { return "embedded", nil }, ModelMissing: errNoModel,
+		Model:          func() (string, error) { return "embedded", nil }, ModelMissing: errNoModel, ModelOff: errOff,
 		RulesPath: filepath.Join(dir, "rules.json"), LoadRules: func() error { return errors.New("never read: file is absent") },
 		RoutinesPath: filepath.Join(dir, "routines.json"), LoadRoutines: func() error { return nil },
 		Accessibility: func() (bool, error) { return true, nil },
@@ -62,7 +65,7 @@ func TestProblemsAreFailuresOrWarningsWithAFix(t *testing.T) {
 	e.LoadRoutines = func() error { return errors.New("routines.json: bad") }
 	os.WriteFile(e.RoutinesPath, nil, 0o600)
 	rs := doctor.Run(doctor.Standard(e))
-	want := map[string]doctor.Level{"config": doctor.Fail, "notification database": doctor.Fail, "embedding model": doctor.Warn,
+	want := map[string]doctor.Level{"config": doctor.Fail, "notification database": doctor.Fail, "embedding model": doctor.OK,
 		"accessibility": doctor.Warn, "worker": doctor.Warn, "routines": doctor.Fail, "database": doctor.OK, "rules": doctor.OK}
 	for _, r := range rs {
 		if r.Level != want[r.Name] {
@@ -71,6 +74,10 @@ func TestProblemsAreFailuresOrWarningsWithAFix(t *testing.T) {
 		if r.Level != doctor.OK && r.Fix == "" {
 			t.Errorf("%s has no fix", r.Name)
 		}
+	}
+	e.Model = func() (string, error) { return "", errOff }
+	if got := doctor.Run(doctor.Standard(e)); got[3].Level != doctor.OK || !strings.Contains(got[3].Detail, "turned off") {
+		t.Errorf("a model turned off is not a problem: %+v", got[3])
 	}
 	if !doctor.Failed(rs) || !strings.Contains(report(rs), "->") || !strings.Contains(report(rs), "3 failed") {
 		t.Errorf("report:\n%s", report(rs))

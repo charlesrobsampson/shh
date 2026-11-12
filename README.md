@@ -17,7 +17,14 @@ mv shh /usr/local/bin/   # or anywhere on your PATH
 
 ### The embedding model
 
-shh scores notifications with a small model, and its second layer (word meaning, from a bundled 8 MB embedding model) needs the model file. A **release build has it inside**: `task build:release` makes `dist/shh` with the model embedded (it checks the file against the checksum the source pins). A plain `task build` does not carry it, so `shh init` downloads it once into `~/.config/shh/models/` (a network use, checked against the same checksum); `shh doctor` says whether it is there. Without it shh still works on its first two layers, a little less well. When the model arrives the learned weights start from the seed again and **replay what you have labelled**, so your training is not lost.
+shh scores notifications in layers. The first two (fixed rules, and the words, senders and apps it has seen) always work; the third, word meaning, uses a small **optional** embedding model (8 MB). You choose:
+
+- A plain `task build` has no model and needs no network: shh works on its first two layers, a little less well. `shh init` mentions the option and downloads nothing.
+- `shh model install` downloads it once into `~/.config/shh/models/`, checked against a pinned checksum; `shh model status` says whether it is there and `shh model remove` deletes it again.
+- `task build:release` makes `dist/shh` with the model built in.
+- `"classifier": {"embedding_model": "off"}` in `config.json` ignores the model even where it is.
+
+After any of these, `shh worker restart`. The learned weights start from the seed again and **replay what you have labelled**, so your training is not lost.
 
 It needs one permission: **Accessibility**, which is how it hides notification banners while focus is on (System Settings, Privacy & Security, Accessibility). It reads the notification database as you, which needs nothing extra on the macOS it was built on.
 

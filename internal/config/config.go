@@ -169,6 +169,12 @@ type Retention struct {
 	AutoTrainAfterDays int
 }
 
+// Classifier is how notifications are scored. EmbeddingModel is "auto" (use the embedding model when there is one: built in, or installed
+// with shh model install) or "off" (do not, even if it is there).
+type Classifier struct {
+	EmbeddingModel string
+}
+
 type Paths struct {
 	Dir    string
 	DB     string
@@ -181,6 +187,7 @@ type Config struct {
 	Menubar    Menubar
 	Summarizer Summarizer
 	Retention  Retention
+	Classifier Classifier
 	Paths      Paths
 }
 
@@ -200,6 +207,9 @@ type file struct {
 		URL     *string `json:"url,omitempty"`
 		Model   *string `json:"model,omitempty"`
 	} `json:"summarizer"`
+	Classifier struct {
+		EmbeddingModel *string `json:"embedding_model,omitempty"`
+	} `json:"classifier"`
 	Retention struct {
 		TTLDays            *int  `json:"ttl_days,omitempty"`
 		KeepUntrainedDays  *int  `json:"keep_untrained_days,omitempty"`
@@ -218,6 +228,8 @@ var (
 	positions = []string{"top-left", "top-center", "top-right", "bottom-left", "bottom-center", "bottom-right"}
 	sizes     = []string{"small", "medium", "large"}
 	backends  = []string{"none", "ollama", "claude"}
+
+	embeddingModes = []string{"auto", "off"}
 )
 
 // DefaultPath is ~/.config/shh/config.json.
@@ -255,6 +267,7 @@ func build(f file, configDir string) (Config, error) {
 		Menubar:    Menubar{Enabled: true, Label: "shh"},
 		Summarizer: Summarizer{Backend: "none"},
 		Retention:  Retention{TTLDays: 30, KeepUntrainedDays: 90, AutoTrainAfterDays: 30},
+		Classifier: Classifier{EmbeddingModel: "auto"},
 	}
 	if err := validateOverride("alert", f.Alert.StyleOverride); err != nil {
 		return Config{}, err
@@ -293,6 +306,12 @@ func build(f file, configDir string) (Config, error) {
 		cfg.Summarizer.Model = *f.Summarizer.Model
 	}
 
+	if f.Classifier.EmbeddingModel != nil {
+		if !slices.Contains(embeddingModes, *f.Classifier.EmbeddingModel) {
+			return Config{}, notOneOf("classifier.embedding_model", *f.Classifier.EmbeddingModel, embeddingModes)
+		}
+		cfg.Classifier.EmbeddingModel = *f.Classifier.EmbeddingModel
+	}
 	if f.Retention.TTLDays != nil {
 		cfg.Retention.TTLDays = *f.Retention.TTLDays
 	}
@@ -424,6 +443,7 @@ func (c Config) Effective() ([]byte, error) {
 	if c.Summarizer.Model != "" {
 		f.Summarizer.Model = &c.Summarizer.Model
 	}
+	f.Classifier.EmbeddingModel = &c.Classifier.EmbeddingModel
 	f.Retention.TTLDays, f.Retention.KeepUntrainedDays = &c.Retention.TTLDays, &c.Retention.KeepUntrainedDays
 	f.Retention.AutoTrain, f.Retention.AutoTrainAfterDays = &c.Retention.AutoTrain, &c.Retention.AutoTrainAfterDays
 	f.Paths.Dir, f.Paths.DB, f.Paths.Socket, f.Paths.PID = &c.Paths.Dir, &c.Paths.DB, &c.Paths.Socket, &c.Paths.PID

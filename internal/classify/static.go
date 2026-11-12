@@ -23,6 +23,9 @@ const (
 // DefaultModelSHA256 is the checksum of the published ModelFileName asset (the models-v1 release, built by `task model:build`).
 const DefaultModelSHA256 = "bdd4b106b293635d9a1b60eb9f9786f8fd47a7f4215a8f7c5f8fa0984d4356bd"
 
+// ErrEmbeddingOff means the configuration turns the embedding model off, so it is not loaded even where it is.
+var ErrEmbeddingOff = errors.New("the embedding model is turned off in config.json (classifier.embedding_model)")
+
 // ErrNoEmbeddingModel means no embedding model is available, so layer 2 stays off.
 var ErrNoEmbeddingModel = errors.New("no embedding model found (run shh init to download it)")
 

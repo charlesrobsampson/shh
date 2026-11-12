@@ -51,9 +51,8 @@ type Env struct {
 	WithStore func(do func(*store.Store) error) error
 	// Doctor says how to look at the machine for shh doctor (the worker probe is added by the command). Nil when it is not available.
 	Doctor *doctor.Env
-	// FetchModel makes sure the embedding model is there, downloading it when this build does not carry it and the models folder lacks it.
-	// It returns a line to say what it found or did. Nil when it is not available.
-	FetchModel func() (string, error)
+	// Model is what shh model does with the embedding model. Nil when it is not available.
+	Model *ModelOps
 	// Retention is how long notifications are kept, from config.json, for shh purge. Nil when it is not available.
 	Retention func() store.Retention
 	// Notifications reads the macOS notification records, for shh capture. Nil when it is not available.
@@ -90,6 +89,7 @@ type cli struct {
 	Routine  routineCmd  `cmd:"" help:"Saved sequences of focus sessions, such as a pomodoro (shh guide routine-commands explains them)."`
 	Worker   workerCmd   `cmd:"" help:"Start, stop and check the background worker (shh daemon runs it in the foreground)."`
 	Ls       lsCmd       `cmd:"" help:"List stored notifications, newest first (read-only): --source, --since, --status, --min-score, --flagged."`
+	Model    modelCmd    `cmd:"" help:"The optional embedding model: status, install, remove (shh works without it)."`
 	Purge    purgeCmd    `cmd:"" help:"Delete stored notifications past their time to live (--all: every one), after asking."`
 	Capture  captureCmd  `cmd:"" help:"Log raw notifications to a file under private/, to build rules from real examples."`
 	Rules    rulesCmd    `cmd:"" help:"Check what the rules did not understand (shh rules review)."`
