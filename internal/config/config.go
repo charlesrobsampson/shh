@@ -31,8 +31,10 @@ type Style struct {
 	// ButtonColor and ButtonTextColor style the banner's buttons the same way; NoColor (the default) leaves them as the system draws them.
 	ButtonColor     int
 	ButtonTextColor int
-	DurationSecs    int // 0 (the default) means until dismissed: alerts are the important ones, so they stay until acted on
-	Sound           string
+	// SelectedColor is the ring drawn around the banner picked with the keyboard.
+	SelectedColor int
+	DurationSecs  int // 0 (the default) means until dismissed: alerts are the important ones, so they stay until acted on
+	Sound         string
 }
 
 // StyleOverride changes only the fields that are set.
@@ -42,20 +44,24 @@ type StyleOverride struct {
 	Color     *int    `json:"color,omitempty"`
 	TextColor *int    `json:"text_color,omitempty"`
 	// ButtonColor is the buttons' background and ButtonTextColor their text.
-	ButtonColor     *int    `json:"button_color,omitempty"`
-	ButtonTextColor *int    `json:"button_text_color,omitempty"`
-	DurationSecs    *int    `json:"duration_secs,omitempty"`
-	Sound           *string `json:"sound,omitempty"`
+	ButtonColor     *int `json:"button_color,omitempty"`
+	ButtonTextColor *int `json:"button_text_color,omitempty"`
+	// SelectedColor is the ring around the banner that the keyboard shortcuts have picked.
+	SelectedColor *int    `json:"selected_color,omitempty"`
+	DurationSecs  *int    `json:"duration_secs,omitempty"`
+	Sound         *string `json:"sound,omitempty"`
 	// Buttons replaces the whole button list when set; it is not merged with the list above it.
 	Buttons []ButtonEntry `json:"buttons,omitempty"`
 }
 
 func (o StyleOverride) isZero() bool {
-	return o.Position == nil && o.Size == nil && o.Color == nil && o.TextColor == nil && o.ButtonColor == nil && o.ButtonTextColor == nil && o.DurationSecs == nil && o.Sound == nil && o.Buttons == nil
+	return o.Position == nil && o.Size == nil && o.Color == nil && o.TextColor == nil && o.ButtonColor == nil && o.ButtonTextColor == nil && o.SelectedColor == nil && o.DurationSecs == nil && o.Sound == nil && o.Buttons == nil
 }
 
 type Alert struct {
-	Base     Style
+	Base      Style
+	Shortcuts Shortcuts
+
 	Buttons  []ButtonEntry // the base button list as written; nil means the defaults
 	Calendar StyleOverride
 	Source   map[string]StyleOverride
@@ -100,6 +106,9 @@ func (a StyleOverride) Merge(b StyleOverride) StyleOverride {
 	if b.ButtonTextColor != nil {
 		a.ButtonTextColor = b.ButtonTextColor
 	}
+	if b.SelectedColor != nil {
+		a.SelectedColor = b.SelectedColor
+	}
 	if b.DurationSecs != nil {
 		a.DurationSecs = b.DurationSecs
 	}
@@ -133,6 +142,9 @@ func (s Style) with(o StyleOverride) Style {
 	}
 	if o.ButtonTextColor != nil {
 		s.ButtonTextColor = *o.ButtonTextColor
+	}
+	if o.SelectedColor != nil {
+		s.SelectedColor = *o.SelectedColor
 	}
 	if o.DurationSecs != nil {
 		s.DurationSecs = *o.DurationSecs
@@ -195,8 +207,9 @@ type Config struct {
 type file struct {
 	Alert struct {
 		StyleOverride
-		Calendar *StyleOverride           `json:"calendar,omitempty"`
-		Source   map[string]StyleOverride `json:"source,omitempty"`
+		Shortcuts *shortcutsFile           `json:"shortcuts,omitempty"`
+		Calendar  *StyleOverride           `json:"calendar,omitempty"`
+		Source    map[string]StyleOverride `json:"source,omitempty"`
 	} `json:"alert"`
 	Menubar struct {
 		Enabled *bool   `json:"enabled,omitempty"`
@@ -263,7 +276,7 @@ func Load(path string) (Config, error) {
 
 func build(f file, configDir string) (Config, error) {
 	cfg := Config{
-		Alert:      Alert{Base: Style{Position: "top-right", Size: "medium", Color: DefaultColor, TextColor: DefaultTextColor, ButtonColor: NoColor, ButtonTextColor: NoColor, DurationSecs: 0, Sound: "Glass"}},
+		Alert:      Alert{Base: Style{Position: "top-right", Size: "medium", Color: DefaultColor, TextColor: DefaultTextColor, ButtonColor: NoColor, ButtonTextColor: NoColor, SelectedColor: DefaultSelectedColor, DurationSecs: 0, Sound: "Glass"}, Shortcuts: defaultShortcuts()},
 		Menubar:    Menubar{Enabled: true, Label: "shh"},
 		Summarizer: Summarizer{Backend: "none"},
 		Retention:  Retention{TTLDays: 30, KeepUntrainedDays: 90, AutoTrainAfterDays: 30},
@@ -273,6 +286,11 @@ func build(f file, configDir string) (Config, error) {
 		return Config{}, err
 	}
 	cfg.Alert.Base = cfg.Alert.Base.with(f.Alert.StyleOverride)
+	shortcuts, err := f.Alert.Shortcuts.apply(cfg.Alert.Shortcuts)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.Alert.Shortcuts = shortcuts
 	cfg.Alert.Buttons = f.Alert.Buttons
 	if f.Alert.Calendar != nil {
 		if err := validateOverride("alert.calendar", *f.Alert.Calendar); err != nil {
@@ -380,6 +398,8 @@ func validateOverride(prefix string, o StyleOverride) error {
 		return fmt.Errorf("%q: %d is not a color code from 0 to 255 (the 8-bit ANSI palette: %s; shh alert colors shows them)", prefix+".button_color", *o.ButtonColor, ColorChartURL)
 	case o.ButtonTextColor != nil && (*o.ButtonTextColor < 0 || *o.ButtonTextColor > 255):
 		return fmt.Errorf("%q: %d is not a color code from 0 to 255 (the 8-bit ANSI palette: %s; shh alert colors shows them)", prefix+".button_text_color", *o.ButtonTextColor, ColorChartURL)
+	case o.SelectedColor != nil && (*o.SelectedColor < 0 || *o.SelectedColor > 255):
+		return fmt.Errorf("%q: %d is not a color code from 0 to 255 (the 8-bit ANSI palette: %s; shh alert colors shows them)", prefix+".selected_color", *o.SelectedColor, ColorChartURL)
 	case o.DurationSecs != nil && *o.DurationSecs < 0:
 		return fmt.Errorf("%q: %d is negative (use 0 for until dismissed)", prefix+".duration_secs", *o.DurationSecs)
 	case o.Sound != nil && *o.Sound == "":
@@ -418,6 +438,8 @@ func (c Config) Effective() ([]byte, error) {
 	if base.ButtonTextColor != NoColor {
 		f.Alert.ButtonTextColor = &base.ButtonTextColor
 	}
+	f.Alert.SelectedColor = &base.SelectedColor
+	f.Alert.Shortcuts = c.Alert.Shortcuts.file()
 	f.Alert.Buttons = entries(normalize(c.Alert.Buttons))
 	if !c.Alert.Calendar.isZero() {
 		calendar := c.Alert.Calendar

@@ -26,6 +26,9 @@ const NoColor = -1
 // DefaultTextColor is the banner's text color when nothing says otherwise: 15, white.
 const DefaultTextColor = 15
 
+// DefaultSelectedColor is the ring around a banner picked with the keyboard when nothing says otherwise: 15, white.
+const DefaultSelectedColor = 15
+
 // ansiStandard are the sixteen colors at the start of the palette, as xterm draws them.
 var ansiStandard = [16]string{
 	"#000000", "#800000", "#008000", "#808000", "#000080", "#800080", "#008080", "#c0c0c0",

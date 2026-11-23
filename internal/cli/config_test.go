@@ -63,6 +63,11 @@ func TestConfigPathShowAndDefaults(t *testing.T) {
 	if out := r.mustRun("config", "defaults"); out != config.Template {
 		t.Error("defaults should print the template")
 	}
+	r.env.ConfigWarnings = func() []string { return []string{"a problem that does not stop it"} }
+	r.mustRun("config", "show")
+	if !strings.Contains(r.err.String(), "warning: a problem that does not stop it") {
+		t.Errorf("config show should report the warnings on stderr, got %q", r.err.String())
+	}
 	r.env.ConfigShow = nil
 	if code := r.run("config", "show"); code == 0 {
 		t.Error("show with nothing to show is an error")

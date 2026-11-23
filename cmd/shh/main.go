@@ -74,6 +74,7 @@ func realEnv() cli.Env {
 		env.ConfigPath = path
 	}
 	env.ConfigShow = func() ([]byte, error) { return cfg.Effective() }
+	env.ConfigWarnings = cfg.Alert.Shortcuts.Warnings
 	env.RoutinesPath, env.Stdin = routine.DefaultPath(cfg.Paths.Dir), os.Stdin
 	env.Spawn = func() error { return spawnDaemon(cfg) }
 	env.PersistedFocus = func() bool { return persistedFocus(cfg.Paths.DB) }
