@@ -667,7 +667,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 ### 59 · A broken config must not lock out the commands that fix it
 - [ ] Done
-- Session: (not started)
+- Session: `claude --resume 70d100a2-dc22-4be7-a35b-6209fde0fd50`
 - Branch: `task/59-config-rescue` · Depends: 54
 - Context: the user, 2026-11-23: new keys (task 54) were added to `config.json` before the new build was installed, and the old build refused every command, `shh worker restart` included, because its strict check rejects keys it does not know. The strictness is deliberate (it catches typos), but it must not stop the commands you would use to get out of the hole. The user had to comment the keys out, restart, install and uncomment.
 - Build: `cli.ResolveConfig(args, load, fallback)`: when the configuration does not load and the command is one of the rescue commands (`worker` and its subcommands, `doctor`, `init`, `guide`, `config path`, `config defaults`) it carries on with the defaults (`config.Default(path)`: the defaults, paths relative to the config's folder) and a warning `shh: warning: cannot read the configuration, using the defaults: <error>`; every other command, `config show` included, still stops with the error, which now ends with the commands that do work; `cmd/shh` uses it in place of its exit. An error about an unknown key adds that it may be a setting from a newer shh than the one installed, so install that first or comment the line out. `doctor`'s config check still fails with the error.
