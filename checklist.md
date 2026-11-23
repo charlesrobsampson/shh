@@ -641,7 +641,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 ### 56 · Banner selection: cycle, press and dismiss all
 - [ ] Done
-- Session: (not started)
+- Session: `claude --resume 70d100a2-dc22-4be7-a35b-6209fde0fd50`
 - Branch: `task/56-banner-selection` · Depends: 46, 55
 - Context: `plan.md` §7.2 lists the behavior.
 - Build: the overlay keeps a selection (arrival order across positions) with `Next`, `Previous`, `Clear`, `Press(buttonType)`, `PressAction(n)` and `DismissAll`; it follows the banners (a removed selected banner hands the selection to the next one, a new banner never takes it); `overlay.js` takes `selected` and `press` messages next to the layout ones, draws the ring in `selected_color` (an NSBox border, so the layout does not move), and stops the auto-dismiss timer while selected; Go sends `press` for a key and the script runs its existing `press()` path, so the outcome and events are the same as a click; a key for a button the banner lacks does nothing; the worker registers the chord when the first banner shows and releases it when the last goes, and turns presses into overlay calls; `shortcuts.enabled: false` registers nothing.
