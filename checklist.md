@@ -631,7 +631,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 ### 55 · Hotkeys: interface and macOS implementation
 - [ ] Done
-- Session: (not started)
+- Session: `claude --resume 70d100a2-dc22-4be7-a35b-6209fde0fd50`
 - Branch: `task/55-hotkeys` · Depends: 53, 54
 - Context: spike 53 (`docs/spikes/06-hotkeys.md`) showed it works. `RunApplicationEventLoop` has to own the main thread of the process that hosts it, so the proposal is a small helper process like `shh menubar`: `shh hotkeys` started with the first banner and stopped with the last, chord and keys in, one JSON line per press out, so the worker's startup does not change. Confirm that choice with the user before building.
 - Build: the `shh hotkeys` helper command; package `internal/hotkey` with a `Hotkeys` interface (register a chord and keys, a channel or callback of presses, unregister, an error for a chord that cannot be taken) per `plan.md` §11.1; the macOS implementation through purego with CGo off (`hotkey_darwin.go`, a stub `hotkey_other.go` that reports unsupported); `fake` in `internal/testkit` that lets a test press a key and observe what is registered; a `Taskfile.yml` runner only if the spike's is worth keeping.
