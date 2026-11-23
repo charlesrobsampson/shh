@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/charlesrobsampson/shh/internal/config"
+	"github.com/charlesrobsampson/shh/internal/hotkey"
 	"io"
 	"os"
 	"os/exec"
@@ -41,6 +42,12 @@ type OverlayConfig struct {
 	// OnTrain hears that the train button of a banner was pressed, with the id of the notification it is about, so the model can be taught
 	// that it should not have alerted. Called once per banner, from the goroutine that reads the banner's output. Optional.
 	OnTrain func(notificationID int64)
+	// Hotkeys holds the keyboard shortcuts while banners are on screen (plan.md §7.2); Shortcuts says which, asked each time banners
+	// appear so a change to the configuration is picked up. Both optional: without them there are no shortcuts.
+	Hotkeys   hotkey.Hotkeys
+	Shortcuts func() config.Shortcuts
+	// OnKeyError hears that the shortcuts could not be held (another app has a key, or the helper would not start). Optional.
+	OnKeyError func(error)
 	// OnAction hears that an action button of a banner was pressed: the alert's ActionToken and the button's ID. Called from the
 	// goroutine that reads the banner's output. Optional.
 	OnAction func(token, id string)
@@ -55,9 +62,14 @@ type Overlay struct {
 
 	mu     sync.Mutex
 	stacks map[string][]*banner // banners on screen, by position, nearest the screen edge first
+	// order is every banner on screen in the order it arrived, across positions: the order the keyboard moves through them. selected is
+	// the one the keyboard has picked, nil when none is.
+	order    []*banner
+	selected *banner
 	// screen is the height banners can use, as reported by a banner; 0 until one has. A stack taller than that continues in a
 	// further column, next to the first and further in from the screen edge.
 	screen int
+	keys   keys
 }
 
 // banner is what the overlay knows about one banner on screen.
@@ -88,6 +100,12 @@ func NewOverlay(cfg OverlayConfig) *Overlay {
 	return &Overlay{cfg: cfg, stacks: map[string][]*banner{}}
 }
 
+// keys is what the overlay knows about the shortcuts it holds.
+type keys struct {
+	mu   sync.Mutex // one change of the held keys at a time, in the order they are wanted
+	held *hotkey.Binding
+}
+
 type bannerSpec struct {
 	// Header is the app the alert is from, drawn small above the title; empty draws nothing.
 	Header string `json:"header"`
@@ -99,6 +117,8 @@ type bannerSpec struct {
 	Color  string `json:"color"`
 	// TextColor is the color of the text, as #rrggbb.
 	TextColor string `json:"textColor"`
+	// SelectedColor is the ring drawn around the banner while the keyboard has picked it, as #rrggbb.
+	SelectedColor string `json:"selectedColor"`
 	// ButtonColor and ButtonTextColor are #rrggbb, or empty to leave the buttons as the system draws them.
 	ButtonColor     string `json:"buttonColor,omitempty"`
 	ButtonTextColor string `json:"buttonTextColor,omitempty"`
@@ -153,7 +173,7 @@ func bannerEnv(r Request, at layoutMessage) []string {
 		buttons = append(buttons, bannerButton{Type: b.Type, Label: b.Label, CollapseLabel: b.CollapseLabel, FlaggedLabel: b.FlaggedLabel, ID: b.ID, TrainedLabel: b.TrainedLabel})
 	}
 	spec, _ := json.Marshal(bannerSpec{
-		Header: strings.TrimSpace(r.Source), Title: r.Title, Body: r.Body, Bundle: r.BundleID, Color: config.ANSIHex(r.Style.Color), TextColor: config.ANSIHex(r.Style.TextColor), ButtonColor: buttonHex(r.Style.ButtonColor), ButtonTextColor: buttonHex(r.Style.ButtonTextColor), Width: r.Width, Height: r.Height,
+		Header: strings.TrimSpace(r.Source), Title: r.Title, Body: r.Body, Bundle: r.BundleID, Color: config.ANSIHex(r.Style.Color), TextColor: config.ANSIHex(r.Style.TextColor), SelectedColor: config.ANSIHex(r.Style.SelectedColor), ButtonColor: buttonHex(r.Style.ButtonColor), ButtonTextColor: buttonHex(r.Style.ButtonTextColor), Width: r.Width, Height: r.Height,
 		Position: r.Style.Position, Indent: at.Indent, Offset: at.Offset, Duration: r.Style.DurationSecs, Sound: r.Style.Sound,
 		Buttons: buttons, DismissOnClick: r.DismissOnClick, PreviewHeight: r.PreviewHeight, ButtonRows: r.ButtonRows, Managed: true, Parent: os.Getpid(),
 	})
@@ -235,6 +255,7 @@ func (o *Overlay) Show(r Request) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.stacks[r.Style.Position] = append(o.stacks[r.Style.Position], b)
+	o.order = append(o.order, b)
 	b.sent = o.slotOf(b)
 	proc, err := o.cfg.Start(bannerEnv(r, b.sent), func(line string) { o.onEvent(b, line) })
 	if err != nil {
@@ -242,12 +263,14 @@ func (o *Overlay) Show(r Request) error {
 		return fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
 	b.proc = proc
+	o.syncKeys()
 	go func() {
 		outcome, err := proc.Wait()
 		o.mu.Lock()
 		o.removeLocked(b)
 		o.layoutLocked(r.Style.Position)
 		o.mu.Unlock()
+		o.syncKeys()
 		if outcome != "opened" && outcome != "dismissed" && outcome != "expired" && err != nil && o.cfg.OnFailure != nil {
 			o.cfg.OnFailure(r, err)
 		}
@@ -385,4 +408,21 @@ func (o *Overlay) removeLocked(b *banner) {
 	if i := slices.Index(stack, b); i >= 0 {
 		o.stacks[b.req.Style.Position] = slices.Delete(stack, i, i+1)
 	}
+	i := slices.Index(o.order, b)
+	if i < 0 {
+		return
+	}
+	o.order = slices.Delete(o.order, i, i+1)
+	if o.selected != b {
+		return
+	}
+	// the selection goes to the banner that followed the one that went, or the one before it when it was the last
+	o.selected = nil
+	switch {
+	case i < len(o.order):
+		o.selected = o.order[i]
+	case i > 0:
+		o.selected = o.order[i-1]
+	}
+	o.tellSelectedLocked(o.selected, true)
 }

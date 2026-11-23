@@ -58,6 +58,11 @@ const textHex = (cfg.textColor || '#ffffff').replace('#', '');
 const textChannel = i => parseInt(textHex.slice(i, i + 2), 16) / 255;
 const textColor = $.NSColor.colorWithSRGBRedGreenBlueAlpha(textChannel(0), textChannel(2), textChannel(4), 1);
 
+// The ring drawn around the banner while the keyboard shortcuts have picked it.
+const ringHex = (cfg.selectedColor || '#ffffff').replace('#', '');
+const ringChannel = i => parseInt(ringHex.slice(i, i + 2), 16) / 255;
+const ringColor = $.NSColor.colorWithSRGBRedGreenBlueAlpha(ringChannel(0), ringChannel(2), ringChannel(4), 1);
+
 const area = $.NSScreen.mainScreen.visibleFrame;
 const margin = 16;
 const [vertical, horizontal] = cfg.position.split('-');
@@ -278,6 +283,25 @@ function layoutTo(newIndent, newOffset, newHeight) {
 // Tell Go how much height the screen offers, so it can start a new column when a stack would run off the bottom.
 emit('screen ' + Math.round(area.size.height - 2 * margin));
 
+// A banner that times out stops counting while the keyboard has it picked, as it does while it is expanded, and starts again from the
+// full time when the pick moves on.
+function startTimer() {
+  if (cfg.duration > 0 && !timer) {
+    timer = $.NSTimer.scheduledTimerWithTimeIntervalTargetSelectorUserInfoRepeats(
+      cfg.duration, $.ShhBannerTimer.alloc.init, 'expire:', $(), false);
+  }
+}
+// The ring is the box's own border, drawn inside its edge, so nothing moves.
+function setSelected(on) {
+  view.setBorderWidth(on ? 3 : 0);
+  view.setBorderColor(ringColor);
+  if (on) {
+    if (timer) { timer.invalidate; timer = null; }
+  } else if (!expanded) {
+    startTimer();
+  }
+}
+
 let expanded = false;
 let flagged = false;
 let trainedOnce = false;
@@ -335,7 +359,15 @@ if (cfg.managed) {
           while ((end = pending.indexOf('\n')) >= 0) {
             const line = pending.slice(0, end);
             pending = pending.slice(end + 1);
-            try { const m = JSON.parse(line); layoutTo(m.indent || 0, m.offset, m.height); } catch (e) { /* ignore a malformed line */ }
+            try {
+              const m = JSON.parse(line);
+              // Besides where to be, Go sends what the keyboard does: pick or drop this banner, press one of its buttons by its place
+              // in the list (the same press() a click runs), or close it.
+              if (m.selected !== undefined) setSelected(m.selected);
+              else if (m.press !== undefined) { if (cfg.buttons[m.press]) press(cfg.buttons[m.press]); }
+              else if (m.dismiss) finish('dismissed');
+              else layoutTo(m.indent || 0, m.offset, m.height);
+            } catch (e) { /* ignore a malformed line */ }
           }
           stdin.waitForDataInBackgroundAndNotify;
         },
@@ -349,10 +381,7 @@ if (cfg.managed) {
 
 win.orderFront($());
 if (cfg.sound !== 'none') $.NSSound.soundNamed($(cfg.sound)).play;
-if (cfg.duration > 0) {
-  timer = $.NSTimer.scheduledTimerWithTimeIntervalTargetSelectorUserInfoRepeats(
-    cfg.duration, $.ShhBannerTimer.alloc.init, 'expire:', $(), false);
-}
+startTimer();
 
 app.run;
 win.orderOut($());

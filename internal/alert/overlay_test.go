@@ -21,18 +21,24 @@ type fakeProcess struct {
 	onEvent func(string)
 	mu      sync.Mutex
 	sent    []layout
+	raw     []string // every message, whatever it was
 }
 
 type layout struct{ Indent, Offset, Height int }
 
 func (p *fakeProcess) Send(message []byte) error {
-	var l layout
-	if err := json.Unmarshal(message, &l); err != nil {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(message, &fields); err != nil {
 		panic("the overlay sent a message that is not JSON: " + string(message))
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.sent = append(p.sent, l)
+	p.raw = append(p.raw, string(message))
+	if _, isLayout := fields["height"]; isLayout { // the others are about the keyboard: selected, press, dismiss
+		var l layout
+		_ = json.Unmarshal(message, &l)
+		p.sent = append(p.sent, l)
+	}
 	return nil
 }
 
@@ -64,10 +70,10 @@ type overlayRig struct {
 	overlay   *alert.Overlay
 }
 
-func newOverlayRig(t *testing.T) *overlayRig {
+func newOverlayRig(t *testing.T, options ...func(*alert.OverlayConfig)) *overlayRig {
 	t.Helper()
 	r := &overlayRig{t: t}
-	r.overlay = alert.NewOverlay(alert.OverlayConfig{
+	cfg := alert.OverlayConfig{
 		Start: func(env []string, onEvent func(string)) (alert.Process, error) {
 			r.mu.Lock()
 			defer r.mu.Unlock()
@@ -83,7 +89,11 @@ func newOverlayRig(t *testing.T) *overlayRig {
 			defer r.mu.Unlock()
 			r.failures, r.failedFor = append(r.failures, err), append(r.failedFor, req)
 		},
-	})
+	}
+	for _, option := range options {
+		option(&cfg)
+	}
+	r.overlay = alert.NewOverlay(cfg)
 	return r
 }
 

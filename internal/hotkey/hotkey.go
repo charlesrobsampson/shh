@@ -12,6 +12,19 @@ import (
 	"github.com/charlesrobsampson/shh/internal/config"
 )
 
+// ActionButton is the action of the nth key (1 to 9) that presses the nth action button of the selected banner. They are held on top
+// of config.ShortcutActions, on the keys 1 to 9 of the same chord.
+func ActionButton(n int) string { return fmt.Sprintf("action_%d", n) }
+
+// Actions is every action a binding can name: the configurable ones, then the nine digit keys.
+func Actions() []string {
+	out := append([]string(nil), config.ShortcutActions...)
+	for n := 1; n <= 9; n++ {
+		out = append(out, ActionButton(n))
+	}
+	return out
+}
+
 // ErrUnsupported is what the helper reports on a system that has no implementation.
 var ErrUnsupported = errors.New("global keyboard shortcuts are not available on this system")
 
