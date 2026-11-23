@@ -664,3 +664,22 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Build: a `shh doctor` check that the chord can be registered (reports a chord another app holds, and a config the validator would refuse); the README and the guide (`internal/guide`) get a section on shortcuts (the chord, every key, selection, `show_in_label`, `selected_color`, what to do when a chord is taken); `plan.md` §7.2 marked DECIDED with the spike's findings; `manifest.md` is left alone (the original spec).
 - Tests: doctor with a fake `Hotkeys` that accepts, refuses and reports a taken chord; a guide test that the new section exists and its topics are found by search.
 - Manual check: `shh doctor` with the chord free and with it taken by another app.
+
+### 59 · A broken config must not lock out the commands that fix it
+- [ ] Done
+- Session: (not started)
+- Branch: `task/59-config-rescue` · Depends: 54
+- Context: the user, 2026-11-23: new keys (task 54) were added to `config.json` before the new build was installed, and the old build refused every command, `shh worker restart` included, because its strict check rejects keys it does not know. The strictness is deliberate (it catches typos), but it must not stop the commands you would use to get out of the hole. The user had to comment the keys out, restart, install and uncomment.
+- Build: `cli.ResolveConfig(args, load, fallback)`: when the configuration does not load and the command is one of the rescue commands (`worker` and its subcommands, `doctor`, `init`, `guide`, `config path`, `config defaults`) it carries on with the defaults (`config.Default(path)`: the defaults, paths relative to the config's folder) and a warning `shh: warning: cannot read the configuration, using the defaults: <error>`; every other command, `config show` included, still stops with the error, which now ends with the commands that do work; `cmd/shh` uses it in place of its exit. An error about an unknown key adds that it may be a setting from a newer shh than the one installed, so install that first or comment the line out. `doctor`'s config check still fails with the error.
+- Known limit: a broken file that moves `paths` cannot be read, so a worker started with a different socket is not found by `worker restart` (the warning says the defaults are in use).
+- Tests: which commands are rescue commands (table); a broken config with each class of command; `Default` equals what a missing file loads; the unknown-key message; `config show` still fails.
+- Manual check: put an unknown key in `config.json`, then `shh worker restart` and `shh doctor` run with the warning and `shh ls` stops.
+
+### 60 · shh config upgrade: add the options a newer shh has
+- [ ] Done
+- Session: (not started)
+- Branch: `task/60-config-upgrade` · Depends: 54, 59
+- Context: the user (2026-11-23): when shh gains options, a written `config.json` should be brought up to date without hand-merging. The new build runs it, so the order is right by construction.
+- Build: `shh config upgrade` prints the options the documented template has and the file lacks, each with its comment, found by key path (down into objects both have, never into lists or the per-kind and per-app overrides); `--write` inserts them at their defaults, by byte range as routine saving does, so the user's values, comments and layout stay; a backup `config.json.bak` is written first; the result is checked to load and to resolve to the same configuration as before (the options are added at their defaults, so nothing changes); nothing is written when it would not. No file: says to run `shh init`. `shh doctor` mentions how many options are missing and the command, at the lowest level (an option left out on purpose is a normal state, since a missing option is its default). The guide and README say how to update.
+- Tests: missing options found at each depth; a file with everything gives none; comments, values and order survive a write; a deliberately changed value is never touched; backup written; refusing when the result would not load; idempotent (a second run finds nothing); doctor note.
+- Manual check: run it on a copy of an older `config.json`.
