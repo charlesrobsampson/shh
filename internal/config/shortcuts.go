@@ -193,3 +193,38 @@ func (s Shortcuts) file() *shortcutsFile {
 	}
 	return &shortcutsFile{Enabled: &enabled, Modifier: &modifier, ShowInLabel: &show, Keys: keys}
 }
+
+// KeyLabel is a key as it is written on a button: a letter in capitals (D), a named key by its usual name (Esc).
+func KeyLabel(key string) string {
+	switch key {
+	case "escape":
+		return "Esc"
+	case "left":
+		return "←"
+	case "right":
+		return "→"
+	case "up":
+		return "↑"
+	case "down":
+		return "↓"
+	}
+	return strings.ToUpper(key[:1]) + key[1:]
+}
+
+// WithHint adds the key of a shortcut action to text, "Dismiss" becoming "Dismiss (D)". Text is left alone when the hints are off,
+// the shortcut has no key, text is empty, or it already ends with the hint.
+func (s Shortcuts) WithHint(text, action string) string {
+	return s.WithKeyHint(text, s.Keys[action])
+}
+
+// WithKeyHint is WithHint for a key that is not one of the configurable ones, such as the digit of an alert's own button.
+func (s Shortcuts) WithKeyHint(text, key string) string {
+	if !s.Enabled || !s.ShowInLabel || key == "" || text == "" {
+		return text
+	}
+	hint := " (" + KeyLabel(key) + ")"
+	if strings.HasSuffix(text, hint) {
+		return text
+	}
+	return text + hint
+}
