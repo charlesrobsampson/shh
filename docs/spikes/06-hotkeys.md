@@ -30,9 +30,10 @@ Use Carbon hotkeys through purego, no CGo, as `plan.md` §7.2 assumed.
 - No fallback is needed (no NSEvent monitor, no CGo).
 - Update to `plan.md`: the chord check is a warning for ⌥ and ⌥⇧ (not an error), and `doctor` cannot detect every taken chord.
 
-## Not tested by the script (manual check)
+## Confirmed by hand
 
-- A real keyboard (the runs above used System Events).
-- Presses over a full-screen Ghostty window and a full-screen Teams call.
-- ⌥-only and ⌥⇧-only chords on the real keyboard.
+The user pressed the keys on a real keyboard over other apps and a full-screen app, and ran the banner demo: everything arrived and worked.
+
+## Not tested
+
 - Several displays and Spaces.

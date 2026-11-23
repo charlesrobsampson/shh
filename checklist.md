@@ -608,7 +608,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 
 ### 53 · Spike: global hotkeys without CGo
-- [ ] Done
+- [x] Done
 - Session: `claude --resume 70d100a2-dc22-4be7-a35b-6209fde0fd50`
 - Branch: `task/53-hotkeys-spike` · Depends: 46
 - Context: the user wants keyboard shortcuts for banners (`plan.md` §7.2). Banners cannot take keyboard focus, so the keys must be global hotkeys: one shared chord plus a key each. Option A (Carbon `RegisterEventHotKey`) was chosen because it needs no permission and consumes the key; CGo is avoided (the user prefers it, so the Linux port stays simple), but `github.com/ebitengine/purego` is allowed.
@@ -617,7 +617,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Answer in `docs/spikes/06-hotkeys.md` (what worked, what did not, numbers, the decision): (1) does it build and run with CGo off; (2) which process hosts the run loop; (3) do the keys arrive over a full-screen app (Ghostty, a Teams call) and while another app has focus; (4) which chords macOS 15+ ignores (⌥ and ⌥⇧ alone) and which fail as taken; (5) what a failed registration returns; (6) fallbacks if purego cannot (NSEvent global monitor and its permission, or CGo with the user's approval). If the answer contradicts `plan.md` §7.2, update it and tell the user before continuing.
 - Tests: none (spike).
 - Manual check: the user presses the chord keys over other apps, a full-screen app and a Teams call and sees them arrive.
-- Notes: **Answer: yes.** Carbon hotkeys through purego work with `CGO_ENABLED=0` (`docs/spikes/06-hotkeys.md`; `task spike:hotkeys -- -inject -banner`): presses arrive, one drives a real banner's `press()` through its stdin, registering after the loop started and 200 register/unregister cycles work, the process is `BackgroundOnly`. `RunApplicationEventLoop` on the main thread is required (`CFRunLoopRun` alone delivers nothing); task 55 proposes a helper process (`shh hotkeys`) to host it. ⌥ and ⌥⇧ chords were delivered on macOS 26.7, so task 54 warns instead of refusing; `doctor` (task 58) cannot see a clash with an app that does not use this API. Still to confirm by hand: real keyboard, full-screen Ghostty and Teams call, ⌥-only chords.
+- Notes: **Answer: yes.** Carbon hotkeys through purego work with `CGO_ENABLED=0` (`docs/spikes/06-hotkeys.md`; `task spike:hotkeys -- -inject -banner`): presses arrive, one drives a real banner's `press()` through its stdin, registering after the loop started and 200 register/unregister cycles work, the process is `BackgroundOnly`. `RunApplicationEventLoop` on the main thread is required (`CFRunLoopRun` alone delivers nothing); task 55 proposes a helper process (`shh hotkeys`) to host it. ⌥ and ⌥⇧ chords were delivered on macOS 26.7, so task 54 warns instead of refusing; `doctor` (task 58) cannot see a clash with an app that does not use this API. Confirmed by hand by the user (real keyboard, over other apps, full screen).
 
 ### 54 · Config: shortcuts and the selected-banner color
 - [ ] Done
