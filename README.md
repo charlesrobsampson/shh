@@ -50,6 +50,7 @@ shh guide           # the guide to all of it
 shh config path        # where the file is
 shh config show        # what is in force: your file over the defaults
 shh config defaults    # the documented defaults again, to compare with your edits
+shh config upgrade     # after updating shh: list the options your file lacks (--write adds them at their defaults, keeping your comments)
 shh alert test         # a sample of each banner style
 shh alert colors       # the palette banner colors are chosen from
 ```

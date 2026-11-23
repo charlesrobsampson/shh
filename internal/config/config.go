@@ -263,6 +263,11 @@ func Load(path string) (Config, error) {
 	} else if err != nil {
 		return Config{}, err
 	}
+	return ParseBytes(path, raw)
+}
+
+// ParseBytes is Load for text that is already in hand: what the file at path would say if it held raw.
+func ParseBytes(path string, raw []byte) (Config, error) {
 	var f file
 	if err := jsonc.Decode(path, raw, &f); err != nil {
 		return Config{}, explainUnknownKey(ExplainColorError(err))

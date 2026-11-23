@@ -42,6 +42,8 @@ type Env struct {
 	ConfigPath string
 	// LoadConfig reads config.json as the worker will.
 	LoadConfig func() error
+	// MissingOptions is how many options the documented template has that config.json lacks; the config check mentions it. Optional.
+	MissingOptions func() (int, error)
 	// DBPath is shh's own database; OpenDB opens it (without creating it) and returns its schema version.
 	DBPath string
 	OpenDB func() (version int, err error)
@@ -78,6 +80,11 @@ func Standard(e Env) []Check {
 			}
 			if _, err := os.Stat(e.ConfigPath); errors.Is(err, os.ErrNotExist) {
 				return Warn, e.ConfigPath + " does not exist, so the defaults are in force", "shh init writes it with every option explained"
+			}
+			if e.MissingOptions != nil {
+				if n, err := e.MissingOptions(); err == nil && n > 0 {
+					return OK, fmt.Sprintf("%s (%d options added since it was written are not in it, so their defaults apply; shh config upgrade adds them)", e.ConfigPath, n), ""
+				}
 			}
 			return OK, e.ConfigPath, ""
 		})
