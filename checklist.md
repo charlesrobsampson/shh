@@ -609,7 +609,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 ### 53 · Spike: global hotkeys without CGo
 - [ ] Done
-- Session: (not started)
+- Session: `claude --resume 70d100a2-dc22-4be7-a35b-6209fde0fd50`
 - Branch: `task/53-hotkeys-spike` · Depends: 46
 - Context: the user wants keyboard shortcuts for banners (`plan.md` §7.2). Banners cannot take keyboard focus, so the keys must be global hotkeys: one shared chord plus a key each. Option A (Carbon `RegisterEventHotKey`) was chosen because it needs no permission and consumes the key; CGo is avoided (the user prefers it, so the Linux port stays simple), but `github.com/ebitengine/purego` is allowed.
 - Question: can Go register Carbon hotkeys through purego with `CGO_ENABLED=0` and receive their presses?
