@@ -220,7 +220,7 @@ Pure function, easily tested. Keyword list (`now`, `ASAP`, `urgent`, `prod`, `do
 
 ## 7.2 Keyboard shortcuts for banners **[NEW, tasks 53-58]**
 - Goal: reach a banner and press its buttons without the mouse. Banners are borderless accessory windows that cannot take keyboard focus (and must not: a key pressed while typing elsewhere must never land in a banner), so the shortcuts are **global**: one chord of modifiers shared by every shortcut, plus one key each.
-- Mechanism **[ASSUMED, spike 53 decides]**: Carbon `RegisterEventHotKey` (no permission prompt, the keys are consumed), called from Go through `github.com/ebitengine/purego` so there is still **no CGo** (the user allows purego as a dependency, and prefers no CGo so the Linux port stays simple). Fallbacks if purego cannot: an `NSEvent` global monitor in a JXA helper (needs Input Monitoring permission, cannot consume keys), or CGo only with the user's approval. The spike also decides where the run loop lives (the worker, with a locked main thread, or a helper process like `shh menubar`).
+- Mechanism **[DECIDED, spike 53, `docs/spikes/06-hotkeys.md`]**: Carbon `RegisterEventHotKey` (no permission prompt, the keys are consumed), called from Go through `github.com/ebitengine/purego` so there is still **no CGo** (the user allows purego as a dependency, and prefers no CGo so the Linux port stays simple). It works with CGo off, and a press can drive a banner through its stdin. `RunApplicationEventLoop` must own the main thread of the process that hosts it (`CFRunLoopRun` alone is not enough): task 55 proposes a small helper process like `shh menubar`, so the worker's startup is untouched.
 - The shortcuts are registered while at least one banner is on screen and released when the last one goes, so an idle shh holds no keys.
 - Config, under `alert` (the shortcuts themselves are system-wide, so they live only at the base level; `selected_color` follows the other colors, with per-kind and per-app overrides):
   ```jsonc
@@ -243,7 +243,7 @@ Pure function, easily tested. Keyword list (`now`, `ASAP`, `urgent`, `prod`, `do
   - `dismiss_all` closes every banner on screen at once and needs no selection.
   - An alert's own buttons (Start next, Skip) take the keys `1` to `9`, in the order drawn, on the selected banner.
   - **`show_in_label`**: the key is added to the button's text automatically, to the configured label and to the collapse, flagged and trained labels, so what the button says always matches the key. A user who wants full control writes their own label and sets `show_in_label` to `false`.
-- Validation (errors name the key, like the rest of the config): unknown key names, one key bound twice, a chord with no modifier, and a chord macOS no longer delivers (macOS 15 and later ignore hotkeys whose only modifier is ⌥ or ⌥⇧). `shh doctor` reports a chord another app already holds, because registration fails when it is taken.
+- Validation (errors name the key, like the rest of the config): unknown key names, one key bound twice, a chord with no modifier, and a chord with no modifier. A chord whose only modifier is ⌥ or ⌥⇧ is a warning (macOS 15.0 was reported to ignore them; spike 53 saw them delivered on 26.7). `shh doctor` reports a chord that fails to register because another app holds it; an app that does not use the same API (Spotlight's ⌘Space) is not detected.
 - Platform: behind a `Hotkeys` interface (§11.1). Linux is later: Wayland offers global shortcuts only through the desktop portal, so it is not promised.
 
 ---
