@@ -300,12 +300,16 @@ func persistedFocus(dbPath string) bool {
 
 // newAlerter draws alerts in the AppKit overlay and falls back to a Notification Center notification (titled with the own-banner
 // prefix so the suppressor lets it through) if the overlay cannot run or dies.
-func newAlerter(alertConfig func() config.Alert, onError func(error), onFlag func(notificationID int64, flagged bool), onTrain func(notificationID int64), onAction func(token, id string)) (alert.Alerter, *alert.Overlay) {
+func newAlerter(alertConfig func() config.Alert, hotkeys hotkey.Hotkeys, onError func(error), onFlag func(notificationID int64, flagged bool), onTrain func(notificationID int64), onAction func(token, id string)) (alert.Alerter, *alert.Overlay) {
 	fallback := alert.NewFallback(alert.FallbackConfig{OwnPrefix: ingest.OwnTitlePrefix})
 	overlay := alert.NewOverlay(alert.OverlayConfig{
-		OnFlag:   onFlag,
-		OnTrain:  onTrain,
-		OnAction: onAction,
+		// the keyboard shortcuts for banners, held while any is on screen and read from the configuration as it is then
+		Hotkeys:    hotkeys,
+		Shortcuts:  func() config.Shortcuts { return alertConfig().Shortcuts },
+		OnKeyError: func(err error) { onError(fmt.Errorf("the banner keyboard shortcuts: %w", err)) },
+		OnFlag:     onFlag,
+		OnTrain:    onTrain,
+		OnAction:   onAction,
 		OnFailure: func(req alert.Request, err error) {
 			onError(fmt.Errorf("the alert overlay failed (%w); using a notification instead", err))
 			if showErr := fallback.Show(req); showErr != nil {
@@ -359,7 +363,7 @@ func runDaemon(cfg config.Config) error {
 	if watcher != nil {
 		alertConfig = watcher.Alert
 	}
-	alerter, overlay := newAlerter(alertConfig, onError, func(id int64, flagged bool) {
+	alerter, overlay := newAlerter(alertConfig, hotkeyProcess(), onError, func(id int64, flagged bool) {
 		if id < 0 {
 			return // a sample from `shh alert test`: nothing real to mark
 		}

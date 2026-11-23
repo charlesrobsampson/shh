@@ -48,14 +48,15 @@ func Serve(in io.Reader, out io.Writer, p Platform) error {
 		defer mu.Unlock()
 		_ = encoder.Encode(e) // a worker that has gone is noticed through in
 	}
+	actions := Actions()
 	if err := p.Start(func(id int) {
-		if id >= 1 && id <= len(config.ShortcutActions) {
-			emit(event{Event: "press", Action: config.ShortcutActions[id-1]})
+		if id >= 1 && id <= len(actions) {
+			emit(event{Event: "press", Action: actions[id-1]})
 		}
 	}); err != nil {
 		return err
 	}
-	for i, action := range config.ShortcutActions { // the id is the action's place in the list, so a press names its action
+	for i, action := range actions { // the id is the action's place in the list, so a press names its action
 		key := req.Keys[action]
 		if key == "" {
 			continue

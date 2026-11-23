@@ -231,3 +231,14 @@ func waitFor(t *testing.T, cond func() bool, what string) {
 	}
 	t.Fatalf("timed out waiting for %s", what)
 }
+
+func TestTheDigitKeysOfTheChordNameTheirActionButtons(t *testing.T) {
+	var got presses
+	p := &hotkey.Process{Command: helperCommand("HK_PRESS=2")}
+	defer p.Unregister()
+	b := hotkey.Binding{Modifier: config.Ctrl | config.Alt, Keys: map[string]string{"next": "]", hotkey.ActionButton(1): "1", hotkey.ActionButton(2): "2"}}
+	if err := p.Register(b, got.add); err != nil {
+		t.Fatal(err)
+	}
+	got.wait(t, "action_2")
+}
