@@ -74,10 +74,16 @@ func init() {
 
 func realEnv() cli.Env {
 	env := cli.Env{Stdout: os.Stdout, Stderr: os.Stderr, Version: version, Build: session.BuildID, Label: "shh", IsTerminal: isTerminal(os.Stdout)}
-	cfg, err := loadConfig()
+	cfg, warning, err := cli.ResolveConfig(os.Args[1:], loadConfig, func() (config.Config, error) {
+		path, err := config.DefaultPath()
+		return config.Default(path), err
+	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "shh: cannot read the configuration:", err)
 		os.Exit(1)
+	}
+	if warning != "" {
+		fmt.Fprintln(os.Stderr, "shh: warning:", warning)
 	}
 	env.SocketPath, env.ConfigDir, env.Label = cfg.Paths.Socket, cfg.Paths.Dir, cfg.Menubar.Label
 	if path, err := config.DefaultPath(); err == nil {

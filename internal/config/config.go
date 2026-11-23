@@ -265,13 +265,20 @@ func Load(path string) (Config, error) {
 	}
 	var f file
 	if err := jsonc.Decode(path, raw, &f); err != nil {
-		return Config{}, ExplainColorError(err)
+		return Config{}, explainUnknownKey(ExplainColorError(err))
 	}
 	cfg, err := build(f, filepath.Dir(path))
 	if err != nil {
 		return Config{}, fmt.Errorf("%s: %w", path, err)
 	}
 	return cfg, nil
+}
+
+// Default is the configuration no file gives, with its paths beside the file at path. It is what the commands that put a broken
+// configuration right run on.
+func Default(path string) Config {
+	cfg, _ := build(file{}, filepath.Dir(path)) // nothing is set, so there is nothing to refuse
+	return cfg
 }
 
 func build(f file, configDir string) (Config, error) {
@@ -352,6 +359,15 @@ func build(f file, configDir string) (Config, error) {
 	}
 	cfg.Paths = paths
 	return cfg, nil
+}
+
+// explainUnknownKey adds what an unknown key may mean: a setting from a newer shh than this one, which is how a configuration comes to be
+// refused after it was updated before the program was. Any other error is returned as it was.
+func explainUnknownKey(err error) error {
+	if err != nil && strings.Contains(err.Error(), "unknown key") {
+		return fmt.Errorf("%w; if this is a setting from a newer shh than the one installed, install the newer one, or comment the line out until you have", err)
+	}
+	return err
 }
 
 func buildPaths(f file, configDir string) (Paths, error) {
