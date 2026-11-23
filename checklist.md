@@ -666,7 +666,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Manual check: `shh doctor` with the chord free and with it taken by another app.
 
 ### 59 · A broken config must not lock out the commands that fix it
-- [ ] Done
+- [x] Done
 - Session: `claude --resume 70d100a2-dc22-4be7-a35b-6209fde0fd50`
 - Branch: `task/59-config-rescue` · Depends: 54
 - Context: the user, 2026-11-23: new keys (task 54) were added to `config.json` before the new build was installed, and the old build refused every command, `shh worker restart` included, because its strict check rejects keys it does not know. The strictness is deliberate (it catches typos), but it must not stop the commands you would use to get out of the hole. The user had to comment the keys out, restart, install and uncomment.
@@ -674,6 +674,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Known limit: a broken file that moves `paths` cannot be read, so a worker started with a different socket is not found by `worker restart` (the warning says the defaults are in use).
 - Tests: which commands are rescue commands (table); a broken config with each class of command; `Default` equals what a missing file loads; the unknown-key message; `config show` still fails.
 - Manual check: put an unknown key in `config.json`, then `shh worker restart` and `shh doctor` run with the warning and `shh ls` stops.
+- Notes: `config.Default(path)` is the defaults with paths beside `path` (a test keeps it equal to what a missing file loads). `cli.IsRescueCommand(args)` is true for any `worker ...`, `doctor`, `init`, `guide ...`, `config path`, `config defaults` and for `-h`/`--help`; `config show`, `daemon`, `menubar` and everything else are not (`worker start` and `restart` on a broken file stop the old worker and then the new `shh daemon` still cannot read the file, so they report that the worker did not start; the point is that `stop`, `status`, `doctor` and the rest work). `cli.ResolveConfig(args, load, fallback)` replaces the exit in `cmd/shh` `realEnv`: a rescue command gets `shh: warning: cannot read the configuration, using the defaults: <error>`, anything else gets the error plus a line naming the commands that still work. `config.Load` adds, to an unknown-key error only, that it may be a setting from a newer shh than the one installed (install it, or comment the line out). `doctor` still reports the config check as FAIL with that error. The hint only helps from the build that contains it on: an older build says nothing. Checked with the built binary against a config holding an unknown key in a scratch HOME (`HOME=<path> shh ...` per command: shh derives every path from HOME and has no override): `config path`, `config defaults`, `doctor` and `worker status` ran with the warning, `ls` and `config show` stopped with the hint.
 
 ### 60 · shh config upgrade: add the options a newer shh has
 - [ ] Done

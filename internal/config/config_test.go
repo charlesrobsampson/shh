@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -566,5 +567,32 @@ func TestRetentionDefaultsAndRules(t *testing.T) {
 	cfg, err = config.Load(path)
 	if err != nil || !cfg.Retention.AutoTrain || cfg.Retention.AutoTrainAfterDays != 7 {
 		t.Errorf("%+v %v", cfg.Retention, err)
+	}
+}
+
+func TestDefaultIsWhatNoFileGivesWithPathsBesideTheFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	want, err := config.Load(path) // there is no file
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := config.Default(path); !reflect.DeepEqual(got, want) {
+		t.Errorf("Default = %+v\nbut no file gives %+v", got, want)
+	}
+}
+
+func TestAnUnknownKeyErrorSaysItMayBeNewerThanThisShh(t *testing.T) {
+	_, err := config.Load(write(t, `{"alert": {"shortcuts": {"enabled": true}, "colour": 3}}`))
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	for _, want := range []string{"unknown key", `"alert.colour"`, "newer shh", "comment"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q should mention %q", err, want)
+		}
+	}
+	if _, err := config.Load(write(t, `{"alert": {"color": "red"}}`)); err == nil || strings.Contains(err.Error(), "newer shh") {
+		t.Errorf("only an unknown key gets the hint: %v", err)
 	}
 }
