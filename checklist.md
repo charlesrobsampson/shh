@@ -621,7 +621,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 ### 54 · Config: shortcuts and the selected-banner color
 - [ ] Done
-- Session: (not started)
+- Session: `claude --resume 70d100a2-dc22-4be7-a35b-6209fde0fd50`
 - Branch: `task/54-shortcuts-config` · Depends: 42, 44, 53
 - Context: `plan.md` §7.2 has the shape. The highlight color works like the other colors, the shortcuts are one global block.
 - Build: `selected_color` in `config.Style` (default 15, same 8-bit palette and per-kind and per-app overrides as `button_color`), `config.Shortcuts` (`enabled`, `modifier`, `show_in_label`, `keys`) with the defaults in `plan.md` §7.2 and a modifier parser (`ctrl`, `alt`, `shift`, `cmd`, joined by `+`); validation with errors that name the key (unknown key names and button types, one key bound twice, no modifier, `shortcuts` inside a per-kind or per-app override), plus a warning (not an error) for a chord whose only modifier is ⌥ or ⌥⇧; `shh alert colors`, the config template and `shh config` show the new keys with comments.
