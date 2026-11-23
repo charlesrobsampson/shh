@@ -678,7 +678,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 ### 60 · shh config upgrade: add the options a newer shh has
 - [ ] Done
-- Session: (not started)
+- Session: `claude --resume 70d100a2-dc22-4be7-a35b-6209fde0fd50`
 - Branch: `task/60-config-upgrade` · Depends: 54, 59
 - Context: the user (2026-11-23): when shh gains options, a written `config.json` should be brought up to date without hand-merging. The new build runs it, so the order is right by construction.
 - Build: `shh config upgrade` prints the options the documented template has and the file lacks, each with its comment, found by key path (down into objects both have, never into lists or the per-kind and per-app overrides); `--write` inserts them at their defaults, by byte range as routine saving does, so the user's values, comments and layout stay; a backup `config.json.bak` is written first; the result is checked to load and to resolve to the same configuration as before (the options are added at their defaults, so nothing changes); nothing is written when it would not. No file: says to run `shh init`. `shh doctor` mentions how many options are missing and the command, at the lowest level (an option left out on purpose is a normal state, since a missing option is its default). The guide and README say how to update.
