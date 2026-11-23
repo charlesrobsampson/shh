@@ -606,3 +606,58 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Tests: file parsing and errors that name the key; the runner stepping through repeat and finish on a fake clock; ask mode waiting and Next/Skip; a restart resuming mid-step; manual stop ending it; CLI commands; TUI keys.
 - Manual check: run a 2-step routine with 1m steps from the CLI and the TUI and watch the menu bar follow.
 
+
+### 53 · Spike: global hotkeys without CGo
+- [ ] Done
+- Session: (not started)
+- Branch: `task/53-hotkeys-spike` · Depends: 46
+- Context: the user wants keyboard shortcuts for banners (`plan.md` §7.2). Banners cannot take keyboard focus, so the keys must be global hotkeys: one shared chord plus a key each. Option A (Carbon `RegisterEventHotKey`) was chosen because it needs no permission and consumes the key; CGo is avoided (the user prefers it, so the Linux port stays simple), but `github.com/ebitengine/purego` is allowed.
+- Question: can Go register Carbon hotkeys through purego with `CGO_ENABLED=0` and receive their presses?
+- Build (throwaway code under `spikes/hotkeys/`, its own module like the other spikes, a `task spike:hotkeys` runner): register `⌃⌥]`, `⌃⌥[`, `⌃⌥D` and print each press; try the run loop in the Go process (`runtime.LockOSThread` in `main`, a CFRunLoop or `RunApplicationEventLoop`) and, if that does not suit a daemon, in a helper process like `shh menubar`; register and unregister repeatedly; drive an existing banner's `press` from a key to prove the loop is worth building.
+- Answer in `docs/spikes/06-hotkeys.md` (what worked, what did not, numbers, the decision): (1) does it build and run with CGo off; (2) which process hosts the run loop; (3) do the keys arrive over a full-screen app (Ghostty, a Teams call) and while another app has focus; (4) which chords macOS 15+ ignores (⌥ and ⌥⇧ alone) and which fail as taken; (5) what a failed registration returns; (6) fallbacks if purego cannot (NSEvent global monitor and its permission, or CGo with the user's approval). If the answer contradicts `plan.md` §7.2, update it and tell the user before continuing.
+- Tests: none (spike).
+- Manual check: the user presses the chord keys over other apps, a full-screen app and a Teams call and sees them arrive.
+
+### 54 · Config: shortcuts and the selected-banner color
+- [ ] Done
+- Session: (not started)
+- Branch: `task/54-shortcuts-config` · Depends: 42, 44, 53
+- Context: `plan.md` §7.2 has the shape. The highlight color works like the other colors, the shortcuts are one global block.
+- Build: `selected_color` in `config.Style` (default 15, same 8-bit palette and per-kind and per-app overrides as `button_color`), `config.Shortcuts` (`enabled`, `modifier`, `show_in_label`, `keys`) with the defaults in `plan.md` §7.2 and a modifier parser (`ctrl`, `alt`, `shift`, `cmd`, joined by `+`); validation with errors that name the key (unknown key names and button types, one key bound twice, no modifier, a chord macOS 15+ ignores, `shortcuts` inside a per-kind or per-app override); `shh alert colors`, the config template and `shh config` show the new keys with comments.
+- Tests: defaults; overrides for `selected_color` per kind and per app; every validation error; modifier parsing in any order and case; the template round-trips and still loads.
+- Manual check: `shh config` shows the new keys; a bad chord is refused with a clear message.
+
+### 55 · Hotkeys: interface and macOS implementation
+- [ ] Done
+- Session: (not started)
+- Branch: `task/55-hotkeys` · Depends: 53, 54
+- Context: the result of spike 53 decides how this is built and where the run loop lives; follow it.
+- Build: package `internal/hotkey` with a `Hotkeys` interface (register a chord and keys, a channel or callback of presses, unregister, an error for a chord that cannot be taken) per `plan.md` §11.1; the macOS implementation through purego with CGo off (`hotkey_darwin.go`, a stub `hotkey_other.go` that reports unsupported); `fake` in `internal/testkit` that lets a test press a key and observe what is registered; a `Taskfile.yml` runner only if the spike's is worth keeping.
+- Tests: with the fake: register and unregister, a press reaches the handler, a taken chord is reported, registering twice replaces the first. The macOS code itself is checked by hand.
+- Manual check: a small command or the doctor check of task 58 registers the chord and prints a press.
+
+### 56 · Banner selection: cycle, press and dismiss all
+- [ ] Done
+- Session: (not started)
+- Branch: `task/56-banner-selection` · Depends: 46, 55
+- Context: `plan.md` §7.2 lists the behavior.
+- Build: the overlay keeps a selection (arrival order across positions) with `Next`, `Previous`, `Clear`, `Press(buttonType)`, `PressAction(n)` and `DismissAll`; it follows the banners (a removed selected banner hands the selection to the next one, a new banner never takes it); `overlay.js` takes `selected` and `press` messages next to the layout ones, draws the ring in `selected_color` (an NSBox border, so the layout does not move), and stops the auto-dismiss timer while selected; Go sends `press` for a key and the script runs its existing `press()` path, so the outcome and events are the same as a click; a key for a button the banner lacks does nothing; the worker registers the chord when the first banner shows and releases it when the last goes, and turns presses into overlay calls; `shortcuts.enabled: false` registers nothing.
+- Tests (with the fake hotkeys and fake `Process`): cycling and wrapping, nothing selected at first, new banner does not steal, selection moves when its banner goes, each button key on the selected banner reaches the same events as a click (flag toggles, train once, preview resizes), keys for missing buttons do nothing, `1` to `9` press action buttons, dismiss all with and without a selection, the chord is held only while banners exist, disabled registers nothing, script pins for the new messages.
+- Manual check: show three banners (`shh alert test`), cycle with the keys, press Preview, Flag and Dismiss on the selected one, then dismiss all.
+
+### 57 · Shortcut keys in button labels
+- [ ] Done
+- Session: (not started)
+- Branch: `task/57-shortcut-labels` · Depends: 54, 56
+- Context: with `show_in_label` on (the default), each button's text ends with its key, `Dismiss (D)`, and stays right when the key is changed. A user who wants their own text turns it off.
+- Build: the Go side adds the key to a button's label and to its collapse, flagged and trained labels when the banner is built, so the button-width table and the rows `buttonRows` reserves already count it (the script only draws what it is given); no hint for a button whose key is not set, or when `shortcuts.enabled` is false; `shh alert test` and the TUI/config previews show it.
+- Tests: labels with and without the hint for every label state; changing a key changes the label; a custom label gets the hint too and loses it with `show_in_label: false`; hints off when shortcuts are off; a long label still fits the reserved button rows.
+- Manual check: see the keys on real banners, change one in the config and see the label follow.
+
+### 58 · Shortcuts: doctor check and documentation
+- [ ] Done
+- Session: (not started)
+- Branch: `task/58-shortcuts-docs` · Depends: 56, 57
+- Build: a `shh doctor` check that the chord can be registered (reports a chord another app holds, and a config the validator would refuse); the README and the guide (`internal/guide`) get a section on shortcuts (the chord, every key, selection, `show_in_label`, `selected_color`, what to do when a chord is taken); `plan.md` §7.2 marked DECIDED with the spike's findings; `manifest.md` is left alone (the original spec).
+- Tests: doctor with a fake `Hotkeys` that accepts, refuses and reports a taken chord; a guide test that the new section exists and its topics are found by search.
+- Manual check: `shh doctor` with the chord free and with it taken by another app.
