@@ -30,6 +30,10 @@ Use Carbon hotkeys through purego, no CGo, as `plan.md` §7.2 assumed.
 - No fallback is needed (no NSEvent monitor, no CGo).
 - Update to `plan.md`: the chord check is a warning for ⌥ and ⌥⇧ (not an error), and `doctor` cannot detect every taken chord.
 
+## Found while building task 55
+
+- `QuitApplicationEventLoop` called from another thread does not take `RunApplicationEventLoop` out of its wait, so the helper simply exits when its input closes (nothing to clean up: the hotkeys go with the process).
+
 ## Confirmed by hand
 
 The user pressed the keys on a real keyboard over other apps and a full-screen app, and ran the banner demo: everything arrived and worked.

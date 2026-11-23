@@ -77,8 +77,8 @@ var defaultShortcutKeys = map[string]string{
 	ButtonPreview: "p", ButtonGoto: "g", ButtonDismiss: "d", ButtonFlag: "f", ButtonTrain: "n",
 }
 
-// namedKeys are the keys that are not a single character.
-var namedKeys = []string{"escape", "space", "return", "tab", "delete", "left", "right", "up", "down"}
+// NamedKeys are the keys that are not a single character.
+var NamedKeys = []string{"escape", "space", "return", "tab", "delete", "left", "right", "up", "down"}
 
 // Shortcuts are the global keyboard shortcuts for banners (plan.md §7.2). They are one setting for the whole alert section: a hotkey is
 // system-wide, so it cannot differ by kind of alert or by app.
@@ -131,8 +131,8 @@ func (f *shortcutsFile) apply(base Shortcuts) (Shortcuts, error) {
 			continue
 		}
 		key = strings.ToLower(key)
-		if key != "" && !validKey(key) {
-			return Shortcuts{}, fmt.Errorf("%q: %q is not a key (use one character such as d or ], or one of %s)", prefix+".keys."+action, key, strings.Join(namedKeys, ", "))
+		if key != "" && !ValidShortcutKey(key) {
+			return Shortcuts{}, fmt.Errorf("%q: %q is not a key (use one character such as d or ], or one of %s)", prefix+".keys."+action, key, strings.Join(NamedKeys, ", "))
 		}
 		if len(key) == 1 && key[0] >= '1' && key[0] <= '9' {
 			return Shortcuts{}, fmt.Errorf("%q: the keys 1 to 9 press an alert's own buttons (Start next, Skip), so they cannot be used here", prefix+".keys."+action)
@@ -164,14 +164,14 @@ func (f *shortcutsFile) apply(base Shortcuts) (Shortcuts, error) {
 	return base, nil
 }
 
-// validKey says whether key is one the shortcuts can be bound to: a letter, a digit or a punctuation mark of the main block of the
-// keyboard, or a named key.
-func validKey(key string) bool {
+// ValidShortcutKey says whether key is one the shortcuts can be bound to: a letter, a digit or a punctuation mark of the main block of
+// the keyboard, or a named key.
+func ValidShortcutKey(key string) bool {
 	if len(key) == 1 {
 		c := key[0]
 		return c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || strings.ContainsRune("[];',./\\-=`", rune(c))
 	}
-	return slices.Contains(namedKeys, key)
+	return slices.Contains(NamedKeys, key)
 }
 
 // Warnings are problems that do not stop the shortcuts from loading but may keep them from working.

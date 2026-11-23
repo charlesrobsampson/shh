@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,6 +26,7 @@ import (
 	"github.com/charlesrobsampson/shh/internal/clock"
 	"github.com/charlesrobsampson/shh/internal/config"
 	"github.com/charlesrobsampson/shh/internal/doctor"
+	"github.com/charlesrobsampson/shh/internal/hotkey"
 	"github.com/charlesrobsampson/shh/internal/ingest"
 	"github.com/charlesrobsampson/shh/internal/launchd"
 	"github.com/charlesrobsampson/shh/internal/menubar"
@@ -62,6 +64,14 @@ func buildID() string {
 	return hex.EncodeToString(h.Sum(nil))[:12]
 }
 
+// The macOS event loop that delivers keyboard shortcuts has to run on the thread the process started on, and Go starts main on it only
+// when it asks to stay there from an init function (docs/spikes/06-hotkeys.md). Only the helper needs that.
+func init() {
+	if len(os.Args) > 2 && os.Args[1] == "hotkeys" && os.Args[2] == "helper" {
+		runtime.LockOSThread()
+	}
+}
+
 func realEnv() cli.Env {
 	env := cli.Env{Stdout: os.Stdout, Stderr: os.Stderr, Version: version, Build: session.BuildID, Label: "shh", IsTerminal: isTerminal(os.Stdout)}
 	cfg, err := loadConfig()
@@ -80,6 +90,14 @@ func realEnv() cli.Env {
 	env.PersistedFocus = func() bool { return persistedFocus(cfg.Paths.DB) }
 	env.Daemon = func(context.Context) error { return runDaemon(cfg) }
 	env.Menubar = func(ctx context.Context) error { return runMenubar(ctx, cfg) }
+	env.Hotkeys, env.Shortcuts = hotkeyProcess(), cfg.Alert.Shortcuts
+	env.HotkeysHelper = func() error {
+		platform, err := hotkey.NewPlatform()
+		if err != nil {
+			return err
+		}
+		return hotkey.Serve(os.Stdin, os.Stdout, platform)
+	}
 	env.TUI = func() error { return runTUI(cfg, "", "", false, "") }
 	env.UI = func(tab string) error { return runTUI(cfg, "", "", false, tab) }
 	env.Guide = func(section, search string) error { return runTUI(cfg, section, search, true, "") }
@@ -404,6 +422,24 @@ func runDaemon(cfg config.Config) error {
 		// A routine with a trigger switched on is started by this process, so it stays up for as long as there is one.
 		Busy: func() bool { return overlay.Active() > 0 || worker.RoutineActive() || worker.HasTriggers() },
 	})
+}
+
+// hotkeyProcess holds banner shortcuts in a helper, `shh hotkeys helper`, that it starts when keys are wanted and ends when they are let
+// go. The helper's errors go to the log, where `shh doctor` and the manual say to look.
+func hotkeyProcess() *hotkey.Process {
+	return &hotkey.Process{Command: func() *exec.Cmd {
+		exe, err := os.Executable()
+		if err != nil {
+			exe = os.Args[0]
+		}
+		cmd := exec.Command(exe, "hotkeys", "helper")
+		if dir, err := config.DefaultPath(); err == nil {
+			if logFile, err := os.OpenFile(filepath.Join(filepath.Dir(dir), "shh.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
+				cmd.Stderr = logFile // the child has its own copy once started; the worker's can stay open for the next one
+			}
+		}
+		return cmd
+	}}
 }
 
 // spawnMenubar starts `shh menubar` as a child of the worker. It is not waited for or killed: it polls the worker's socket and

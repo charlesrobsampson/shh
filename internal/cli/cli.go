@@ -11,8 +11,10 @@ import (
 
 	"github.com/alecthomas/kong"
 
+	"github.com/charlesrobsampson/shh/internal/config"
 	"github.com/charlesrobsampson/shh/internal/decide"
 	"github.com/charlesrobsampson/shh/internal/doctor"
+	"github.com/charlesrobsampson/shh/internal/hotkey"
 	"github.com/charlesrobsampson/shh/internal/ingest"
 	"github.com/charlesrobsampson/shh/internal/launchd"
 	"github.com/charlesrobsampson/shh/internal/session"
@@ -79,6 +81,11 @@ type Env struct {
 	// Menubar runs the menu bar item in the foreground until ctx ends or the worker is gone; it is what `shh menubar` (started by
 	// the worker) does. Nil when the menu bar is not available.
 	Menubar func(ctx context.Context) error
+	// Hotkeys holds the banner shortcuts (shh hotkeys test); Shortcuts is what the configuration says to hold. HotkeysHelper is the
+	// helper process the worker starts to hold them, which `shh hotkeys helper` runs. Nil where there is no support.
+	Hotkeys       hotkey.Hotkeys
+	Shortcuts     config.Shortcuts
+	HotkeysHelper func() error
 }
 
 type cli struct {
@@ -107,6 +114,7 @@ type cli struct {
 	Replay   replayCmd   `cmd:"" help:"Run the classifier over a file of notifications and print each decision."`
 	Daemon   daemonCmd   `cmd:"" help:"Run the worker in the foreground. shh starts it by itself when it is needed; run this (or shh worker start) at login to keep routines' triggers firing (shh guide triggers)."`
 	Menubar  menubarCmd  `cmd:"" hidden:"" help:"Run the menu bar item (started by the worker)."`
+	Hotkeys  hotkeysCmd  `cmd:"" help:"Banner keyboard shortcuts: check that they work."`
 }
 
 type exitRequest int
@@ -153,7 +161,7 @@ func Run(args []string, env Env) (code int) {
 	}
 	// A saved focus session is picked up again by the next command, by starting a worker. Not for the commands that are about the worker
 	// itself: a stop would be undone by the very next one, and start and restart start one anyway.
-	if name := ctx.Command(); name != "daemon" && name != "menubar" && name != "doctor" && name != "replay <file>" && name != "alert test" && !strings.HasPrefix(name, "worker") {
+	if name := ctx.Command(); name != "daemon" && name != "menubar" && name != "doctor" && !strings.HasPrefix(name, "hotkeys") && name != "replay <file>" && name != "alert test" && !strings.HasPrefix(name, "worker") {
 		env.rearmPersistedFocus()
 	}
 	if err := ctx.Run(); err != nil {
