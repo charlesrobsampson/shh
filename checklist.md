@@ -608,7 +608,7 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 
 ### 53 · Spike: global hotkeys without CGo
-- [ ] Done
+- [x] Done
 - Session: `claude --resume 70d100a2-dc22-4be7-a35b-6209fde0fd50`
 - Branch: `task/53-hotkeys-spike` · Depends: 46
 - Context: the user wants keyboard shortcuts for banners (`plan.md` §7.2). Banners cannot take keyboard focus, so the keys must be global hotkeys: one shared chord plus a key each. Option A (Carbon `RegisterEventHotKey`) was chosen because it needs no permission and consumes the key; CGo is avoided (the user prefers it, so the Linux port stays simple), but `github.com/ebitengine/purego` is allowed.
@@ -617,13 +617,14 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - Answer in `docs/spikes/06-hotkeys.md` (what worked, what did not, numbers, the decision): (1) does it build and run with CGo off; (2) which process hosts the run loop; (3) do the keys arrive over a full-screen app (Ghostty, a Teams call) and while another app has focus; (4) which chords macOS 15+ ignores (⌥ and ⌥⇧ alone) and which fail as taken; (5) what a failed registration returns; (6) fallbacks if purego cannot (NSEvent global monitor and its permission, or CGo with the user's approval). If the answer contradicts `plan.md` §7.2, update it and tell the user before continuing.
 - Tests: none (spike).
 - Manual check: the user presses the chord keys over other apps, a full-screen app and a Teams call and sees them arrive.
+- Notes: **Answer: yes.** Carbon hotkeys through purego work with `CGO_ENABLED=0` (`docs/spikes/06-hotkeys.md`; `task spike:hotkeys -- -inject -banner`): presses arrive, one drives a real banner's `press()` through its stdin, registering after the loop started and 200 register/unregister cycles work, the process is `BackgroundOnly`. `RunApplicationEventLoop` on the main thread is required (`CFRunLoopRun` alone delivers nothing); task 55 proposes a helper process (`shh hotkeys`) to host it. ⌥ and ⌥⇧ chords were delivered on macOS 26.7, so task 54 warns instead of refusing; `doctor` (task 58) cannot see a clash with an app that does not use this API. Confirmed by hand by the user (real keyboard, over other apps, full screen).
 
 ### 54 · Config: shortcuts and the selected-banner color
 - [ ] Done
 - Session: (not started)
 - Branch: `task/54-shortcuts-config` · Depends: 42, 44, 53
 - Context: `plan.md` §7.2 has the shape. The highlight color works like the other colors, the shortcuts are one global block.
-- Build: `selected_color` in `config.Style` (default 15, same 8-bit palette and per-kind and per-app overrides as `button_color`), `config.Shortcuts` (`enabled`, `modifier`, `show_in_label`, `keys`) with the defaults in `plan.md` §7.2 and a modifier parser (`ctrl`, `alt`, `shift`, `cmd`, joined by `+`); validation with errors that name the key (unknown key names and button types, one key bound twice, no modifier, a chord macOS 15+ ignores, `shortcuts` inside a per-kind or per-app override); `shh alert colors`, the config template and `shh config` show the new keys with comments.
+- Build: `selected_color` in `config.Style` (default 15, same 8-bit palette and per-kind and per-app overrides as `button_color`), `config.Shortcuts` (`enabled`, `modifier`, `show_in_label`, `keys`) with the defaults in `plan.md` §7.2 and a modifier parser (`ctrl`, `alt`, `shift`, `cmd`, joined by `+`); validation with errors that name the key (unknown key names and button types, one key bound twice, no modifier, `shortcuts` inside a per-kind or per-app override), plus a warning (not an error) for a chord whose only modifier is ⌥ or ⌥⇧; `shh alert colors`, the config template and `shh config` show the new keys with comments.
 - Tests: defaults; overrides for `selected_color` per kind and per app; every validation error; modifier parsing in any order and case; the template round-trips and still loads.
 - Manual check: `shh config` shows the new keys; a bad chord is refused with a clear message.
 
@@ -631,8 +632,8 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 - [ ] Done
 - Session: (not started)
 - Branch: `task/55-hotkeys` · Depends: 53, 54
-- Context: the result of spike 53 decides how this is built and where the run loop lives; follow it.
-- Build: package `internal/hotkey` with a `Hotkeys` interface (register a chord and keys, a channel or callback of presses, unregister, an error for a chord that cannot be taken) per `plan.md` §11.1; the macOS implementation through purego with CGo off (`hotkey_darwin.go`, a stub `hotkey_other.go` that reports unsupported); `fake` in `internal/testkit` that lets a test press a key and observe what is registered; a `Taskfile.yml` runner only if the spike's is worth keeping.
+- Context: spike 53 (`docs/spikes/06-hotkeys.md`) showed it works. `RunApplicationEventLoop` has to own the main thread of the process that hosts it, so the proposal is a small helper process like `shh menubar`: `shh hotkeys` started with the first banner and stopped with the last, chord and keys in, one JSON line per press out, so the worker's startup does not change. Confirm that choice with the user before building.
+- Build: the `shh hotkeys` helper command; package `internal/hotkey` with a `Hotkeys` interface (register a chord and keys, a channel or callback of presses, unregister, an error for a chord that cannot be taken) per `plan.md` §11.1; the macOS implementation through purego with CGo off (`hotkey_darwin.go`, a stub `hotkey_other.go` that reports unsupported); `fake` in `internal/testkit` that lets a test press a key and observe what is registered; a `Taskfile.yml` runner only if the spike's is worth keeping.
 - Tests: with the fake: register and unregister, a press reaches the handler, a taken chord is reported, registering twice replaces the first. The macOS code itself is checked by hand.
 - Manual check: a small command or the doctor check of task 58 registers the chord and prints a press.
 

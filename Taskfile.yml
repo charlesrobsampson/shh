@@ -108,6 +108,14 @@ tasks:
     cmds:
       - go run .
 
+  spike:hotkeys:
+    desc: "Spike 53: global hotkeys through purego, no CGo (flags after --, e.g. task spike:hotkeys -- -seconds 30, -inject, -inject -banner, -modifiers, -probe)"
+    dir: spikes/hotkeys
+    env:
+      CGO_ENABLED: "0"
+    cmds:
+      - go run . {{.CLI_ARGS}}
+
   spike:embeddings:
     desc: "Spike 05: compare the candidate models (run model:fetch first)"
     dir: spikes/embeddings
