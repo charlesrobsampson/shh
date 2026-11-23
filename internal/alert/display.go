@@ -3,6 +3,7 @@ package alert
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -70,11 +71,19 @@ func (d *Display) addButtons(req *Request, a Alert, acfg config.Alert) {
 			req.DismissOnClick = false
 		}
 		if applies(b.Type, req.Width, a) {
+			// the key goes on the text here, so the room for the buttons below counts it
+			sc := acfg.Shortcuts
+			b.Label, b.CollapseLabel = sc.WithHint(b.Label, b.Type), sc.WithHint(b.CollapseLabel, b.Type)
+			b.FlaggedLabel, b.TrainedLabel = sc.WithHint(b.FlaggedLabel, b.Type), sc.WithHint(b.TrainedLabel, b.Type)
 			req.Buttons = append(req.Buttons, b)
 		}
 	}
-	for _, act := range a.Actions {
-		req.Buttons = append(req.Buttons, config.Button{Type: ButtonAction, Label: act.Label, ID: act.ID, Enabled: true})
+	for i, act := range a.Actions {
+		label := act.Label
+		if i < 9 { // the keys 1 to 9 press an alert's own buttons, in order
+			label = acfg.Shortcuts.WithKeyHint(label, strconv.Itoa(i+1))
+		}
+		req.Buttons = append(req.Buttons, config.Button{Type: ButtonAction, Label: label, ID: act.ID, Enabled: true})
 	}
 	if len(req.Buttons) == 0 {
 		return

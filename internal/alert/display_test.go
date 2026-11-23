@@ -223,7 +223,7 @@ func TestTheTrainButtonStaysOutUntilAlertsCanBeTrained(t *testing.T) {
 }
 
 func TestButtonOrderAndLabelsFollowTheConfig(t *testing.T) {
-	r := shown(t, `{"alert": {"buttons": [{"type": "dismiss", "label": "Close"}, {"type": "goto", "label": "Open"}]}}`,
+	r := shown(t, `{"alert": {"shortcuts": {"show_in_label": false}, "buttons": [{"type": "dismiss", "label": "Close"}, {"type": "goto", "label": "Open"}]}}`,
 		alert.Alert{Kind: config.KindMessage, BundleID: "com.x", Title: "t", Body: longBody})
 	if buttonTypes(r) != "dismiss,goto" || r.Buttons[0].Label != "Close" || r.Buttons[1].Label != "Open" {
 		t.Errorf("buttons = %+v, want dismiss(Close) then goto(Open), no preview (not listed)", r.Buttons)
@@ -308,7 +308,7 @@ func TestTheFlagButtonCanBeTurnedOffOrRelabelled(t *testing.T) {
 	if got := buttonTypes(off); got != "goto,dismiss" {
 		t.Errorf("buttons = %q, want flag off when it is not listed", got)
 	}
-	custom := shown(t, `{"alert": {"buttons": [{"type": "flag", "label": "Review", "flagged_label": "Noted"}, {"type": "dismiss"}]}}`, in)
+	custom := shown(t, `{"alert": {"shortcuts": {"show_in_label": false}, "buttons": [{"type": "flag", "label": "Review", "flagged_label": "Noted"}, {"type": "dismiss"}]}}`, in)
 	if custom.Buttons[0].Type != "flag" || custom.Buttons[0].Label != "Review" || custom.Buttons[0].FlaggedLabel != "Noted" {
 		t.Errorf("buttons = %+v", custom.Buttons)
 	}
@@ -316,7 +316,7 @@ func TestTheFlagButtonCanBeTurnedOffOrRelabelled(t *testing.T) {
 
 func TestAnAlertsOwnActionsBecomeButtonsAfterTheConfiguredOnes(t *testing.T) {
 	primary := &recordingBackend{}
-	d := alert.NewDisplay(loadConfig(t, "{}").Alert, primary, nil, nil)
+	d := alert.NewDisplay(loadConfig(t, `{"alert": {"shortcuts": {"show_in_label": false}}}`).Alert, primary, nil, nil)
 	if err := d.Show(alert.Alert{Kind: config.KindMessage, Source: "Routine", Title: "work is over", Body: "Next: break",
 		ActionToken: "9:2", Actions: []alert.Action{{ID: "next", Label: "Start next"}}}); err != nil {
 		t.Fatal(err)
@@ -367,7 +367,7 @@ func TestALiveDisplayAsksForTheConfigurationOfEachAlert(t *testing.T) {
 
 func TestTheTrainButtonShowsOnlyForAlertsAboutAStoredNotificationAndOnlyWhenEnabled(t *testing.T) {
 	primary := &recordingBackend{}
-	on := alert.NewDisplay(loadConfig(t, `{"alert": {"buttons": [{"type": "goto"}, {"type": "train"}]}}`).Alert, primary, nil, nil)
+	on := alert.NewDisplay(loadConfig(t, `{"alert": {"shortcuts": {"show_in_label": false}, "buttons": [{"type": "goto"}, {"type": "train"}]}}`).Alert, primary, nil, nil)
 	_ = on.Show(alert.Alert{Kind: config.KindMessage, Source: "Teams", Title: "Ana", Body: "b", BundleID: "com.x", NotificationID: 7})
 	_ = on.Show(alert.Alert{Kind: config.KindMessage, Source: "Teams", Title: "no id", Body: "b", BundleID: "com.x"})
 	types := func(r alert.Request) string {
@@ -512,5 +512,75 @@ func TestTheTrainButtonIsNeverOnACalendarReminder(t *testing.T) {
 	}
 	if !has(primary.requests[1], "train") {
 		t.Error("a message the model scored has the train button")
+	}
+}
+
+func labelsOf(r alert.Request) string {
+	var out []string
+	for _, b := range r.Buttons {
+		out = append(out, b.Type+":"+b.Label+"|"+b.CollapseLabel+"|"+b.FlaggedLabel+"|"+b.TrainedLabel)
+	}
+	return strings.Join(out, " ")
+}
+
+func TestButtonsShowTheirKeyInEveryLabelTheyCanHave(t *testing.T) {
+	in := alert.Alert{Kind: config.KindMessage, BundleID: "com.x", NotificationID: 7, Title: "t", Body: longBody}
+	r := shown(t, `{"alert": {"buttons": [{"type": "preview"}, {"type": "flag"}, {"type": "train"}, {"type": "dismiss"}]}}`, in)
+	got := labelsOf(r)
+	for _, want := range []string{"preview:Preview (P)|Collapse (P)||", "flag:Flag (F)||Flagged (F)|", "train:Not important (N)|||Noted (N)", "dismiss:Dismiss (D)|||"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("labels = %s, want %q in it", got, want)
+		}
+	}
+}
+
+func TestChangingAKeyChangesItsLabelAndACustomLabelGetsTheKeyToo(t *testing.T) {
+	in := alert.Alert{Kind: config.KindMessage, BundleID: "com.x", Title: "t", Body: "hi"}
+	r := shown(t, `{"alert": {"shortcuts": {"keys": {"dismiss": "w", "goto": "return"}}, "buttons": [{"type": "goto", "label": "Open it"}, {"type": "dismiss"}]}}`, in)
+	if got := labelsOf(r); !strings.Contains(got, "goto:Open it (Return)") || !strings.Contains(got, "dismiss:Dismiss (W)") {
+		t.Errorf("labels = %s", got)
+	}
+	again := shown(t, `{"alert": {"buttons": [{"type": "dismiss", "label": "Dismiss (D)"}]}}`, in)
+	if got := labelsOf(again); !strings.Contains(got, "dismiss:Dismiss (D)|") || strings.Contains(got, "(D) (D)") {
+		t.Errorf("a label that already has its key should not get it twice: %s", got)
+	}
+}
+
+func TestNoKeyOnTheLabelWhenThatIsOffOrThereIsNoKey(t *testing.T) {
+	in := alert.Alert{Kind: config.KindMessage, BundleID: "com.x", Title: "t", Body: "hi"}
+	for name, cfg := range map[string]string{
+		"show_in_label off":     `{"alert": {"shortcuts": {"show_in_label": false}}}`,
+		"shortcuts off":         `{"alert": {"shortcuts": {"enabled": false}}}`,
+		"that key switched off": `{"alert": {"shortcuts": {"keys": {"dismiss": "", "goto": ""}}}}`,
+	} {
+		if got := labelsOf(shown(t, cfg, in)); strings.Contains(got, "(") {
+			t.Errorf("%s: labels = %s, want none with a key", name, got)
+		}
+	}
+}
+
+func TestAnAlertsOwnButtonsShowTheirNumber(t *testing.T) {
+	primary := &recordingBackend{}
+	d := alert.NewDisplay(loadConfig(t, `{}`).Alert, primary, nil, nil)
+	_ = d.Show(alert.Alert{Kind: config.KindMessage, Source: "Routine", Title: "t", Body: "b", Actions: []alert.Action{{ID: "a", Label: "Start next"}, {ID: "b", Label: "Skip"}}})
+	if got := labelsOf(primary.requests[0]); !strings.Contains(got, "action:Start next (1)") || !strings.Contains(got, "action:Skip (2)") {
+		t.Errorf("labels = %s", got)
+	}
+}
+
+func TestTheRoomForButtonsCountsTheKeyOnTheLabel(t *testing.T) {
+	// a label that just fits a row without its key needs the next row with it
+	in := alert.Alert{Kind: config.KindMessage, BundleID: "com.x", NotificationID: 7, Title: "t", Body: "hi"}
+	label := strings.Repeat("w", 12)
+	cfg := `{"alert": {"size": "small", "shortcuts": {"show_in_label": %s}, "buttons": [{"type": "goto", "label": "` + label + `"}, {"type": "flag", "label": "` + label + `"}]}}`
+	with := shown(t, strings.Replace(cfg, "%s", "true", 1), in)
+	without := shown(t, strings.Replace(cfg, "%s", "false", 1), in)
+	if with.ButtonRows < without.ButtonRows || with.Height < without.Height {
+		t.Errorf("rows with the keys %d, without %d: the keys cannot make the room smaller", with.ButtonRows, without.ButtonRows)
+	}
+	for _, b := range with.Buttons {
+		if !strings.HasSuffix(b.Label, ")") {
+			t.Errorf("label %q has no key", b.Label)
+		}
 	}
 }

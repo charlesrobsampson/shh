@@ -651,12 +651,13 @@ Conventions used below: every repeatable command (build, test, run helpers, spik
 
 ### 57 · Shortcut keys in button labels
 - [ ] Done
-- Session: (not started)
+- Session: `claude --resume 70d100a2-dc22-4be7-a35b-6209fde0fd50`
 - Branch: `task/57-shortcut-labels` · Depends: 54, 56
 - Context: with `show_in_label` on (the default), each button's text ends with its key, `Dismiss (D)`, and stays right when the key is changed. A user who wants their own text turns it off.
 - Build: the Go side adds the key to a button's label and to its collapse, flagged and trained labels when the banner is built, so the button-width table and the rows `buttonRows` reserves already count it (the script only draws what it is given); no hint for a button whose key is not set, or when `shortcuts.enabled` is false; `shh alert test` and the TUI/config previews show it.
 - Tests: labels with and without the hint for every label state; changing a key changes the label; a custom label gets the hint too and loses it with `show_in_label: false`; hints off when shortcuts are off; a long label still fits the reserved button rows.
 - Manual check: see the keys on real banners, change one in the config and see the label follow.
+- Notes: **`config.Shortcuts.WithHint(text, action)` / `WithKeyHint(text, key)` / `KeyLabel(key)`** (`internal/config/shortcuts.go`): "Dismiss" becomes "Dismiss (D)"; letters in capitals, `escape` as Esc, arrows as arrows, other names as written (`Return`). Text is left alone when shortcuts or `show_in_label` are off, the shortcut has no key, the text is empty or already ends with its hint (so a label written as "Dismiss (D)" is not doubled). **`Display.addButtons`** applies it to the label and to the collapse, flagged and trained labels of each shown button, before the button-width table and `ButtonRows` look at them, so the reserved rows count the key; an alert's own buttons get their digit `(1)` to `(9)`. Everything (banners, `shh alert test`, routines) goes through `Display`, so there is no second place. The script draws what it is given. Four older display tests that assert exact labels now set `show_in_label: false`; new tests cover every label state, a changed key, a custom label, a label that already has its key, hints off three ways, the digits, and the room for the row. **Needs the user:** the manual check below.
 
 ### 58 · Shortcuts: doctor check and documentation
 - [ ] Done
