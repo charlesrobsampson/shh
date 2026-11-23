@@ -1,0 +1,17 @@
+package hotkey
+
+// keyCodes are the macOS virtual key codes (ANSI layout) of every key a shortcut can be bound to; config.ValidShortcutKey says which
+// those are. The codes belong to physical positions, so on another layout a key is where the US layout has it.
+var keyCodes = map[string]uint32{
+	"a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9, "b": 11, "q": 12, "w": 13, "e": 14, "r": 15,
+	"y": 16, "t": 17, "1": 18, "2": 19, "3": 20, "4": 21, "6": 22, "5": 23, "=": 24, "9": 25, "7": 26, "-": 27, "8": 28, "0": 29,
+	"]": 30, "o": 31, "u": 32, "[": 33, "i": 34, "p": 35, "l": 37, "j": 38, "'": 39, "k": 40, ";": 41, "\\": 42, ",": 43,
+	"/": 44, "n": 45, "m": 46, ".": 47, "`": 50,
+	"return": 36, "tab": 48, "space": 49, "delete": 51, "escape": 53, "left": 123, "right": 124, "down": 125, "up": 126,
+}
+
+// KeyCode is the macOS key code of a shortcut key.
+func KeyCode(key string) (uint32, bool) {
+	code, ok := keyCodes[key]
+	return code, ok
+}
