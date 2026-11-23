@@ -13,7 +13,7 @@ import (
 // have no default value (they are off until set) are there as comments to uncomment.
 const Template = `// shh configuration. Every option is shown at its default, so this file changes nothing until you edit it. Comments (// and /* */)
 // and trailing commas are allowed. A change to the "alert" section shows in the next banner, "retention" applies at the next cleanup (about every
-// six hours), "summarizer" when the terminal UI is opened; only "menubar" and "paths" need shh worker restart. "shh config show" prints what is in force, and "shh guide config" explains it all.
+// six hours), "summarizer" when the terminal UI is opened; only "menubar" and "paths" need shh worker restart. "shh config show" prints what is in force, and "shh guide config" explains it all. After an update, "shh config upgrade" adds the options that are new.
 {
   "alert": {
     // How banners look. Colors are numbers from the 8-bit ANSI palette, 0-255 (shh alert colors shows it; chart:
@@ -22,9 +22,9 @@ const Template = `// shh configuration. Every option is shown at its default, so
     "size": "medium",           // small, medium or large (the banner's width)
     "color": 208,               // the banner's background
     "text_color": 15,           // the text on it (15 is white)
+    "selected_color": 15,       // the ring around the banner you picked with the keyboard shortcuts below (15 is white)
     // "button_color": 238,     // the buttons' background; left out, the buttons look as the system draws them
     // "button_text_color": 15, // the buttons' text
-    "selected_color": 15,       // the ring around the banner you picked with the keyboard shortcuts below (15 is white)
     "duration_secs": 0,         // 0 stays until you dismiss or open it; a number of seconds goes by itself
     "sound": "Glass",           // a macOS system sound (Glass, Hero, Basso, Blow, ...) or "none"
 

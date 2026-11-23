@@ -111,3 +111,28 @@ func TestChecksWithoutAProbeAreLeftOut(t *testing.T) {
 		t.Errorf("%d checks from nothing", n)
 	}
 }
+
+func TestDoctorMentionsOptionsAnOlderConfigLacksButStaysOK(t *testing.T) {
+	e := good(t)
+	e.MissingOptions = func() (int, error) { return 3, nil }
+	out := report(doctor.Run(doctor.Standard(e)))
+	if !strings.Contains(out, "3 options") || !strings.Contains(out, "shh config upgrade") {
+		t.Errorf("the report should say how many are missing and what to run:\n%s", out)
+	}
+	if strings.Contains(configLine(out), "FAIL") || strings.Contains(configLine(out), "warn") {
+		t.Errorf("a config that lacks options is fine, they are at their defaults: %s", configLine(out))
+	}
+	e.MissingOptions = func() (int, error) { return 0, nil }
+	if out := report(doctor.Run(doctor.Standard(e))); strings.Contains(out, "config upgrade") {
+		t.Errorf("nothing to say when nothing is missing:\n%s", out)
+	}
+}
+
+func configLine(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "config ") {
+			return line
+		}
+	}
+	return ""
+}

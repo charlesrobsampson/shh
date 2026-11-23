@@ -30,7 +30,7 @@ func (c *initCmd) Run(env *Env) error {
 		fmt.Fprintf(env.Stdout, "Created %s with every option at its default, explained in comments.\n", env.ConfigPath)
 		fmt.Fprintln(env.Stdout, "Edit it to change how banners look: a change to the alert section shows in the next banner (shh guide config explains each option).")
 	} else {
-		fmt.Fprintf(env.Stdout, "%s already exists, so it was left as it is. shh config defaults prints the documented defaults to compare with.\n", env.ConfigPath)
+		fmt.Fprintf(env.Stdout, "%s already exists, so it was left as it is. shh config defaults prints the documented defaults to compare with, and shh config upgrade adds the options a newer shh has.\n", env.ConfigPath)
 	}
 	var history time.Duration
 	if c.History != "" && c.History != "0" {
@@ -55,6 +55,7 @@ type configCmd struct {
 	Path     configPathCmd     `cmd:"" help:"Print where config.json is."`
 	Show     configShowCmd     `cmd:"" help:"Print the configuration in force: your file over the defaults."`
 	Defaults configDefaultsCmd `cmd:"" help:"Print config.json with every option at its default, explained."`
+	Upgrade  configUpgradeCmd  `cmd:"" help:"Add the options a newer shh has to your config.json, at their defaults, keeping everything you wrote."`
 }
 
 type configPathCmd struct{}
@@ -120,4 +121,38 @@ func (c *initCmd) importHistory(env *Env, since time.Duration) {
 		return
 	}
 	fmt.Fprintf(env.Stdout, "Stored %d notification%s from the last %s as history, unlabeled: shh ui --tab train is where to label them.\n", n, plural(n), c.History)
+}
+
+type configUpgradeCmd struct {
+	Write bool `help:"Make the change. Without it the options that would be added are only listed."`
+}
+
+// Run is how a config.json written for an older shh gets the options added since, with the template's comments. They go in at their
+// defaults, so nothing in force changes, and the old file is kept beside it.
+func (c *configUpgradeCmd) Run(env *Env) error {
+	if env.ConfigPath == "" {
+		return errors.New("this build does not know where the configuration lives")
+	}
+	res, err := config.Upgrade(env.ConfigPath, c.Write)
+	if err != nil {
+		return err
+	}
+	if len(res.Added) == 0 {
+		fmt.Fprintf(env.Stdout, "%s has every option the documented template has.\n", env.ConfigPath)
+		return nil
+	}
+	if res.Written {
+		fmt.Fprintf(env.Stdout, "Added %d option%s to %s, at their defaults (nothing in force changed):\n", len(res.Added), plural(len(res.Added)), env.ConfigPath)
+	} else {
+		fmt.Fprintf(env.Stdout, "%s lacks %d option%s the documented template has. They would go in at their defaults, so nothing in force changes:\n", env.ConfigPath, len(res.Added), plural(len(res.Added)))
+	}
+	for _, a := range res.Added {
+		fmt.Fprintf(env.Stdout, "  %s\n", a.Name())
+	}
+	if res.Written {
+		fmt.Fprintf(env.Stdout, "The file as it was is kept as %s.\n", res.Backup)
+	} else {
+		fmt.Fprintf(env.Stdout, "Run shh config upgrade --write to add them. The file is copied to %s.bak first.\n", env.ConfigPath)
+	}
+	return nil
 }

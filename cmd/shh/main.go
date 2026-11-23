@@ -131,7 +131,14 @@ func doctorEnv(cfg config.Config) *doctor.Env {
 	routinesPath := routine.DefaultPath(cfg.Paths.Dir)
 	e := &doctor.Env{
 		LoadConfig: func() error { _, err := loadConfig(); return err },
-		DBPath:     cfg.Paths.DB,
+		MissingOptions: func() (int, error) {
+			path, err := config.DefaultPath()
+			if err != nil {
+				return 0, err
+			}
+			return config.CountMissing(path)
+		},
+		DBPath: cfg.Paths.DB,
 		OpenDB: func() (int, error) {
 			var v int
 			err := withStore(cfg.Paths.DB, func(s *store.Store) (err error) { v, err = s.SchemaVersion(); return })

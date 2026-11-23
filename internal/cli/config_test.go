@@ -155,3 +155,51 @@ func TestModelStatusInstallAndRemove(t *testing.T) {
 		t.Errorf("out = %q", out)
 	}
 }
+
+const olderConfig = "{\n  \"alert\": {\n    \"color\": 190,   // mine\n    \"sound\": \"none\"\n  }\n}\n"
+
+func TestConfigUpgradeShowsWhatIsMissingAndWritesOnlyWhenAsked(t *testing.T) {
+	r := newRig(t, false)
+	r.env.ConfigPath = filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(r.env.ConfigPath, []byte(olderConfig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out := r.mustRun("config", "upgrade")
+	for _, want := range []string{"alert.selected_color", "alert.shortcuts", "classifier", "--write", "config.json.bak"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the report should mention %q:\n%s", want, out)
+		}
+	}
+	if got, _ := os.ReadFile(r.env.ConfigPath); string(got) != olderConfig {
+		t.Error("the file changed without --write")
+	}
+
+	out = r.mustRun("config", "upgrade", "--write")
+	if !strings.Contains(out, "Added") || !strings.Contains(out, r.env.ConfigPath+".bak") {
+		t.Errorf("after --write: %s", out)
+	}
+	if got, _ := os.ReadFile(r.env.ConfigPath); !strings.Contains(string(got), "// mine") || !strings.Contains(string(got), `"shortcuts"`) {
+		t.Errorf("the file should keep what was written and gain the options:\n%s", got)
+	}
+	if backup, _ := os.ReadFile(r.env.ConfigPath + ".bak"); string(backup) != olderConfig {
+		t.Errorf("backup = %q", backup)
+	}
+	if out := r.mustRun("config", "upgrade"); !strings.Contains(out, "every option") {
+		t.Errorf("nothing left to add: %s", out)
+	}
+}
+
+func TestConfigUpgradeNeedsAFileThatLoads(t *testing.T) {
+	r := newRig(t, false)
+	if code := r.run("config", "upgrade"); code == 0 || !strings.Contains(r.err.String(), "does not know where") {
+		t.Errorf("no path: code %d stderr %q", code, r.err.String())
+	}
+	r.env.ConfigPath = filepath.Join(t.TempDir(), "config.json")
+	if code := r.run("config", "upgrade"); code == 0 || !strings.Contains(r.err.String(), "shh init") {
+		t.Errorf("no file: code %d stderr %q", code, r.err.String())
+	}
+	os.WriteFile(r.env.ConfigPath, []byte(`{"alert": {"colour": 1}}`), 0o600)
+	if code := r.run("config", "upgrade", "--write"); code == 0 || !strings.Contains(r.err.String(), "colour") {
+		t.Errorf("a bad file: code %d stderr %q", code, r.err.String())
+	}
+}
