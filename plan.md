@@ -191,6 +191,7 @@ Pure function, easily tested. Keyword list (`now`, `ASAP`, `urgent`, `prod`, `do
       "text_color": 15,          // the text on the banner, same palette (15 = white, the default)
       "button_color": 238,       // the buttons' background and text (left out = the system's look)
       "button_text_color": 15,
+      "selected_color": 15,      // the ring around the banner picked with the keyboard (§7.2); same palette, can be overridden per kind and per app
       "duration_secs": 0,        // 0 (default) = stays until dismissed or opened; N = disappears after N seconds
       "sound": "Glass",          // system sound name | "none"
       "buttons": [               // left to right; every known type is always present, one left out is disabled
@@ -216,6 +217,34 @@ Pure function, easily tested. Keyword list (`now`, `ASAP`, `urgent`, `prod`, `do
 - Menu items: current stack (baseline + escalations), pause/resume, ±5m, change %, stop, open TUI, view blocked count.
 - Fallbacks if the tray lib doesn't fit: (1) `fyne.io/systray` (CGo on macOS), or (2) text-only `shh status --short` for prompts, tmux, SwiftBar/xbar.
 - No floating window, per requirements.
+
+## 7.2 Keyboard shortcuts for banners **[NEW, tasks 53-58]**
+- Goal: reach a banner and press its buttons without the mouse. Banners are borderless accessory windows that cannot take keyboard focus (and must not: a key pressed while typing elsewhere must never land in a banner), so the shortcuts are **global**: one chord of modifiers shared by every shortcut, plus one key each.
+- Mechanism **[ASSUMED, spike 53 decides]**: Carbon `RegisterEventHotKey` (no permission prompt, the keys are consumed), called from Go through `github.com/ebitengine/purego` so there is still **no CGo** (the user allows purego as a dependency, and prefers no CGo so the Linux port stays simple). Fallbacks if purego cannot: an `NSEvent` global monitor in a JXA helper (needs Input Monitoring permission, cannot consume keys), or CGo only with the user's approval. The spike also decides where the run loop lives (the worker, with a locked main thread, or a helper process like `shh menubar`).
+- The shortcuts are registered while at least one banner is on screen and released when the last one goes, so an idle shh holds no keys.
+- Config, under `alert` (the shortcuts themselves are system-wide, so they live only at the base level; `selected_color` follows the other colors, with per-kind and per-app overrides):
+  ```jsonc
+  "selected_color": 15,        // the ring around the selected banner (same 8-bit palette; 15 = white)
+  "shortcuts": {
+    "enabled": true,
+    "modifier": "ctrl+alt",    // ctrl, alt, shift, cmd joined by +; the one chord every key shares
+    "show_in_label": true,     // true (default): each button's text ends with its key, "Dismiss (D)", and follows the key if it changes
+    "keys": {
+      "next": "]", "previous": "[", "clear": "escape",
+      "dismiss_all": "x",
+      "preview": "p", "goto": "g", "dismiss": "d", "flag": "f", "train": "n"
+    }
+  }
+  ```
+- Behavior **[DECIDED]**:
+  - **Selection** is kept by the overlay (Go), across all screen positions in arrival order; `next`/`previous` wrap. Nothing is selected until the first press, and a new banner never takes the selection. When the selected banner goes, the selection moves to the one that followed it. `clear` unselects.
+  - The selected banner is drawn with a ring in `selected_color`, and its auto-dismiss timer stops, as with Preview.
+  - A button key presses that button on the selected banner exactly as a click would: the same `press` path in `overlay.js`, so Preview, Go to, Dismiss, Flag and Train behave as they do with the mouse. A key whose button the banner does not have (Preview on a short alert, Train when it is off) does nothing.
+  - `dismiss_all` closes every banner on screen at once and needs no selection.
+  - An alert's own buttons (Start next, Skip) take the keys `1` to `9`, in the order drawn, on the selected banner.
+  - **`show_in_label`**: the key is added to the button's text automatically, to the configured label and to the collapse, flagged and trained labels, so what the button says always matches the key. A user who wants full control writes their own label and sets `show_in_label` to `false`.
+- Validation (errors name the key, like the rest of the config): unknown key names, one key bound twice, a chord with no modifier, and a chord macOS no longer delivers (macOS 15 and later ignore hotkeys whose only modifier is ⌥ or ⌥⇧). `shh doctor` reports a chord another app already holds, because registration fails when it is taken.
+- Platform: behind a `Hotkeys` interface (§11.1). Linux is later: Wayland offers global shortcuts only through the desktop portal, so it is not promised.
 
 ---
 
@@ -311,6 +340,7 @@ Every OS-specific piece sits behind an interface so a Linux port is additive, no
 | `Suppressor` | Accessibility watcher moves banner windows off-screen | `dunstctl set-paused` / GNOME `show-banners` / etc. |
 | `Alerter` | overlay helper or `osascript` fallback | `notify-send` / libnotify |
 | `MenuBar` | tray lib | tray lib (StatusNotifier) |
+| `Hotkeys` | Carbon `RegisterEventHotKey` through purego (no CGo) | portal GlobalShortcuts / X11 grabs, undecided |
 | `Calendar` | notification parsing | same parser rules, different apps |
 
 Classifier, store, session worker, TUI, CLI are platform-independent. Linux is untested scope until after M4.
@@ -362,6 +392,7 @@ Classifier, store, session worker, TUI, CLI are platform-independent. Linux is u
 | Banner flashes for up to ~0.5 s before the suppressor hides it; depends on Notification Center's Accessibility layout | Cosmetic, may break on a macOS update | Accept the flash; `shh doctor` self-test; Outlook mail needs its desktop alert on |
 | Calendar via notifications misses meetings | Missed pre-empt | Rules tuned on real data, documented limits, later ICS option |
 | Model learns "block all" | Missed important alerts | Class weights, `y` boost, threshold hints, rollback |
+| Global hotkeys: the chord is taken by another app, or macOS stops delivering it; purego/Carbon needs a run loop on the main thread | Shortcuts do nothing | Spike 53 proves it first; configurable chord, validation that rejects ⌥-only chords, `shh doctor` reports a chord that will not register; the mouse always works |
 | Notification privacy | Sensitive content stored | Local-only, `0600`, 30d TTL, `shh purge`, claude summarizer opt-in |
 
 ---
@@ -374,6 +405,7 @@ Decided:
 4. Pure-Go SQLite (`modernc.org/sqlite`).
 5. Swift only if the menu bar can't be done well in Go (the overlay needs no Swift: spike 03). Linux support designed in via interfaces, shipped later.
 6. No Focus mode: an Accessibility banner suppressor (spike 02). shh alerts use their own overlay, never Notification Center.
+7. Banner keyboard shortcuts are global hotkeys, one shared chord plus a key each (§7.2); purego is an allowed dependency, CGo is avoided so the Linux port stays simple.
 
 Still open:
 - Can an escalation be *lower* than the baseline? **[ASSUMED yes]**
