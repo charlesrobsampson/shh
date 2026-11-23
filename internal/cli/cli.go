@@ -41,6 +41,8 @@ type Env struct {
 	// ConfigPath is config.json, which init writes and config path prints; ConfigShow renders the configuration in force.
 	ConfigPath string
 	ConfigShow func() ([]byte, error)
+	// ConfigWarnings are problems with the configuration that do not stop it from loading; config show reports them.
+	ConfigWarnings func() []string
 	// RoutinesPath is the saved routines file, which the list and example commands read without a worker.
 	RoutinesPath string
 	// TUI opens the terminal UI. Nil when it is not available.

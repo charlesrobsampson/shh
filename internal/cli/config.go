@@ -74,8 +74,15 @@ func (c *configShowCmd) Run(env *Env) error {
 	if err != nil {
 		return err
 	}
-	_, err = env.Stdout.Write(out)
-	return err
+	if _, err = env.Stdout.Write(out); err != nil {
+		return err
+	}
+	if env.ConfigWarnings != nil {
+		for _, w := range env.ConfigWarnings() {
+			fmt.Fprintln(env.Stderr, "shh: warning:", w)
+		}
+	}
+	return nil
 }
 
 type configDefaultsCmd struct{}

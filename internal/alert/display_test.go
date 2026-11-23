@@ -50,13 +50,13 @@ func TestStyleIsResolvedBeforeItReachesTheBackend(t *testing.T) {
 		wantH     int
 	}{
 		{"a plain message uses the base style", alert.Alert{Kind: config.KindMessage, Source: "Teams", Title: "Ana", Body: "hi"},
-			config.Style{Position: "top-right", Size: "small", Color: 233, TextColor: 15, ButtonColor: -1, ButtonTextColor: -1, DurationSecs: 8, Sound: "Glass"}, 280, 78},
+			config.Style{Position: "top-right", Size: "small", Color: 233, TextColor: 15, ButtonColor: -1, ButtonTextColor: -1, SelectedColor: 15, DurationSecs: 8, Sound: "Glass"}, 280, 78},
 		{"a calendar alert uses the kind override", alert.Alert{Kind: config.KindCalendar, Source: "Calendar", Title: "Sync"},
-			config.Style{Position: "top-right", Size: "small", Color: 39, TextColor: 15, ButtonColor: -1, ButtonTextColor: -1, DurationSecs: 8, Sound: "Hero"}, 280, 78},
+			config.Style{Position: "top-right", Size: "small", Color: 39, TextColor: 15, ButtonColor: -1, ButtonTextColor: -1, SelectedColor: 15, DurationSecs: 8, Sound: "Hero"}, 280, 78},
 		{"a source override applies to its messages", alert.Alert{Kind: config.KindMessage, Source: "Slack", Title: "ops"},
-			config.Style{Position: "bottom-left", Size: "large", Color: 233, TextColor: 15, ButtonColor: -1, ButtonTextColor: -1, DurationSecs: 8, Sound: "none"}, 460, 78},
+			config.Style{Position: "bottom-left", Size: "large", Color: 233, TextColor: 15, ButtonColor: -1, ButtonTextColor: -1, SelectedColor: 15, DurationSecs: 8, Sound: "none"}, 460, 78},
 		{"a longer body makes the banner taller", alert.Alert{Kind: config.KindMessage, Source: "Teams", Title: "Ana", Body: strings.Repeat("word ", 20)},
-			config.Style{Position: "top-right", Size: "small", Color: 233, TextColor: 15, ButtonColor: -1, ButtonTextColor: -1, DurationSecs: 8, Sound: "Glass"}, 280, 110},
+			config.Style{Position: "top-right", Size: "small", Color: 233, TextColor: 15, ButtonColor: -1, ButtonTextColor: -1, SelectedColor: 15, DurationSecs: 8, Sound: "Glass"}, 280, 110},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

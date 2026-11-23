@@ -24,8 +24,24 @@ const Template = `// shh configuration. Every option is shown at its default, so
     "text_color": 15,           // the text on it (15 is white)
     // "button_color": 238,     // the buttons' background; left out, the buttons look as the system draws them
     // "button_text_color": 15, // the buttons' text
+    "selected_color": 15,       // the ring around the banner you picked with the keyboard shortcuts below (15 is white)
     "duration_secs": 0,         // 0 stays until you dismiss or open it; a number of seconds goes by itself
     "sound": "Glass",           // a macOS system sound (Glass, Hero, Basso, Blow, ...) or "none"
+
+    // Keyboard shortcuts for banners. They work from any app: one chord (the modifiers) plus one key for each. The keys are one character
+    // or escape, space, return, tab, delete, left, right, up, down; 1 to 9 are kept for an alert's own buttons (Start next, Skip). An empty
+    // "" turns that one shortcut off. next and previous pick a banner (the picked one has a ring and stops timing out), clear lets go of it,
+    // dismiss_all closes every banner, and the rest press that button on the picked banner. Shortcuts are the same for every banner, so
+    // they are not set per kind or per app.
+    "shortcuts": {
+      "enabled": true,
+      "modifier": "ctrl+alt",    // ctrl, alt, shift and cmd joined by +
+      "show_in_label": true,     // the key is written on its button, "Dismiss (D)", and follows the key when you change it; false leaves your own labels alone
+      "keys": {
+        "next": "]", "previous": "[", "clear": "escape", "dismiss_all": "x",
+        "preview": "p", "goto": "g", "dismiss": "d", "flag": "f", "train": "n"
+      }
+    },
 
     // The buttons, left to right. A type left out of the list is switched off. The label is what the button says; Preview, Flag and the
     // train button also say something else once pressed.

@@ -41,7 +41,7 @@ func TestTheTemplateIsExactlyTheDefaults(t *testing.T) {
 }
 
 func TestTheTemplateNamesEveryOptionTheConfigurationHas(t *testing.T) {
-	for _, key := range []string{`"position"`, `"size"`, `"color"`, `"text_color"`, `"button_color"`, `"button_text_color"`, `"duration_secs"`, `"sound"`, `"buttons"`,
+	for _, key := range []string{`"position"`, `"size"`, `"color"`, `"text_color"`, `"button_color"`, `"button_text_color"`, `"selected_color"`, `"shortcuts"`, `"modifier"`, `"show_in_label"`, `"keys"`, `"dismiss_all"`, `"duration_secs"`, `"sound"`, `"buttons"`,
 		`"calendar"`, `"source"`, `"menubar"`, `"enabled"`, `"label"`, `"summarizer"`, `"backend"`, `"paths"`, `"dir"`, `"db"`, `"socket"`, `"pid"`,
 		`"collapse_label"`, `"flagged_label"`, `"trained_label"`, `"preview"`, `"goto"`, `"dismiss"`, `"flag"`, `"train"`,
 		"https://en.wikipedia.org/wiki/ANSI_escape_code#8-bit", "shh config show", "shh guide config"} {
